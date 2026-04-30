@@ -122,4 +122,4 @@ npm run dev
 
 * **Syncing:** Always pull the latest `Main` before starting a new feature.
 * **Package Management:** If you install a new library (e.g., `npm i axios`), you **must** commit the updated `package.json` so the team stays in sync.
-* **Database:** We use a shared PostgreSQL instance. Coordinate with Felicia before running scripts that might drop or alter shared tables.
+* **Database:** We use a shared PostgreSQL instance. Coordinate with the team before running scripts that might drop or alter shared tables.
