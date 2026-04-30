@@ -48,7 +48,7 @@ _Example:&#x20;_`feature/ppe-detection`_&#x20;or&#x20;_`feature/temp-monitoring`
 ### **3. Merging to Main**
 
 1. Open a **Pull Request (PR)** on GitHub once the feature is tested.
-2. Assign a teammate (Charlisa, Yan Qing, or Iden) to review your code.
+2. Assign a teammate to review your code.
 3. Merge into `Main` only after approval.
 
 ---
