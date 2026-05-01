@@ -1,0 +1,118 @@
+/* Sticky Navigation Bar */
+.navbar-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 60px;
+  background-color: #0f172a;
+  border-bottom: 1px solid #1e293b;
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Brand Logo Styling */
+.nav-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: bold;
+  font-size: 1.4rem;
+  color: #f8fafc;
+}
+
+.logo-icon {
+  width: 28px;
+  height: 28px;
+  background-color: #3b82f6;
+  border-radius: 6px;
+}
+
+/* Right Section: Links, Status, and Button */
+.nav-right-section {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+}
+
+.nav-links {
+  display: flex;
+  gap: 25px;
+}
+
+.nav-links a {
+  color: #94a3b8;
+  text-decoration: none;
+  font-size: 0.95rem;
+  font-weight: 500;
+  transition: color 0.2s ease;
+}
+
+.nav-links a:hover {
+  color: #60a5fa;
+}
+
+/* System Active Pill */
+.nav-status-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  border-radius: 20px;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  background: #10b981;
+  border-radius: 50%;
+  box-shadow: 0 0 8px #10b981;
+}
+
+.status-text {
+  font-size: 0.7rem;
+  color: #10b981;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+
+.nav-login-btn {
+  padding: 10px 24px;
+  border-radius: 8px;
+  border: none;
+  background: #1e293b;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.nav-login-btn:hover {
+  background: #334155;
+}
+
+@media (max-width: 768px) {
+  .navbar-container {
+    padding: 15px 20px; 
+  }
+
+  .nav-links {
+    display: none; 
+  }
+
+  .nav-status-pill {
+    padding: 6px 10px;
+  }
+
+  .status-text {
+    display: none;
+  }
+
+  .nav-right-section {
+    gap: 15px;
+  }
+}

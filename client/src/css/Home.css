@@ -1,0 +1,493 @@
+/* Container for the entire stats area */
+.stats-container {
+  padding: 40px 0 5px 0;
+}
+
+/* The responsive grid layout */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 20px;
+  max-width: 1200px;
+  margin: 40px auto;
+  padding: 0 20px;
+}
+
+/* Individual card styling */
+.stat-card {
+  padding: 30px;
+  background-color: rgba(30, 41, 59, 0.5); 
+  border-radius: 16px;
+  border: 1px solid #334155;
+  text-align: center;
+  transition: transform 0.3s ease, border-color 0.3s ease;
+}
+
+.stat-card:hover {
+  transform: translateY(-5px);
+  border-color: #60a5fa;
+}
+
+/* The big highlight numbers */
+.stat-value {
+  font-size: 3rem;
+  font-weight: 900;
+  color: #60a5fa;
+  margin-bottom: 10px;
+}
+
+/* The primary label */
+.stat-label {
+  font-weight: bold;
+  font-size: 1.1rem;
+  margin-bottom: 5px;
+  color: #f8fafc;
+}
+
+/* The secondary description text */
+.stat-subtext {
+  color: #94a3b8;
+  font-size: 0.9rem;
+}
+
+/* Hero Section Container */
+.hero-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  text-align: center;
+}
+
+/* Gradient Title */
+.hero-title {
+  font-size: 4rem;
+  font-weight: bold;
+  margin: 0 0 20px 0;
+  background: linear-gradient(to right, #60a5fa, #34d399);
+  
+  /* The prefixed version for Chrome/Safari/Edge */
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+
+  /* The standard version for future-proofing */
+  background-clip: text; 
+}
+
+/* Hero Description */
+.hero-description {
+  font-size: 1.2rem;
+  color: #94a3b8;
+  max-width: 800px;
+  line-height: 1.6;
+  margin: 0 0 40px 0;
+}
+
+/* Call to Action Button */
+.hero-button {
+  background: rgba(37, 99, 235, 0.1); 
+  color: #60a5fa;
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  padding: 12px 30px;
+  border-radius: 50px; 
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: all 0.3s ease;
+  margin-top: 10px;
+}
+
+/* The "Glow" Pulse Effect */
+/* .hero-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    120deg,
+    transparent,
+    rgba(255, 255, 255, 0.2),
+    transparent
+  );
+  transition: all 0.6s;
+} */
+
+/* .hero-button:hover::before {
+  left: 100%;
+} */
+
+/* Hover effect for the button */
+.hero-button:hover {
+  background: rgba(37, 99, 235, 0.2);
+  border-color: #60a5fa;
+  box-shadow: 0 0 20px rgba(37, 99, 235, 0.15);
+}
+
+.hero-button:active {
+  transform: translateY(1px);
+}
+
+/* Icon Animation */
+.button-icon {
+  transition: transform 0.3s ease;
+}
+
+.hero-button:hover .button-icon {
+  transform: translateX(4px);
+}
+
+/* Feature Section Container */
+.features-section {
+  padding: 20px 20px 20px 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Feature Section Heading */
+.features-heading {
+  text-align: center;
+  margin-bottom: 50px;
+  font-size: 2rem;
+  color: #f8fafc;
+}
+
+/* Feature Grid Layout */
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 30px;
+}
+
+/* Individual Feature Card */
+.feature-card {
+  padding: 40px;
+  border-radius: 20px;
+  background: linear-gradient(145deg, #1e293b, #0f172a);
+  border: 1px solid #334155;
+  transition: transform 0.3s ease, border-color 0.3s ease;
+}
+
+/* Interactive Hover Effect */
+.feature-card:hover {
+  transform: translateY(-10px);
+  border-color: #60a5fa;
+}
+
+/* Card Content Styles */
+.feature-icon {
+  font-size: 2.5rem;
+  margin-bottom: 20px;
+}
+
+.feature-title {
+  font-size: 1.4rem;
+  color: #60a5fa;
+  margin-bottom: 15px;
+}
+
+.feature-description {
+  color: #94a3b8;
+  line-height: 1.6;
+  font-size: 1rem;
+}
+
+.contact-section {
+  padding: 80px 20px;
+  background: rgba(15, 23, 42, 0.3);
+}
+
+.contact-container {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 60px;
+  background: rgba(30, 41, 59, 0.4);
+  padding: 50px;
+  border-radius: 24px;
+  border: 1px solid #334155;
+}
+
+.contact-info h2 {
+  font-size: 2.5rem;
+  color: #f8fafc;
+  margin-bottom: 20px;
+}
+
+.contact-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.contact-form input, .contact-form select, .contact-form textarea {
+  padding: 15px;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  color: white;
+  font-size: 1rem;
+}
+
+.contact-form textarea {
+  height: 150px;
+  resize: none;
+}
+
+.contact-form input:focus {
+  border-color: #60a5fa;
+  outline: none;
+}
+
+@media (max-width: 768px) {
+  .contact-container {
+    grid-template-columns: 1fr;
+    padding: 30px;
+  }
+}
+
+/* Tech Stack Section */
+.tech-stack-section {
+  padding: 40px 0;
+  background-color: #0f172a;
+  border-top: 1px solid #1e293b;
+  border-bottom: 1px solid #1e293b;
+  overflow: hidden;
+}
+
+.tech-stack-title {
+  text-align: center;
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 25px;
+}
+
+/* The Marquee Wrapper */
+.marquee-container {
+  display: flex;
+  overflow: hidden;
+  user-select: none;
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black 20%,
+    black 80%,
+    transparent
+  );
+}
+
+.marquee-content {
+  display: flex;
+  gap: 60px;
+  animation: scrollMarquee 30s linear infinite;
+  white-space: nowrap;
+}
+
+/* The Animation */
+@keyframes scrollMarquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+.tech-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #94a3b8;
+  font-size: 1.1rem;
+  font-weight: 600;
+  font-family: 'Inter', sans-serif;
+}
+
+.tech-dot {
+  width: 6px;
+  height: 6px;
+  background-color: #3b82f6;
+  border-radius: 50%;
+  box-shadow: 0 0 10px #3b82f6;
+}
+
+/* Pause animation on hover for better UX */
+.marquee-container:hover .marquee-content {
+  animation-play-state: paused;
+}
+
+/* Roadmap Section */
+.roadmap-section {
+  padding: 50px 20px 80px 20px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.roadmap-heading {
+  text-align: center;
+  color: #f8fafc;
+  font-size: 2rem;
+  margin-bottom: 60px;
+}
+
+/* The Vertical Line */
+.timeline-container {
+  position: relative;
+  border-left: 2px solid #1e293b;
+  margin-left: 20px;
+  padding-left: 40px;
+}
+
+.timeline-item {
+  position: relative;
+  margin-bottom: 50px;
+}
+
+.timeline-item:last-child {
+  margin-bottom: 0;
+}
+
+/* The Milestone Dot */
+.timeline-dot {
+  position: absolute;
+  left: -51px; /* Centers dot on the border-left */
+  top: 5px;
+  width: 20px;
+  height: 20px;
+  background-color: #0f172a;
+  border: 3px solid #3b82f6;
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+  z-index: 1;
+}
+
+.timeline-date {
+  display: block;
+  color: #60a5fa;
+  font-weight: 800;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+
+.timeline-title {
+  color: #f8fafc;
+  font-size: 1.3rem;
+  margin-bottom: 10px;
+}
+
+.timeline-desc {
+  color: #94a3b8;
+  line-height: 1.6;
+  font-size: 1rem;
+}
+
+/* Responsive Tweaks */
+@media (max-width: 768px) {
+  .timeline-container {
+    margin-left: 10px;
+    padding-left: 30px;
+  }
+  .timeline-dot {
+    left: -41px;
+  }
+}
+
+.live-status-section {
+  padding: 60px 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.status-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 30px;
+  border-bottom: 1px solid #1e293b;
+  padding-bottom: 15px;
+}
+
+.status-title {
+  color: #f8fafc;
+  font-size: 1.5rem;
+  margin: 0;
+}
+
+.live-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #10b981;
+  font-size: 0.75rem;
+  font-weight: 900;
+  letter-spacing: 1px;
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  background: #10b981;
+  border-radius: 50%;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.5); opacity: 0.5; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 20px;
+}
+
+.sensor-card {
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  padding: 25px;
+  border-radius: 12px;
+  position: relative;
+  overflow: hidden;
+}
+
+.sensor-label {
+  display: block;
+  color: #64748b;
+  font-size: 0.85rem;
+  margin-bottom: 10px;
+}
+
+.sensor-value {
+  color: #f8fafc;
+  font-size: 2rem;
+  font-weight: 700;
+  font-family: monospace;
+  margin-bottom: 15px;
+}
+
+.sensor-tag {
+  font-size: 0.7rem;
+  font-weight: bold;
+  padding: 4px 10px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.sensor-tag.optimal, .sensor-tag.active, .sensor-tag.stable {
+  background: rgba(16, 185, 129, 0.1);
+  color: #10b981;
+}
+
+.sensor-tag.warning {
+  background: rgba(245, 158, 11, 0.1);
+  color: #f59e0b;
+}
