@@ -1,0 +1,72 @@
+.system-health-page {
+  background-color: #0f172a;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.system-health-page main {
+  flex: 1; 
+  display: flex;
+  flex-direction: column;
+  align-items: center; 
+  justify-content: center; 
+  padding-top: 40px;
+}
+
+.system-health-page header {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+.system-health-page h1 {
+  font-size: 3rem;
+  font-weight: 800;
+  background: linear-gradient(to right, #60a5fa, #34d399);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 10px;
+}
+
+.status-card-large {
+  background: linear-gradient(145deg, #1e293b, #0f172a);
+  border: 1px solid #334155;
+  border-radius: 24px;
+  padding: 60px 40px;
+  max-width: 800px;
+  width: 90%;
+  text-align: center;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+  transition: transform 0.3s ease, border-color 0.3s ease;
+}
+
+.status-card-large:hover {
+  transform: translateY(-5px);
+  border-color: #3b82f6;
+}
+
+.status-icon {
+  font-size: 5rem;
+  margin-bottom: 20px;
+  display: inline-block;
+  filter: drop-shadow(0 0 20px rgba(59, 130, 246, 0.4));
+  animation: orbit 4s ease-in-out infinite;
+}
+
+@keyframes orbit {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-15px) rotate(5deg); }
+}
+
+.status-card-large h2 {
+  color: #f8fafc;
+  font-size: 2rem;
+  margin-bottom: 15px;
+}
+
+.status-card-large p {
+  color: #94a3b8;
+  font-size: 1.1rem;
+  line-height: 1.6;
+}

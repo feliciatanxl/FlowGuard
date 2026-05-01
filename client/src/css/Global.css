@@ -38,4 +38,9 @@ body {
 html {
   scrollbar-width: thin;
   scrollbar-color: #1e293b #0f172a;
+  scroll-behavior: smooth;
+}
+
+section[id] {
+  scroll-margin-top: 80px; 
 }

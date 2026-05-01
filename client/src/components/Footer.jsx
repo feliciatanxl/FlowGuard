@@ -4,7 +4,6 @@ const Footer = () => {
   return (
     <footer className="footer-container">
       <div className="footer-content">
-        {/* Column 1: Brand & Description */}
         <div className="footer-column">
           <div className="footer-logo">
             <div className="logo-box"></div>
@@ -16,7 +15,6 @@ const Footer = () => {
           </p>
         </div>
 
-        {/* Column 2: Solutions */}
         <div className="footer-column">
           <h4>Solutions</h4>
           <ul>
@@ -26,7 +24,6 @@ const Footer = () => {
           </ul>
         </div>
 
-        {/* Column 3: Company */}
         <div className="footer-column">
           <h4>Company</h4>
           <ul>
@@ -35,8 +32,6 @@ const Footer = () => {
             <li><a href="#">Support</a></li>
           </ul>
         </div>
-
-        {/* Column 4: Contact */}
         <div className="footer-column">
           <h4>Contact</h4>
           <p className="contact-text">Harrison Food Factory</p>

@@ -4,8 +4,6 @@ const TechStack = () => {
   const technologies = [
     "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"
   ];
-
-  // We double the array to create a seamless infinite loop
   const displayStack = [...technologies, ...technologies];
 
   return (

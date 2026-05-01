@@ -20,10 +20,15 @@ const FeatureCards = () => {
   ];
 
   return (
-    <section className="features-section">
-      <h2 className="features-heading">
-        Industrial Intelligence Solutions
-      </h2>
+    <section id="technology" className="features-section">
+      {/* Unified Section Header */}
+      <div className="section-header">
+        <h2 className="section-title">Industrial Intelligence Solutions</h2>
+        <p className="section-subtitle">
+          Advanced IoT and AI for food manufacturing.
+        </p>
+      </div>
+
       <div className="features-grid">
         {features.map((f, i) => (
           <div key={i} className="feature-card">

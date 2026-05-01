@@ -116,3 +116,26 @@
     gap: 15px;
   }
 }
+
+.nav-login-btn {
+  text-decoration: none;
+  color: #ffffff; 
+  
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  
+  background-color: #1e293b; 
+  padding: 10px 24px;
+  border-radius: 12px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.nav-login-btn:hover {
+  text-decoration: none;
+  background-color: #334155;
+  color: #ffffff;
+}

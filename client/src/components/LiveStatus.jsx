@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
 const LiveStatus = () => {
-  // Simulated sensor states
   const [temp, setTemp] = useState(4.2);
   const [humidity, setHumidity] = useState(55);
   const [occupancy, setOccupancy] = useState(1);

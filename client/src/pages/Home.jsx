@@ -15,8 +15,8 @@ const Home = () => {
     <main>
       <NavBar />
       <Hero />
-      <ImpactStats /> 
       <LiveStatus />
+      <ImpactStats /> 
       <FeatureCards />
       <Roadmap />
       <TechStack />

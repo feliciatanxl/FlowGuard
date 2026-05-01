@@ -20,8 +20,14 @@ const Roadmap = () => {
   ];
 
   return (
-    <section className="roadmap-section">
-      <h2 className="roadmap-heading">Deployment Roadmap</h2>
+    <section id="roadmap" className="roadmap-section">
+      <div className="section-header">
+        <h2 className="section-title">Deployment Roadmap</h2>
+        <p className="section-subtitle">
+          Phased implementation at Harrison Food Factory.
+        </p>
+      </div>
+
       <div className="timeline-container">
         {milestones.map((item, i) => (
           <div key={i} className="timeline-item">
