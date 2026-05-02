@@ -1,8 +1,22 @@
 import React from 'react';
 
 const TechStack = () => {
-  const technologies = [
-    "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"
+  const technologies = [           
+    "NexusCloud Solutions",    
+    "OptiTemp Systems",        
+    "AeroNode IoT",            
+    "Sentinel Security",      
+    "OmniStream Data",         
+    "Forge Logistics Tech",    
+    "NovaVision Optics",        
+    "Vertex Edge Computing",    
+    "PulseNet Infrastructure",  
+    "CipherLock Systems",       
+    "Apex Analytics",        
+    "Meridian Supply Co.",    
+    "Horizon Web Services",     
+    "BlueShift Databases",      
+    "Harrison Internal"        
   ];
   const displayStack = [...technologies, ...technologies];
 

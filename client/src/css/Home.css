@@ -288,7 +288,7 @@
 .marquee-content {
   display: flex;
   gap: 60px;
-  animation: scrollMarquee 30s linear infinite;
+  animation: scrollMarquee 80s linear infinite;
   white-space: nowrap;
 }
 

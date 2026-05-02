@@ -2,12 +2,13 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import NavBar from '../components/NavBar';
 import Footer from '../components/Footer';
-import '../css/Login.css'; 
+import '../css/Login.css';
 
-const Login = () => {
+const Register = () => {
   return (
     <div className="login-page-wrapper">
       <NavBar />
+      
       <div className="login-content-area">
         <div className="login-container">
           <div className="login-box">
@@ -16,39 +17,38 @@ const Login = () => {
                  <div className="logo-icon"></div>
                  <span>FlowGuard</span>
               </div>
-              <h1>Client Portal</h1>
-              <p>Access the Harrison Food Factory IoT Dashboard</p>
+              <h1>Request Access</h1>
+              <p>Register for authorization to the IoT Dashboard.</p>
             </header>
 
             <form className="login-form" onSubmit={(e) => e.preventDefault()}>
+              <div className="input-group">
+                <label>Full Name</label>
+                <input type="text" placeholder="Enter your full name" required />
+              </div>
+
               <div className="input-group">
                 <label>Authorized Email</label>
                 <input type="email" placeholder="name@company.com" required />
               </div>
 
-              {/* Updated Access Key Input Group */}
               <div className="input-group">
-                <label>Access Key</label>
-                <input type="password" placeholder="••••••••" required />
-                
-                {/* The Forgot Key link is now tucked neatly beneath the input field */}
-                <div className="forgot-link-wrapper">
-                  <Link to="/forgot-password" className="forgot-link">Forgot Key?</Link>
-                </div>
+                <label>Create Access Key</label>
+                <input type="password" placeholder="Minimum 8 characters" required minLength="8" />
               </div>
 
               <button type="submit" className="login-submit-btn">
-                Authenticate <span className="button-icon"></span>
+                Submit Request <span className="button-icon"></span>
               </button>
             </form>
 
             <footer className="login-footer">
-             <p className="security-badge">Protected by FlowGuard AI Monitoring</p>
-             
-             <div className="auth-links">
-               <Link to="/register">New to FlowGuard?</Link>
-             </div>
-           </footer>
+              <p className="security-badge">Subject to FlowGuard Administrator Approval</p>
+              
+              <div className="auth-links">
+                <Link to="/login">Already authorized?</Link>
+              </div>
+            </footer>
           </div>
         </div>
       </div>
@@ -58,4 +58,4 @@ const Login = () => {
   );
 };
 
-export default Login;
+export default Register;

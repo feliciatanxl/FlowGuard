@@ -21,6 +21,7 @@
   width: 100%;
   max-width: 420px;
   text-align: center;
+  margin-top: 50px;
 }
 
 /* 4. Logo Styling */
@@ -108,3 +109,153 @@
 
 .login-footer p { color: #64748b; }
 .login-footer a { color: #60a5fa; text-decoration: none; }
+
+/* --- New Styles for Forgot Password & Auth Links --- */
+
+.label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center; 
+  margin-bottom: 12px;
+}
+
+.label-row label {
+  margin-bottom: 0;
+}
+
+.forgot-link {
+  font-size: 0.75rem;
+  color: #60a5fa;
+  text-decoration: none;
+  transition: color 0.3s ease;
+  padding-bottom: 2px;
+}
+
+.forgot-link:hover {
+  color: #93c5fd;
+  text-decoration: underline;
+}
+
+.forgot-link-wrapper {
+  display: flex;
+  justify-content: flex-end; 
+  margin-top: 12px; 
+  margin-bottom: -10px;
+}
+
+.security-badge {
+  color: #64748b;
+  margin-bottom: 12px;
+}
+
+.auth-links {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.85rem;
+}
+
+.auth-links .divider {
+  color: #475569;
+}
+
+.auth-links a {
+  color: #94a3b8;
+  transition: color 0.3s ease;
+}
+
+.auth-links a:hover {
+  color: #f8fafc;
+}
+
+/* --- Success State for Recovery Page --- */
+.success-state {
+  text-align: center;
+  padding: 20px 0;
+}
+
+.success-icon {
+  font-size: 2rem;
+  color: #10b981; 
+  margin-bottom: 12px;
+}
+
+.success-state h3 {
+  color: #fff;
+  font-size: 1.25rem;
+  margin-bottom: 8px;
+}
+
+.success-text {
+  color: #94a3b8;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.back-to-login {
+  color: #60a5fa !important;
+  font-weight: 500;
+  transition: color 0.3s ease;
+}
+
+.back-to-login:hover {
+  color: #93c5fd !important;
+}
+
+.login-footer .auth-links {
+  margin-top: 16px;
+}
+
+/* --- Error Pages (404 & System Errors) --- */
+.error-box {
+  text-align: center;
+  padding: 60px 40px;
+}
+
+.error-code {
+  font-size: 4rem;
+  margin-bottom: 16px;
+  color: #f59e0b; /* Warning amber */
+  font-weight: 800;
+}
+
+.error-title {
+  color: #fff;
+  margin-bottom: 16px;
+  font-size: 1.75rem;
+}
+
+.error-desc {
+  color: #94a3b8;
+  margin-bottom: 32px;
+  line-height: 1.6;
+  font-size: 0.95rem;
+}
+
+.error-btn {
+  text-decoration: none;
+  display: inline-block;
+  width: auto;
+  padding: 12px 32px;
+}
+
+/* --- System Error Color Modifiers --- */
+
+/* Critical Errors (Red) */
+.error-critical { border-top: 4px solid #ef4444; }
+.error-critical .error-code { color: #ef4444; }
+.error-critical .error-btn {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border: 1px solid #ef4444;
+}
+
+/* Warning Errors (Amber) */
+.error-warning { border-top: 4px solid #f59e0b; }
+.error-warning .error-code { color: #f59e0b; }
+.error-warning .error-btn {
+  background-color: rgba(245, 158, 11, 0.1);
+  color: #f59e0b;
+  border: 1px solid #f59e0b;
+}

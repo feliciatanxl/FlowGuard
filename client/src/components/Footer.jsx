@@ -32,10 +32,12 @@ const Footer = () => {
             <li><a href="#">Support</a></li>
           </ul>
         </div>
+        
         <div className="footer-column">
           <h4>Contact</h4>
           <p className="contact-text">Harrison Food Factory</p>
-          <p className="contact-text">Ang Mo Kio Industrial Park</p>
+          <p className="contact-text">7 Harrison Rd</p>
+          <p className="contact-text">Singapore 369650</p>
           <p className="contact-sub">Available TOL 2027</p>
         </div>
       </div>
