@@ -5,7 +5,7 @@ const Roadmap = () => {
     {
       date: "Q2 2026",
       title: "Systems Architecture",
-      desc: "Finalizing the AI model training and EchoSync integration for proactive management."
+      desc: "Finalizing the AI model training and FlowGuard core integration for proactive facility management."
     },
     {
       date: "Q4 2026",

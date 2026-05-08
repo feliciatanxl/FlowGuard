@@ -4,17 +4,17 @@ const FeatureCards = () => {
   const features = [
     {
       title: "AI CCTV & Monitoring",
-      description: "Automated PPE detection and unauthorized access alerts to reduce manual security manpower.",
+      description: "Automated PPE detection and unauthorized access alerts to enhance site security and reduce manual monitoring effort.",
       icon: "🛡️"
     },
     {
       title: "Smart Loading Bays",
-      description: "Real-time occupancy tracking for the 2 loading bays to solve peak-hour logistics congestion.",
+      description: "Real-time occupancy tracking for two loading bays to reduce peak-hour logistics congestion.",
       icon: "🚚"
     },
     {
       title: "Environmental IoT",
-      description: "24/7 temperature and humidity monitoring with predictive alerts for HACCP compliance.",
+      description: "24/7 temperature and humidity monitoring with predictive alerts for food safety and environmental stability.",
       icon: "🌡️"
     }
   ];

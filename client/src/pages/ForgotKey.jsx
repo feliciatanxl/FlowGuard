@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import NavBar from '../components/NavBar';
 import Footer from '../components/Footer';
 import '../css/Login.css';
+import LogoIcon from '../components/LogoIcon';
 
 const ForgotKey = () => {
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -20,9 +21,8 @@ const ForgotKey = () => {
         <div className="login-container">
           <div className="login-box">
             <header className="login-header">
-              <div className="login-logo-inline">
-                 <div className="logo-icon"></div>
-                 <span>FlowGuard</span>
+              <div className="login-logo-centered">
+                <LogoIcon size={48} /> 
               </div>
               <h1>Key Recovery</h1>
               <p>Secure access reset for the Harrison Food Factory.</p>

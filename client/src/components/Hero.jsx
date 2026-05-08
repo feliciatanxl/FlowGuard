@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom'; 
 
 const Hero = () => {
   return (
@@ -10,7 +11,7 @@ const Hero = () => {
         Reducing operational errors and manpower reliance through AI-driven surveillance and logistics.
       </p>
       
-      <button className="hero-button">
+      <Link to="/innovation" className="hero-button">
         Explore AI Innovation
         <svg 
           className="button-icon" 
@@ -26,7 +27,7 @@ const Hero = () => {
           <line x1="5" y1="12" x2="19" y2="12"></line>
           <polyline points="12 5 19 12 12 19"></polyline>
         </svg>
-      </button>
+      </Link>
     </section>
   );
 };

@@ -39,7 +39,7 @@ const Contact = () => {
               <div className="info-icon">📍</div>
               <div className="info-text">
                 <strong>Location</strong>
-                <p>Ang Mo Kio Industrial Park, Singapore</p>
+                <p>7 Harrison Rd, Singapore 369650</p>
               </div>
             </div>
 
@@ -47,7 +47,7 @@ const Contact = () => {
               <div className="info-icon">📧</div>
               <div className="info-text">
                 <strong>Inquiries</strong>
-                <p>support@flowguard.io</p>
+                <p>flowguard.support@gmail.com</p>
               </div>
             </div>
           </div>

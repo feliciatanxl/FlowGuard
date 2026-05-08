@@ -1,4 +1,6 @@
 import React from 'react';
+import { Link } from 'react-router-dom'; // Import Link for SPA navigation
+import LogoIcon from './LogoIcon';
 
 const Footer = () => {
   return (
@@ -6,7 +8,7 @@ const Footer = () => {
       <div className="footer-content">
         <div className="footer-column">
           <div className="footer-logo">
-            <div className="logo-box"></div>
+            <LogoIcon size={32} />
             <span>FlowGuard</span>
           </div>
           <p className="footer-desc">
@@ -18,16 +20,18 @@ const Footer = () => {
         <div className="footer-column">
           <h4>Solutions</h4>
           <ul>
-            <li><a href="#">AI Surveillance</a></li>
-            <li><a href="#">Logistics Tracking</a></li>
-            <li><a href="#">IoT Monitoring</a></li>
+            {/* Link to your new AI Innovation page */}
+            <li><Link to="/innovation">AI Surveillance</Link></li>
+            <li><Link to="/dashboard">Logistics Tracking</Link></li>
+            <li><Link to="/dashboard">IoT Monitoring</Link></li>
           </ul>
         </div>
 
         <div className="footer-column">
           <h4>Company</h4>
           <ul>
-            <li><a href="#">Innovation</a></li>
+            {/* Link to your new AI Innovation page */}
+            <li><Link to="/innovation">Innovation</Link></li>
             <li><a href="#">Compliance</a></li>
             <li><a href="#">Support</a></li>
           </ul>

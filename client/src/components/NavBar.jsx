@@ -1,12 +1,13 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { HashLink } from 'react-router-hash-link'; 
+import LogoIcon from './LogoIcon';
 
 const NavBar = () => {
   return (
     <nav className="navbar-container">
       <Link to="/" className="nav-logo">
-        <div className="logo-icon"></div>
+        <LogoIcon size={32} />
         <span>FlowGuard</span>
       </Link>
       

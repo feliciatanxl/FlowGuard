@@ -15,8 +15,8 @@ const ContactForm = () => {
         <div className="contact-info">
           <h2>Get in Touch</h2>
           <p>Inquire about AI implementation for the 2027 factory launch.</p>
-          <div className="contact-detail"><strong>Location:</strong> Ang Mo Kio, SG</div>
-          <div className="contact-detail"><strong>Status:</strong> Accepting Pilot Partners</div>
+          <div className="contact-detail"><strong>Location:</strong> 7 Harrison Rd, Singapore 369650</div>
+          <div className="contact-detail"><strong>Status:</strong> Opening Soon In 2027</div>
         </div>
 
         <form className="contact-form" onSubmit={handleSubmit}>

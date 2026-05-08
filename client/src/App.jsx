@@ -1,6 +1,6 @@
 import React from 'react';
 import { Routes, Route } from 'react-router-dom';
-import Home from './pages/home'; // Note: check if this should be capitalized 'Home' based on your file name
+import Home from './pages/home'; 
 import SystemHealth from './pages/SystemHealth';
 import Contact from './pages/Contact';
 import Login from './pages/Login';
@@ -9,6 +9,7 @@ import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import NotFound from "./pages/NotFound";
 import SystemError from "./pages/SystemError";
+import AIInnovation from './pages/AIInnovation';
 import './App.css';
 
 function App() {
@@ -22,6 +23,7 @@ function App() {
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotKey />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/innovation" element={<AIInnovation />} />
         <Route path="/error/400" element={
           <SystemError 
             code="400" 
