@@ -1,0 +1,210 @@
+/* --- Settings Grid Layout --- */
+.settings-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 900px; 
+}
+
+.save-btn {
+  background-color: #3b82f6;
+  color: white;
+  border: none;
+  padding: 10px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.save-btn:hover { background-color: #2563eb; }
+
+/* --- Settings Cards --- */
+.settings-card {
+  background-color: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.card-header {
+  padding: 24px;
+  border-bottom: 1px solid #334155;
+  background-color: rgba(15, 23, 42, 0.3);
+}
+
+.card-header h3 {
+  margin: 0 0 5px 0;
+  color: #f8fafc;
+  font-size: 1.2rem;
+}
+
+.card-header p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.9rem;
+}
+
+/* --- Individual Setting Rows --- */
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24px;
+  border-bottom: 1px solid #334155;
+}
+
+.setting-row:last-child {
+  border-bottom: none;
+}
+
+.setting-info h4 {
+  margin: 0 0 5px 0;
+  color: #e2e8f0;
+  font-size: 1.05rem;
+  font-weight: 500;
+}
+
+.setting-info p {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
+/* --- UI Controls (Toggles, Sliders, Dropdowns) --- */
+
+/* iOS Style Toggle Switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 28px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: #475569;
+  transition: .3s;
+  border-radius: 34px;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 20px;
+  width: 20px;
+  left: 4px;
+  bottom: 4px;
+  background-color: white;
+  transition: .3s;
+  border-radius: 50%;
+}
+
+input:checked + .toggle-slider { background-color: #10b981; } 
+input:checked + .toggle-slider:before { transform: translateX(22px); }
+
+/* Range Slider */
+.slider-control {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.slider-value {
+  background: #0f172a;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid #334155;
+  color: #60a5fa;
+  font-weight: 600;
+  font-family: monospace;
+}
+
+input[type=range] {
+  accent-color: #3b82f6;
+  width: 150px;
+}
+
+/* Dropdown Select */
+.dark-select {
+  background-color: #0f172a;
+  color: #f8fafc;
+  border: 1px solid #334155;
+  padding: 10px 15px;
+  border-radius: 6px;
+  outline: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* Danger Zone */
+.danger-zone { border-color: rgba(239, 68, 68, 0.3); }
+.text-red { color: #f87171 !important; }
+
+.danger-btn {
+  background-color: transparent;
+  color: #ef4444;
+  border: 1px solid #ef4444;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.danger-btn:hover {
+  background-color: #ef4444;
+  color: white;
+}
+
+/* --- Mobile Responsiveness --- */
+@media (max-width: 768px) {
+  .setting-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 15px;
+  }
+  
+  .setting-control {
+    width: 100%;
+    display: flex;
+    justify-content: flex-end; 
+  }
+
+  .dashboard-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 15px;
+  }
+}
+
+/* --- Bottom Action Area --- */
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 15px;
+  margin-bottom: 30px;
+}
+
+/* --- Centered Header --- */
+.settings-header {
+  max-width: 900px;
+  margin: 0 auto 30px auto;
+}
+
+/* --- Settings Grid Layout --- */
+.settings-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 900px; 
+  margin: 0 auto; 
+}

@@ -10,6 +10,8 @@ import Dashboard from "./pages/Dashboard";
 import NotFound from "./pages/NotFound";
 import SystemError from "./pages/SystemError";
 import AIInnovation from './pages/AIInnovation';
+import Settings from './pages/Settings';
+import Users from './pages/Users';
 import './App.css';
 
 function App() {
@@ -24,6 +26,8 @@ function App() {
         <Route path="/forgot-password" element={<ForgotKey />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/innovation" element={<AIInnovation />} />
+        <Route path="/settings" element={<Settings />} />
+        <Route path="/users" element={<Users />} />
         <Route path="/error/400" element={
           <SystemError 
             code="400" 
