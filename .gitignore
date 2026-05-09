@@ -416,3 +416,9 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+.venv
+yolo26n.pt
+known_faces
+test.jpg
+.env
