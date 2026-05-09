@@ -12,6 +12,7 @@ import SystemError from "./pages/SystemError";
 import AIInnovation from './pages/AIInnovation';
 import Settings from './pages/Settings';
 import Users from './pages/Users';
+import AIChatPopup from './components/AIChatPopup'; // <-- Correct import!
 import './App.css';
 
 function App() {
@@ -28,6 +29,7 @@ function App() {
         <Route path="/innovation" element={<AIInnovation />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/users" element={<Users />} />
+        
         <Route path="/error/400" element={
           <SystemError 
             code="400" 
@@ -66,6 +68,11 @@ function App() {
         } />
         <Route path="*" element={<NotFound />} />
       </Routes>
+
+      {/* --- ADD THE CHAT BOT HERE --- */}
+      {/* It sits outside the Routes so it appears on EVERY page */}
+      <AIChatPopup />
+
     </div>
   );
 }
