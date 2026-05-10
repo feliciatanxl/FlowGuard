@@ -14,25 +14,37 @@ This CCTV-first approach allows the project to validate the most technically cri
 
 ## **🛠️ Technical Stack**
 
-* 🔹 **Frontend:** React.js (Vite + JavaScript + SWC)
-* 🔹 **Styling:** Custom Enterprise Dark Mode CSS (Flexbox & Grid layouts) 🎨
-* 🔹 **Backend:** Node.js + Express (JavaScript) ⚙️
-* 🔹 **AI Service:** Python + FastAPI 🧠
-* 🔹 **Computer Vision Models:** InsightFace + Ultralytics YOLO 👁️
-* 🔹 **Database:** PostgreSQL (Hosted on Render) 🗄️
-* 🔹 **ORM:** Sequelize
-* 🔹 **Validation:** Yup & Formik ✅
+🔹 **Frontend:** React.js (Vite + JavaScript + SWC)
+
+🔹 **Styling:** Custom Enterprise Dark Mode CSS (Flexbox & Grid layouts) 🎨
+
+🔹 **Backend:** Node.js + Express (JavaScript) ⚙️
+
+🔹 **AI Service:** Python + FastAPI 🧠
+
+🔹 **Computer Vision Models:** InsightFace + Ultralytics YOLO 👁️
+
+🔹 **Database:** PostgreSQL (Hosted on Render) 🗄️
+
+🔹 **ORM:** Sequelize
+
+🔹 **Validation:** Yup & Formik ✅
 
 ---
 
 ## **🚀 Key Modules**
 
-* 🖥️ **Command Center Dashboard:** Centralized UI hub for high-level facility metrics, recent AI activity, and visual data charts.
-* 👁️ **CCTV AI Monitoring Engine:** Automated surveillance analysis for facial recognition, object/person detection, and occupancy monitoring.
-* 🤖 **FlowGuard AI Concierge:** An interactive, floating chat assistant designed to quickly query facility protocols and system statuses.
-* 🔐 **User Access Management:** Dynamic, mobile-responsive data tables handling role-based access control for security personnel.
-* ⚙️ **System Configuration:** Advanced settings panel to adjust AI detection strictness thresholds, auto-record triggers, and camera feed quality.
-* 🚚 **Smart Loading Bay & Environment:** License plate recognition, traffic management, and real-time temperature tracking for cold-chain safety.
+🖥️ **Command Center Dashboard:** Centralized UI hub for high-level facility metrics, recent AI activity, and visual data charts.
+
+👁️ **CCTV AI Monitoring Engine:** Automated surveillance analysis for facial recognition, object/person detection, and occupancy monitoring.
+
+🤖 **FlowGuard AI Concierge:** An interactive, floating chat assistant designed to quickly query facility protocols and system statuses.
+
+🔐 **User Access Management:** Dynamic, mobile-responsive data tables handling role-based access control for security personnel.
+
+⚙️ **System Configuration:** Advanced settings panel to adjust AI detection strictness thresholds, auto-record triggers, and camera feed quality.
+
+🚚 **Smart Loading Bay & Environment:** License plate recognition, traffic management, and real-time temperature tracking for cold-chain safety.
 
 ---
 
@@ -44,16 +56,12 @@ You **must** run `npm install` in both folders to sync the `package.json` bluepr
 
 **Client:**
 
-Bash
-
 ```css
 cd client
 npm install
 ```
 
 **Server:**
-
-Bash
 
 ```css
 cd ../server
@@ -68,15 +76,11 @@ The AI microservice is kept in the `ai-service` folder and handles CCTV-related 
 
 #### **Step 1: Navigate into the AI service folder**
 
-Bash
-
 ```css
 cd ../ai-service
 ```
 
 #### **Step 2: Create a Python virtual environment**
-
-Bash
 
 ```css
 python -m venv .venv
@@ -86,15 +90,11 @@ python -m venv .venv
 
 **Windows PowerShell:**
 
-Bash
-
 ```css
 .venv\Scripts\Activate.ps1
 ```
 
 **Windows CMD:**
-
-Bash
 
 ```css
 .venv\Scripts\activate
@@ -102,37 +102,41 @@ Bash
 
 **macOS / Linux:**
 
-Bash
-
 ```css
 source .venv/bin/activate
 ```
 
 Once activated, your terminal should display `(.venv)`.
 
-#### **Step 4: Install AI / API dependencies**
-
-Bash
+#### **Step 4: Install AI / API dependencies from&#x20;**`requirements.txt`
 
 ```css
-pip install fastapi uvicorn python-multipart
-pip install ultralytics insightface onnxruntime opencv-python numpy
+pip install -r requirements.txt
 ```
 
-These packages support:
+This installs the required Python packages for the AI service, including:
 
 * **InsightFace** → facial recognition
 * **Ultralytics YOLO** → object/person detection
 * **FastAPI** → AI microservice API layer
 * **OpenCV** → webcam / image / frame processing
+* **ONNX Runtime / NumPy** → model inference and numerical processing
+
+#### **Step 5: If new Python packages are installed, update the dependency list**
+
+If you install any new Python library for the AI service, make sure to freeze the updated environment so the team stays in sync.
+
+```css
+pip freeze > requirements.txt
+```
+
+This ensures teammates can recreate the same Python environment using the latest working dependency versions.
 
 ---
 
 ### **3. Environment Configuration 🔐**
 
 Create a `.env` file in the `/server` directory to store your database credentials. **Never commit this file to GitHub.**
-
-Bash
 
 ```css
 DB_URL=postgres://your_render_url_here
@@ -146,16 +150,12 @@ If the AI service later requires environment variables, place them in a separate
 
 #### **Run Backend**
 
-Bash
-
 ```css
 cd server
 npm start
 ```
 
 #### **Run Frontend**
-
-Bash
 
 ```css
 cd client
@@ -165,8 +165,6 @@ npm run dev
 #### **Run AI Service**
 
 From the `ai-service` folder with the virtual environment activated:
-
-Bash
 
 ```css
 uvicorn main:app --reload
@@ -214,8 +212,14 @@ This separation allows the project to keep the main React + Node.js system light
 
 ## **🛡️ Team Protocols**
 
-* 🔄 **Syncing:** Always pull the latest `Main` branch before starting a new feature to avoid merge conflicts.
-* 📦 **Package Management:** If you install a new library (e.g. `npm i axios` or a new Python package), you **must** update the relevant dependency file so the team stays in sync.
-* 🗄️ **Database:** We use a shared PostgreSQL instance. Coordinate with the team before running scripts that might drop or alter shared tables.
-* 🧠 **AI Service:** Always activate the Python virtual environment before running InsightFace, YOLO, or FastAPI scripts.
-* 🔐 **Security:** Never commit `.env`, `.venv`, model artifacts, or private test images to GitHub.
+🔄 **Syncing:** Always pull the latest `Main` branch before starting a new feature to avoid merge conflicts.
+
+📦 **Package Management:** If you install a new library (e.g. `npm i axios` or a new Python package), you **must** update the relevant dependency file so the team stays in sync.
+
+🗄️ **Database:** We use a shared PostgreSQL instance. Coordinate with the team before running scripts that might drop or alter shared tables.
+
+🧠 **AI Service:** Always activate the Python virtual environment before running InsightFace, YOLO, or FastAPI scripts.
+
+🧾 **Python Dependencies:** If the AI service dependencies change, run `pip freeze > requirements.txt` and commit the updated file.
+
+🔐 **Security:** Never commit `.env`, `.venv`, model artifacts, or private test images to GitHub.
