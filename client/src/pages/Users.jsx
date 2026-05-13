@@ -1,11 +1,10 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
-import LogoIcon from '../components/LogoIcon';
+import Sidebar from '../components/Sidebar';
 import '../css/Dashboard.css'; 
 import '../css/Users.css'; 
 
 const Users = () => {
-  // Mock data for your security personnel
+  // Mock data for security personnel
   const usersData = [
     { id: 1, name: "Marcus Tan", role: "Security Lead", access: "All Sectors", status: "Online", lastActive: "Just now" },
     { id: 2, name: "Sarah Jenkins", role: "Floor Manager", access: "Sector 1 & 2", status: "On Patrol", lastActive: "12 mins ago" },
@@ -16,35 +15,11 @@ const Users = () => {
 
   return (
     <div className="dashboard-layout">
-      {/* --- SIDEBAR --- */}
-      <aside className="sidebar">
-        <div className="sidebar-logo">
-          <LogoIcon size={28} />
-          <h2 className="gradient-text" style={{ fontSize: '1.4rem', margin: 0 }}>FlowGuard</h2>
-        </div>
-        <nav className="sidebar-nav">
-          <Link to="/dashboard">Dashboard</Link>
-          <Link to="/cameras">Cameras</Link>
-          <Link to="/innovation">V-Patrol</Link>
-          <Link to="/reports">Reports</Link>
-          <Link to="/users" className="active-nav-item">Users</Link>
-          <Link to="/settings">Settings</Link>
-        </nav>
-        <div className="sidebar-bottom">
-          <div className="user-profile">
-            <span className="user-avatar">👤</span>
-            <span className="user-name">admin</span>
-          </div>
-          <Link to="/" className="logout-btn">Log Out</Link>
-        </div>
-      </aside>
+      {/* 2. Replaced the old <aside> block with our dynamic Sidebar */}
+      <Sidebar />
 
-      {/* --- MAIN USERS CONTENT --- */}
       <main className="dashboard-main">
-        
-        {/* EVERYTHING is now wrapped inside the users-container to enforce the same width */}
         <div className="users-container">
-          
           <header className="dashboard-header">
             <div className="header-titles">
               <h1>User Access Management</h1>

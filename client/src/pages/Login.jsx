@@ -1,20 +1,33 @@
-import React from 'react';
-import { Link, useNavigate } from 'react-router-dom'; // 1. Added useNavigate
+import React, { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import axios from 'axios'; // Added axios
 import NavBar from '../components/NavBar';
 import Footer from '../components/Footer';
-import '../css/Login.css'; 
 import LogoIcon from '../components/LogoIcon';
+import '../css/Login.css';
 
 const Login = () => {
-  const navigate = useNavigate(); // 2. Initialize the navigation hook
+  const navigate = useNavigate();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState(null);
 
-  // 3. This function handles the "fake" authentication
   const handleLogin = (e) => {
-    e.preventDefault(); 
-    
-    // For now, we skip validation and go straight to the dashboard
-    console.log("Authentication successful. Redirecting to Harrison Food Factory Dashboard...");
-    navigate('/dashboard'); 
+    e.preventDefault();
+    setError(null);
+
+    axios.post('http://localhost:5000/user/login', { email, password })
+      .then(res => {
+        localStorage.setItem("accessToken", res.data.token);
+        localStorage.setItem("userRole", res.data.user.role);
+        localStorage.setItem("userName", res.data.user.name);
+        
+        console.log(`Authenticated as ${res.data.user.role}. Welcome to FlowGuard.`);
+        navigate('/dashboard');
+      })
+      .catch(err => {
+        setError(err.response?.data?.message || "Authentication failed");
+      });
   };
 
   return (
@@ -25,23 +38,35 @@ const Login = () => {
           <div className="login-box">
             <header className="login-header">
               <div className="login-logo-centered">
-                <LogoIcon size={48} /> 
+                <LogoIcon size={48} />
               </div>
               <h1>Sign in to FlowGuard</h1>
               <p>Harrison Food Factory IoT Portal</p>
             </header>
 
-            {/* 4. Link the form submission to our handleLogin function */}
             <form className="login-form" onSubmit={handleLogin}>
+              {error && <div className="error-message" style={{color: 'red', marginBottom: '10px'}}>{error}</div>}
+              
               <div className="input-group">
                 <label>Authorized Email</label>
-                <input type="email" placeholder="name@company.com" required />
+                <input 
+                  type="email" 
+                  placeholder="name@company.com" 
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required 
+                />
               </div>
 
               <div className="input-group">
                 <label>Access Key</label>
-                <input type="password" placeholder="••••••••" required />
-                
+                <input 
+                  type="password" 
+                  placeholder="••••••••" 
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required 
+                />
                 <div className="forgot-link-wrapper">
                   <Link to="/forgot-password" className="forgot-link">Forgot Key?</Link>
                 </div>
@@ -54,7 +79,6 @@ const Login = () => {
 
             <footer className="login-footer">
               <p className="security-badge">Protected by FlowGuard AI Monitoring</p>
-              
               <div className="auth-links">
                 <Link to="/register">New to FlowGuard?</Link>
               </div>
@@ -62,7 +86,6 @@ const Login = () => {
           </div>
         </div>
       </div>
-
       <Footer />
     </div>
   );

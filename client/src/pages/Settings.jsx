@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import LogoIcon from '../components/LogoIcon';
+import Sidebar from '../components/Sidebar';
 import '../css/Dashboard.css';
 import '../css/Settings.css';
 
@@ -11,28 +10,8 @@ const Settings = () => {
 
   return (
     <div className="dashboard-layout">
-      {/* --- SIDEBAR (Exact match to your dashboard) --- */}
-      <aside className="sidebar">
-        <div className="sidebar-logo">
-          <LogoIcon size={28} />
-          <h2 className="gradient-text" style={{ fontSize: '1.4rem', margin: 0 }}>FlowGuard</h2>
-        </div>
-        <nav className="sidebar-nav">
-          <Link to="/dashboard">Dashboard</Link>
-          <Link to="/cameras">Cameras</Link>
-          <Link to="/innovation">V-Patrol</Link>
-          <Link to="/reports">Reports</Link>
-          <Link to="/users">Users</Link>
-          <Link to="/settings" className="active-nav-item">Settings</Link>
-        </nav>
-        <div className="sidebar-bottom">
-          <div className="user-profile">
-            <span className="user-avatar">👤</span>
-            <span className="user-name">admin</span>
-          </div>
-          <Link to="/" className="logout-btn">Log Out</Link>
-        </div>
-      </aside>
+      {/* 2. Replace the entire <aside> block with this one line */}
+      <Sidebar />
 
       {/* --- MAIN SETTINGS CONTENT --- */}
       <main className="dashboard-main">
@@ -41,7 +20,6 @@ const Settings = () => {
             <h1>System Configuration</h1>
             <p>Manage AI thresholds, camera networks, and alert routing</p>
           </div>
-          {/* Button removed from here! */}
         </header>
 
         <div className="settings-grid">
@@ -132,7 +110,6 @@ const Settings = () => {
             </div>
           </section>
 
-          {/* SAVE BUTTON NOW LIVES AT THE BOTTOM */}
           <div className="settings-actions">
             <button className="save-btn">Save Changes</button>
           </div>

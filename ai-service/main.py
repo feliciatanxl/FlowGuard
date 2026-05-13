@@ -1,42 +1,94 @@
-from fastapi import FastAPI, UploadFile, File
-from ultralytics import YOLO
-import shutil
 import os
+import cv2
+import numpy as np
+import psycopg2
+import json
+from fastapi import FastAPI, UploadFile, File
+from insightface.app import FaceAnalysis
+from dotenv import load_dotenv
 
+load_dotenv()
 app = FastAPI()
 
-# Load the AI brain just like in the test script
-model = YOLO("yolo26n.pt") 
+# 1. Initialize AI
+print("Loading InsightFace Engine...")
+face_app = FaceAnalysis(name='buffalo_l')
+face_app.prepare(ctx_id=0, det_size=(640, 640))
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+# 2. Database Connection Helper
+def get_db_connection():
+    return psycopg2.connect(
+        host=os.getenv("DB_HOST"),
+        database=os.getenv("DB_NAME"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PWD")
+    )
 
-@app.post("/detect")
-async def detect(file: UploadFile = File(...)):
-    # 1. Save the uploaded image temporarily
-    temp_path = f"temp_{file.filename}"
-    with open(temp_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+# 3. Memory bank for the "Security Scan"
+known_faces = []
+
+@app.on_event("startup")
+def load_authorized_faces():
+    """Fetches all staff embeddings from Postgres on startup"""
+    global known_faces
+    known_faces = []
+    
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        # We assume you have a 'staff' table with a 'face_embedding' column
+        cur.execute("SELECT name, face_embedding FROM staff_members")
+        rows = cur.fetchall()
         
-    # 2. Run the AI on the image
-    results = model(temp_path)
-    
-    # 3. Create a clean list of what the AI found
-    detections = []
-    for r in results:
-        for box in r.boxes:
-            cls_id = int(box.cls.item())
-            conf = float(box.conf.item())
-            label = model.names[cls_id] # Translates math into words (e.g., "teddy bear")
+        for name, embedding_json in rows:
+            # Convert the stored JSON string back into a NumPy array
+            embedding = np.array(json.loads(embedding_json), dtype=np.float32)
+            known_faces.append({"name": name, "embedding": embedding})
             
-            detections.append({
-                "label": label,
-                "confidence": round(conf, 4)
-            })
-            
-    # 4. Delete the temporary image so hard drive doesn't get full
-    os.remove(temp_path)
+        cur.close()
+        conn.close()
+        print(f"✅ Security Scan Ready: {len(known_faces)} staff members loaded.")
+    except Exception as e:
+        print(f"❌ DB Load Error: {e}")
+
+# 4. The Scan Endpoint
+@app.post("/recognize")
+async def recognize(file: UploadFile = File(...)):
+    # Read the incoming CCTV frame
+    contents = await file.read()
+    nparr = np.frombuffer(contents, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     
-    # 5. Send the results back as JSON!
-    return {"detections": detections}
+    # Run the scan
+    live_faces = face_app.get(img)
+    results = []
+    
+    for face in live_faces:
+        best_name = "UNAUTHORIZED"
+        highest_similarity = 0.0
+        
+        for known in known_faces:
+            # Mathematical similarity check
+            sim = np.dot(face.embedding, known["embedding"]) / (
+                np.linalg.norm(face.embedding) * np.linalg.norm(known["embedding"])
+            )
+            if sim > highest_similarity:
+                highest_similarity = float(sim)
+                # Slightly lower threshold for hairnets/dull lighting
+                if sim > 0.45: 
+                    best_name = known["name"]
+                    
+        results.append({
+            "status": "AUTHORIZED" if best_name != "UNAUTHORIZED" else "UNAUTHORIZED_ACCESS",
+            "name": best_name,
+            "confidence": round(highest_similarity, 4),
+            "box": face.bbox.astype(int).tolist()
+        })
+        
+    return {"faces": results}
+
+# Helper to refresh the list manually if a new staff joins
+@app.get("/refresh")
+def refresh():
+    load_authorized_faces()
+    return {"message": "Staff list updated from database"}

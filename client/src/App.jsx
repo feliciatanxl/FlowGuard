@@ -12,24 +12,46 @@ import SystemError from "./pages/SystemError";
 import AIInnovation from './pages/AIInnovation';
 import Settings from './pages/Settings';
 import Users from './pages/Users';
-import AIChatPopup from './components/AIChatPopup'; // <-- Correct import!
+import AIChatPopup from './components/AIChatPopup'; 
+import ProtectedRoute from './components/ProtectedRoute';
 import './App.css';
 
 function App() {
   return (
     <div className="App bg-[#0f172a] min-h-screen text-slate-200 selection:bg-blue-500/30">
       <Routes>
+        {/* --- Public Routes --- */}
         <Route path="/" element={<Home />} />
         <Route path="/system-health" element={<SystemHealth />} />
         <Route path="/contact" element={<Contact />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotKey />} />
-        <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/innovation" element={<AIInnovation />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/users" element={<Users />} />
+
+        {/* --- Protected Dashboard Routes --- */}
+        {/* These require a valid Access Key (Token) to view */}
+        <Route path="/dashboard" element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        } />
         
+        <Route path="/settings" element={
+          <ProtectedRoute>
+            <Settings />
+          </ProtectedRoute>
+        } />
+
+        {/* --- Admin Only Routes --- */}
+        {/* Only users with the 'FM' (Facilities Manager) role can enter this sector */}
+        <Route path="/users" element={
+          <ProtectedRoute requiredRole="FM">
+            <Users />
+          </ProtectedRoute>
+        } />
+        
+        {/* --- System Error Pages --- */}
         <Route path="/error/400" element={
           <SystemError 
             code="400" 
@@ -66,13 +88,11 @@ function App() {
             returnText="Retry Connection"
           />
         } />
+        
         <Route path="*" element={<NotFound />} />
       </Routes>
 
-      {/* --- ADD THE CHAT BOT HERE --- */}
-      {/* It sits outside the Routes so it appears on EVERY page */}
       <AIChatPopup />
-
     </div>
   );
 }
