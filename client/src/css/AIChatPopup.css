@@ -1,7 +1,7 @@
 .chat-popup-wrapper {
   position: fixed;
-  bottom: 30px;
-  right: 30px;
+  bottom: 90px;
+  right: 7px;
   z-index: 1000;
   font-family: 'Inter', sans-serif;
 }

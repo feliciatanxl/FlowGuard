@@ -1,6 +1,7 @@
 import React, { useState } from 'react'; 
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios'; 
+import { useGoogleReCaptcha } from 'react-google-recaptcha-v3'; // 1. Import the hook
 import NavBar from '../components/NavBar';
 import Footer from '../components/Footer';
 import LogoIcon from '../components/LogoIcon';
@@ -14,20 +15,41 @@ const Register = () => {
   const [role, setRole] = useState('Tenant'); 
   const [error, setError] = useState(null);
 
-  const handleRegister = (e) => {
+  // 2. Initialize the reCAPTCHA engine
+  const { executeRecaptcha } = useGoogleReCaptcha();
+
+  // 3. Make the function async
+  const handleRegister = async (e) => {
     e.preventDefault();
     setError(null);
 
-    const payload = { name, email, password, role };
+    // 4. Safety check: Ensure reCAPTCHA is ready
+    if (!executeRecaptcha) {
+      setError("Security system is still loading. Please try again.");
+      return;
+    }
 
-    axios.post('http://localhost:5000/user/register', payload)
-      .then(res => {
-        console.log("Registration request submitted for approval.");
-        navigate('/login');
-      })
-      .catch(err => {
-        setError(err.response?.data?.errors?.[0] || "Registration failed. Please try again.");
-      });
+    try {
+      // 5. Generate the token for this specific registration attempt
+      const token = await executeRecaptcha('register_submit');
+
+      // 6. Include the token in your payload
+      const payload = { 
+        name, 
+        email, 
+        password, 
+        role,
+        recaptchaToken: token // Pass it to the backend!
+      };
+
+      const res = await axios.post('http://localhost:5000/user/register', payload);
+      console.log("Registration request submitted for approval.");
+      navigate('/login');
+
+    } catch (err) {
+      // Handle both reCAPTCHA rejections and validation errors
+      setError(err.response?.data?.errors?.[0] || err.response?.data?.message || "Registration failed. Please try again.");
+    }
   };
 
   return (
@@ -81,7 +103,6 @@ const Register = () => {
                 />
               </div>
 
-              {/* Added Role Selection for RBAC */}
               <div className="input-group">
                 <label>Account Type</label>
                 <select 

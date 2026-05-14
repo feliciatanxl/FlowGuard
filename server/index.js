@@ -20,6 +20,8 @@ const incidentRoute = require('./routes/incident');
 app.use("/api/incident", incidentRoute);
 const userRoute = require('./routes/user');
 app.use("/user", userRoute);
+const bookingRoutes = require('./routes/booking');
+app.use('/api/bookings', bookingRoutes);
 
 // Sync DB and Start Server
 const db = require('./models');

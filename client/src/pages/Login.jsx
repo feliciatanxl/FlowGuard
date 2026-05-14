@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import axios from 'axios'; // Added axios
+import axios from 'axios';
+import { useGoogleReCaptcha } from 'react-google-recaptcha-v3'; // 1. Import the hook
 import NavBar from '../components/NavBar';
 import Footer from '../components/Footer';
 import LogoIcon from '../components/LogoIcon';
@@ -13,22 +14,43 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
 
-  const handleLogin = (e) => {
+  // 2. Initialize the reCAPTCHA engine
+  const { executeRecaptcha } = useGoogleReCaptcha();
+
+  // 3. Make this function async so we can await the token
+  const handleLogin = async (e) => {
     e.preventDefault();
     setError(null);
 
-    axios.post('http://localhost:5000/user/login', { email, password })
-      .then(res => {
-        localStorage.setItem("accessToken", res.data.token);
-        localStorage.setItem("userRole", res.data.user.role);
-        localStorage.setItem("userName", res.data.user.name);
-        
-        console.log(`Authenticated as ${res.data.user.role}. Welcome to FlowGuard.`);
-        navigate('/dashboard');
-      })
-      .catch(err => {
-        setError(err.response?.data?.message || "Authentication failed");
+    // 4. Safety check: Ensure reCAPTCHA is ready
+    if (!executeRecaptcha) {
+      setError("Security system is still loading. Please try again in a second.");
+      return;
+    }
+
+    try {
+      // 5. Generate the one-time token for this login attempt
+      const token = await executeRecaptcha('login_submit');
+
+      // 6. Pass the token in your Axios request
+      const res = await axios.post('http://localhost:5000/user/login', { 
+        email, 
+        password,
+        recaptchaToken: token // The "Key" your backend will check
       });
+
+      // Existing logic
+      localStorage.setItem("accessToken", res.data.token);
+      localStorage.setItem("userRole", res.data.user.role);
+      localStorage.setItem("userName", res.data.user.name);
+      
+      console.log(`Authenticated as ${res.data.user.role}. Welcome to FlowGuard.`);
+      navigate('/dashboard');
+
+    } catch (err) {
+      // Handle both reCAPTCHA failures and wrong passwords
+      setError(err.response?.data?.message || "Authentication failed");
+    }
   };
 
   return (

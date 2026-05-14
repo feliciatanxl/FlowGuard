@@ -38,6 +38,10 @@ const Sidebar = () => {
           <NavLink to="/dashboard" onClick={() => setIsOpen(false)}>Dashboard</NavLink>
           <NavLink to="/cameras" onClick={() => setIsOpen(false)}>Cameras</NavLink>
           <NavLink to="/vpatrol" onClick={() => setIsOpen(false)}>V-Patrol</NavLink>
+          
+          {/* Add this line - visible to everyone */}
+          <NavLink to="/logistics" onClick={() => setIsOpen(false)}>Logistics & Bays</NavLink>
+
           {user.role === 'FM' && <NavLink to="/users" onClick={() => setIsOpen(false)}>Users</NavLink>}
           <NavLink to="/settings" onClick={() => setIsOpen(false)}>Settings</NavLink>
         </nav>

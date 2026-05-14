@@ -50,3 +50,7 @@ html {
 section[id] {
   scroll-margin-top: 80px; 
 }
+
+.grecaptcha-badge { 
+    bottom: 20px !important; 
+}
