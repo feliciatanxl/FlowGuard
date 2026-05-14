@@ -1,14 +1,14 @@
 import React from 'react';
 import Sidebar from '../components/Sidebar';
 import '../css/Dashboard.css';
+import '../css/VPatrol.css'; // Add this specific CSS file
 
 const VPatrol = () => {
-  // Mock data for AI Incident Logs
   const incidentLogs = [
-    { id: '#LOG-882', time: '10:24 AM', type: 'PPE Violation', desc: 'Missing hardhat detected in Sector 2.', severity: 'high' },
-    { id: '#LOG-881', time: '09:15 AM', type: 'Unauthorized Access', desc: 'Unknown personnel in Server Room.', severity: 'critical' },
-    { id: '#LOG-880', time: '08:05 AM', type: 'Hygiene Check', desc: 'Routine scan completed successfully.', severity: 'safe' },
-    { id: '#LOG-879', time: 'Yesterday', type: 'Crowd Anomaly', desc: 'Congestion detected at Shift Change point.', severity: 'medium' },
+    { id: '#LOG-882', time: '10:24 AM', type: 'PPE Violation', desc: 'Missing hardhat detected in Sector 2.', severity: 'high', icon: '⚠️' },
+    { id: '#LOG-881', time: '09:15 AM', type: 'Unauthorized Access', desc: 'Unknown personnel in Server Room.', severity: 'critical', icon: '🚨' },
+    { id: '#LOG-880', time: '08:05 AM', type: 'Hygiene Check', desc: 'Routine scan completed successfully.', severity: 'safe', icon: '✅' },
+    { id: '#LOG-879', time: 'Yesterday', type: 'Crowd Anomaly', desc: 'Congestion detected at Shift Change point.', severity: 'medium', icon: '👥' },
   ];
 
   return (
@@ -20,7 +20,7 @@ const VPatrol = () => {
             <h1>V-Patrol AI Log</h1>
             <p>Automated anomaly detection and safety incident timeline</p>
           </div>
-          <button className="action-btn edit-btn">Export PDF</button>
+          <button className="export-pdf-btn">Export PDF</button>
         </header>
 
         <div className="vpatrol-container">
@@ -32,7 +32,10 @@ const VPatrol = () => {
                   <span>{log.id}</span>
                 </div>
                 <div className="incident-details">
-                  <h3>{log.type}</h3>
+                  <div className="type-group">
+                    <span className="log-icon">{log.icon}</span>
+                    <h3>{log.type}</h3>
+                  </div>
                   <p>{log.desc}</p>
                 </div>
                 <div className="incident-action">

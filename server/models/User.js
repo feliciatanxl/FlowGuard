@@ -14,12 +14,60 @@ module.exports = (sequelize, DataTypes) => {
             allowNull: false
         },
         role: {
-            type: DataTypes.ENUM('FM', 'Tenant'),
+            type: DataTypes.ENUM('FM', 'Tenant', 'Staff'), 
             defaultValue: 'Tenant'
+        },
+        // --- HYBRID REGISTRATION CODE LOGIC ---
+        companyCode: {
+            type: DataTypes.STRING(50), 
+            allowNull: true,
+            unique: true // One active code per Tenant
+        },
+        codeCreatedAt: {
+            type: DataTypes.DATE,
+            allowNull: true // Tracks the 48-hour expiration clock
+        },
+        codeMaxUsage: {
+            type: DataTypes.INTEGER,
+            defaultValue: 10,
+            allowNull: false // Max "punches" on the card
+        },
+        codeCurrentUsage: {
+            type: DataTypes.INTEGER,
+            defaultValue: 0,
+            allowNull: false // Current count of registrations
+        },
+        // ---------------------------------------
+        managerId: {
+            type: DataTypes.INTEGER,
+            allowNull: true
+        },
+        isActive: {
+            type: DataTypes.BOOLEAN,
+            defaultValue: true,
+            allowNull: false
         }
     }, {
         tableName: 'users',
-        paranoid: true
+        paranoid: false // Hard deletes as requested earlier
     });
+
+    User.associate = (models) => {
+        User.belongsTo(models.User, {
+            as: 'Manager',
+            foreignKey: 'managerId'
+        });
+        
+        User.hasMany(models.User, {
+            as: 'StaffMembers',
+            foreignKey: 'managerId'
+        });
+
+        User.hasMany(models.Attendance, {
+            foreignKey: 'userId',
+            as: 'Attendances'
+        });
+    };
+
     return User;
 };

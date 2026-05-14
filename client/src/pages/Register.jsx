@@ -1,7 +1,7 @@
 import React, { useState } from 'react'; 
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios'; 
-import { useGoogleReCaptcha } from 'react-google-recaptcha-v3'; // 1. Import the hook
+import { useGoogleReCaptcha } from 'react-google-recaptcha-v3'; 
 import NavBar from '../components/NavBar';
 import Footer from '../components/Footer';
 import LogoIcon from '../components/LogoIcon';
@@ -13,33 +13,31 @@ const Register = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('Tenant'); 
+  const [tenantCode, setTenantCode] = useState(''); // 1. New state for the secret code
   const [error, setError] = useState(null);
 
-  // 2. Initialize the reCAPTCHA engine
   const { executeRecaptcha } = useGoogleReCaptcha();
 
-  // 3. Make the function async
   const handleRegister = async (e) => {
     e.preventDefault();
     setError(null);
 
-    // 4. Safety check: Ensure reCAPTCHA is ready
     if (!executeRecaptcha) {
       setError("Security system is still loading. Please try again.");
       return;
     }
 
     try {
-      // 5. Generate the token for this specific registration attempt
       const token = await executeRecaptcha('register_submit');
 
-      // 6. Include the token in your payload
+      // 2. Include the tenantCode in the payload ONLY if they are staff
       const payload = { 
         name, 
         email, 
         password, 
         role,
-        recaptchaToken: token // Pass it to the backend!
+        tenantCode: role === 'Staff' ? tenantCode : null, 
+        recaptchaToken: token 
       };
 
       const res = await axios.post('http://localhost:5000/user/register', payload);
@@ -47,7 +45,6 @@ const Register = () => {
       navigate('/login');
 
     } catch (err) {
-      // Handle both reCAPTCHA rejections and validation errors
       setError(err.response?.data?.errors?.[0] || err.response?.data?.message || "Registration failed. Please try again.");
     }
   };
@@ -109,12 +106,31 @@ const Register = () => {
                   className="role-select"
                   value={role}
                   onChange={(e) => setRole(e.target.value)}
-                  style={{ width: '100%', padding: '12px', borderRadius: '8px', background: '#1e293b', color: 'white', border: '1px solid #334155' }}
+                  style={{ width: '100%', padding: '12px', borderRadius: '8px', background: '#1e293b', color: 'white', border: '1px solid #334155', marginBottom: role === 'Staff' ? '0' : '15px' }}
                 >
                   <option value="Tenant">Tenant / Unit Owner</option>
                   <option value="FM">Facilities Manager (Admin)</option>
+                  <option value="Staff">Factory Staff</option> {/* 3. Added Staff Option */}
                 </select>
               </div>
+
+              {/* 4. The Blockade: Only show this if "Staff" is selected */}
+              {role === 'Staff' && (
+                <div className="input-group" style={{ animation: 'fadeIn 0.3s ease-in-out', marginTop: '15px', marginBottom: '15px' }}>
+                  <label>Company Registration Code</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. HARRISON-99X" 
+                    value={tenantCode}
+                    onChange={(e) => setTenantCode(e.target.value)}
+                    required={role === 'Staff'} // Force them to fill it out
+                    style={{ borderColor: '#3b82f6', outline: 'none', boxShadow: '0 0 0 1px #3b82f6' }} // Give it a nice blue highlight to draw attention
+                  />
+                  <small style={{ color: '#94a3b8', fontSize: '0.75rem', marginTop: '5px', display: 'block' }}>
+                    Ask your unit manager for this code.
+                  </small>
+                </div>
+              )}
 
               <button type="submit" className="login-submit-btn">
                 Submit Request <span className="button-icon">→</span>

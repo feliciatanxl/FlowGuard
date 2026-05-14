@@ -19,6 +19,8 @@ import Cameras from './pages/Cameras';
 import DriverPass from './pages/DriverPass';
 import TenantLogistics from './pages/TenantLogistics';
 import DriverPortal from './pages/DriverPortal';
+import StaffManagement from './pages/StaffManagement';
+import UserLogs from './pages/UserLogs';
 import './App.css';
 
 function App() {
@@ -29,6 +31,8 @@ function App() {
         <Route path="/" element={<Home />} />
         <Route path="/system-health" element={<SystemHealth />} />
         <Route path="/driver-pass/:bookingId" element={<DriverPass />} />
+        <Route path="/user-logs/:id" element={<UserLogs />} />
+        <Route path="/staff" element={<StaffManagement />} />
         <Route path="/contact" element={<Contact />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />

@@ -1,0 +1,438 @@
+/* =========================================
+   DESKTOP LAYOUT (Full-Width / Stretched)
+   ========================================= */
+
+.management-container {
+    width: 100%;
+    max-width: none; 
+    margin: 0;
+    padding: 1.5rem 0; 
+    color: #f8fafc;
+    animation: slideUpFade 0.5s ease-out;
+}
+
+/* Header Tweaks */
+.management-header h1 {
+    font-size: 2rem;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    margin-bottom: 0.25rem;
+}
+
+/* --- Code Generator Card --- */
+.code-generator-card {
+    position: relative;
+    width: 100%;
+    box-sizing: border-box; 
+    overflow: hidden;
+    transition: all 0.3s ease;
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    padding: 30px; 
+    border-radius: 12px; 
+    margin-bottom: 30px;
+    border: 1px solid #334155;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.code-generator-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 4px;
+    height: 100%;
+    background: #3b82f6; /* Identity color for David Tenant's Unit */
+}
+
+.code-flex-row {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.code-display-box {
+    background: #020617; 
+    padding: 14px 28px; 
+    border-radius: 8px; 
+    border: 1px dashed #3b82f6; 
+    color: #60a5fa; 
+    font-family: 'JetBrains Mono', 'Courier New', monospace; 
+    font-weight: 700; 
+    font-size: 1.6rem;
+    letter-spacing: 4px;
+    box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
+    display: inline-block;
+}
+
+/* --- Table Styles --- */
+.table-container {
+    width: 100%;
+    box-sizing: border-box;
+    background: #0f172a;
+    border-radius: 16px;
+    border: 1px solid #1e293b;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2);
+    margin-top: 1rem;
+    overflow: hidden;
+}
+
+.management-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.management-table th {
+    background: rgba(30, 41, 59, 0.5);
+    padding: 1.25rem 1.5rem;
+    color: #64748b;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    text-align: left;
+}
+
+.management-table td {
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid #1e293b;
+    color: #e2e8f0;
+    vertical-align: middle;
+}
+
+.management-table tr:hover {
+    background: rgba(59, 130, 246, 0.03); 
+}
+
+/* Personnel Info Styling */
+.user-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.user-initial {
+    width: 32px;
+    height: 32px;
+    background: #3b82f6;
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-weight: 700;
+    font-size: 0.85rem;
+}
+
+/* --- Status & Action Buttons --- */
+.status-badge {
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.status-badge.active {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.edit-btn {
+    color: #94a3b8;
+    background: #1e293b;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    transition: all 0.2s;
+    margin-right: 8px;
+    border: none;
+    cursor: pointer;
+}
+
+.edit-btn:hover {
+    color: #fff;
+    background: #334155;
+}
+
+/* Danger Button Styling */
+.revoke-btn {
+    color: #f43f5e;
+    font-size: 0.8rem;
+    font-weight: 600;
+    background: rgba(244, 63, 94, 0.1); 
+    border: 1px solid rgba(244, 63, 94, 0.2);
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.revoke-btn:hover {
+    background: #f43f5e;
+    color: white;
+    box-shadow: 0 0 15px rgba(244, 63, 94, 0.4);
+}
+
+/* =========================================
+   CUSTOM MODAL DESIGN (Security Deletion)
+   ========================================= */
+
+.modal-overlay {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(2, 6, 23, 0.85);
+    backdrop-filter: blur(8px);
+    display: flex; justify-content: center; align-items: center;
+    z-index: 2000;
+}
+
+.modal-content {
+    background: #1e293b;
+    padding: 30px;
+    border-radius: 16px;
+    max-width: 450px;
+    width: 90%;
+    text-align: center;
+    border: 1px solid #334155;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}
+
+.delete-variant {
+    border: 1px solid rgba(244, 63, 94, 0.3) !important;
+    box-shadow: 0 0 30px rgba(244, 63, 94, 0.1) !important;
+}
+
+.red-glow {
+    text-shadow: 0 0 15px rgba(244, 63, 94, 0.8);
+    font-size: 2.5rem;
+    display: block;
+    margin-bottom: 10px;
+}
+
+.warning-subtext {
+    background: rgba(244, 63, 94, 0.05);
+    padding: 15px;
+    border-radius: 8px;
+    border: 1px solid rgba(244, 63, 94, 0.1);
+    color: #94a3b8;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    margin: 15px 0;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.cancel-btn {
+    background: #334155;
+    color: #cbd5e1;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.confirm-delete-btn {
+    background: #ef4444;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.confirm-delete-btn:hover {
+    background: #dc2626;
+    box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
+}
+
+/* --- Toast Notifications --- */
+.toast-notification {
+    position: fixed;
+    top: 30px;
+    right: 30px;
+    min-width: 300px;
+    padding: 16px 20px;
+    border-radius: 12px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    z-index: 1000;
+    animation: toastSlideIn 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+.toast-notification.success { border-left: 4px solid #10b981; }
+.toast-notification.error { border-left: 4px solid #f43f5e; }
+
+/* =========================================
+   MOBILE RESPONSIVENESS (Under 768px)
+   ========================================= */
+
+@media (max-width: 768px) {
+    .management-container {
+        padding: 1rem 0;
+    }
+
+    .dashboard-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+
+    /* 1. Fix the Title & Capacity Badge Overlap */
+    /* Targets the flex div inside the code card */
+    .code-generator-card > div:first-child {
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: 12px;
+    }
+
+    .code-generator-card div[style*="text-align: right"] {
+        text-align: left !important;
+        width: 100%;
+    }
+
+    .code-generator-card h3 {
+        font-size: 1.1rem;
+        margin-bottom: 5px;
+    }
+
+    /* 2. Stack the Code Box and Refresh Button */
+    .code-flex-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 15px;
+    }
+
+    .code-display-box {
+        font-size: 1.2rem;
+        letter-spacing: 3px;
+        text-align: center;
+        width: 100%;
+        padding: 12px;
+    }
+
+    .code-generator-card .edit-btn {
+        width: 100%;
+        margin: 0;
+        padding: 15px !important;
+    }
+
+    /* 3. Refine Table-to-Card Transformation */
+    .management-table thead {
+        display: none; 
+    }
+
+    .management-table, 
+    .management-table tbody, 
+    .management-table tr, 
+    .management-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .management-table tr {
+        margin-bottom: 15px;
+        background: #1e293b; /* Solid color for better contrast on mobile */
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 8px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
+    .management-table td {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .management-table td:last-child {
+        border-bottom: none;
+        justify-content: center;
+        gap: 10px;
+        padding: 20px 10px 10px 10px;
+    }
+
+    /* Create the Left-Side Labels */
+    .management-table td::before {
+        content: attr(data-label);
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 0.65rem;
+        color: #94a3b8;
+        letter-spacing: 0.05em;
+    }
+
+    .user-info {
+        justify-content: flex-end;
+        gap: 8px;
+    }
+
+    .user-initial {
+        width: 28px;
+        height: 28px;
+        font-size: 0.75rem;
+    }
+
+    /* Adjust Action Buttons for easier tapping */
+    .management-table .edit-btn, 
+    .management-table .revoke-btn {
+        flex: 1;
+        text-align: center;
+        padding: 10px;
+        margin: 0;
+    }
+
+    /* 4. Modal & Toast Adjustments */
+    .modal-content {
+        width: 95%;
+        padding: 20px;
+    }
+
+    .toast-notification {
+        top: 15px;
+        right: 15px;
+        left: 15px;
+        min-width: auto;
+    }
+}
+
+/* --- Animations --- */
+@keyframes slideUpFade {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes toastSlideIn {
+    from { transform: translateX(120%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+/* Add this to Management.css */
+.expired-box {
+    border: 1px solid #f43f5e !important;
+    color: #f43f5e !important;
+    opacity: 0.6;
+    text-decoration: line-through;
+}
+
+/* Ensure badges look like solid UI elements */
+.status-badge {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    letter-spacing: 0.5px;
+}

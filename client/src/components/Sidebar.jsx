@@ -38,11 +38,18 @@ const Sidebar = () => {
           <NavLink to="/dashboard" onClick={() => setIsOpen(false)}>Dashboard</NavLink>
           <NavLink to="/cameras" onClick={() => setIsOpen(false)}>Cameras</NavLink>
           <NavLink to="/vpatrol" onClick={() => setIsOpen(false)}>V-Patrol</NavLink>
-          
-          {/* Add this line - visible to everyone */}
           <NavLink to="/logistics" onClick={() => setIsOpen(false)}>Logistics & Bays</NavLink>
 
-          {user.role === 'FM' && <NavLink to="/users" onClick={() => setIsOpen(false)}>Users</NavLink>}
+          {/* 1. Visible ONLY to the Boss (Tenant) */}
+          {user.role === 'Tenant' && (
+            <NavLink to="/staff" onClick={() => setIsOpen(false)}>My Staff</NavLink>
+          )}
+
+          {/* 2. Visible ONLY to the Admin (FM) */}
+          {user.role === 'FM' && (
+            <NavLink to="/users" onClick={() => setIsOpen(false)}>Users</NavLink>
+          )}
+
           <NavLink to="/settings" onClick={() => setIsOpen(false)}>Settings</NavLink>
         </nav>
 
@@ -51,7 +58,10 @@ const Sidebar = () => {
             <span className="user-avatar">👤</span>
             <div className="user-meta">
               <span className="user-name">{user.name}</span>
-              <span className="user-role-tag">{user.role === 'FM' ? 'Manager' : 'Tenant'}</span>
+              <span className="user-role-tag">
+                {/* 3. Updated role display logic */}
+                {user.role === 'FM' ? 'Manager' : user.role === 'Tenant' ? 'Tenant' : 'Staff'}
+              </span>
             </div>
           </div>
           <button onClick={handleLogout} className="logout-btn">Log Out</button>

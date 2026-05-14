@@ -1,0 +1,169 @@
+/* =========================================
+   DESKTOP LAYOUT (Full-Width / Stretched)
+   ========================================= */
+
+.vpatrol-container {
+    width: 100%;
+    /* Remove max-width and margins to let it align with the header's edges */
+    max-width: none; 
+    margin: 0;
+    /* Vertical padding only to separate from header, 0 on sides to match title/btn */
+    padding: 20px 0 40px 0; 
+    background: transparent; /* Removes the outer blue background */
+    border: none;            /* Removes the outer border */
+    box-shadow: none;        /* Removes any outer glow */
+}
+
+.incident-feed {
+    display: flex;
+    flex-direction: column;
+    gap: 12px; /* Tighter gap for a cleaner, modern look */
+    width: 100%;
+}
+
+.incident-row {
+    background-color: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 20px 24px;
+    display: grid;
+    /* Fixed width for sides, 1fr lets the middle text area stretch to match header length */
+    grid-template-columns: 140px 1fr 180px; 
+    align-items: center;
+    gap: 30px; 
+    transition: all 0.2s ease-in-out;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.incident-row:hover {
+    border-color: #475569;
+    background-color: #242f42; /* Slightly lighter on hover */
+    transform: translateX(4px); /* Subtle "nudge" feedback */
+}
+
+/* --- Severity Indicators (Left Border) --- */
+.severity-critical { border-left: 6px solid #f87171; }
+.severity-high { border-left: 6px solid #fb923c; }
+.severity-medium { border-left: 6px solid #fbbf24; }
+.severity-safe { border-left: 6px solid #4ade80; }
+
+/* --- Left Section: Time & ID --- */
+.incident-time {
+    display: flex;
+    flex-direction: column;
+}
+
+.incident-time strong { 
+    color: #f8fafc; 
+    font-size: 1rem; 
+}
+
+.incident-time span { 
+    color: #94a3b8; 
+    font-size: 0.8rem; 
+    font-family: monospace; 
+}
+
+/* --- Middle Section: Details --- */
+.type-group { 
+    display: flex; 
+    align-items: center; 
+    gap: 10px; 
+    margin-bottom: 5px; 
+}
+
+.log-icon { 
+    font-size: 1.3rem; 
+}
+
+.incident-details h3 { 
+    color: #f8fafc; 
+    margin: 0; 
+    font-size: 1.15rem; 
+}
+
+.incident-details p { 
+    color: #cbd5e1; 
+    margin: 0; 
+    font-size: 1rem; 
+    line-height: 1.5; 
+}
+
+/* --- Right Section: Action Button --- */
+.incident-action {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.review-btn {
+    background: rgba(59, 130, 246, 0.1);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s;
+}
+
+.review-btn:hover {
+    background: #3b82f6;
+    color: white;
+}
+
+/* --- Header Button Consistency --- */
+.export-pdf-btn {
+    background-color: #334155;
+    color: white;
+    border: 1px solid #475569;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.export-pdf-btn:hover {
+    background-color: #475569;
+}
+
+/* =========================================
+   MOBILE VIEW (Under 768px)
+   ========================================= */
+@media (max-width: 768px) {
+    .vpatrol-container {
+        padding: 10px 0;
+    }
+
+    .incident-row {
+        grid-template-columns: 1fr; /* Stack elements vertically on mobile */
+        padding: 15px;
+        gap: 15px;
+    }
+
+    .incident-time {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #334155;
+        padding-bottom: 10px;
+    }
+
+    .incident-details {
+        text-align: left;
+    }
+
+    .incident-action {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .review-btn {
+        width: 100%; /* Full width button for easy tapping */
+        padding: 14px;
+        background: #3b82f6;
+        color: white;
+    }
+}

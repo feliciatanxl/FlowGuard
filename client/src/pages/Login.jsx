@@ -43,6 +43,7 @@ const Login = () => {
       localStorage.setItem("accessToken", res.data.token);
       localStorage.setItem("userRole", res.data.user.role);
       localStorage.setItem("userName", res.data.user.name);
+      localStorage.setItem("userId", res.data.user.id);
       
       console.log(`Authenticated as ${res.data.user.role}. Welcome to FlowGuard.`);
       navigate('/dashboard');
