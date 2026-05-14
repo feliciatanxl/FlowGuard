@@ -1,21 +1,42 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import axios from 'axios';
 import Sidebar from '../components/Sidebar';
 import '../css/Dashboard.css'; 
 import '../css/Users.css'; 
 
 const Users = () => {
-  // Mock data for security personnel
-  const usersData = [
-    { id: 1, name: "Marcus Tan", role: "Security Lead", access: "All Sectors", status: "Online", lastActive: "Just now" },
-    { id: 2, name: "Sarah Jenkins", role: "Floor Manager", access: "Sector 1 & 2", status: "On Patrol", lastActive: "12 mins ago" },
-    { id: 3, name: "David Lee", role: "IT Administrator", access: "Command Center", status: "Offline", lastActive: "2 hours ago" },
-    { id: 4, name: "Aisha Patel", role: "AI Specialist", access: "Remote (V-Patrol)", status: "Online", lastActive: "Just now" },
-    { id: 5, name: "Tommy Ng", role: "Guard", access: "Loading Bay", status: "Offline", lastActive: "1 day ago" },
-  ];
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchUsers = async () => {
+      // 1. Explicitly start loading
+      setLoading(true); 
+      
+      try {
+        const response = await axios.get('http://localhost:5000/user');
+        
+        // 2. Safety check: make sure the backend sent an array
+        if (Array.isArray(response.data)) {
+          setUsers(response.data);
+        } else {
+          console.error("Backend sent data, but it wasn't an array:", response.data);
+          setUsers([]);
+        }
+      } catch (error) {
+        console.error("Database sync failed:", error);
+        setUsers([]); // Reset to empty on fail
+      } finally {
+        // 3. CRITICAL FIX: Turn off the loading text!
+        setLoading(false); 
+      }
+    };
+    
+    fetchUsers();
+  }, []);
 
   return (
     <div className="dashboard-layout">
-      {/* 2. Replaced the old <aside> block with our dynamic Sidebar */}
       <Sidebar />
 
       <main className="dashboard-main">
@@ -29,47 +50,59 @@ const Users = () => {
           </header>
 
           <div className="table-wrapper">
-            <table className="users-table">
-              <thead>
-                <tr>
-                  <th>Personnel</th>
-                  <th>System Role</th>
-                  <th>Sector Access</th>
-                  <th>Status</th>
-                  <th>Last Active</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {usersData.map((user) => (
-                  <tr key={user.id}>
-                    <td className="user-name-cell">
-                      <div className="user-avatar-small">
-                        {user.name.charAt(0)}
-                      </div>
-                      <span className="user-name-text">{user.name}</span>
-                    </td>
-                    <td>
-                      <span className={`role-badge role-${user.role.replace(/\s+/g, '-').toLowerCase()}`}>
-                        {user.role}
-                      </span>
-                    </td>
-                    <td className="access-cell">{user.access}</td>
-                    <td>
-                      <div className="status-indicator">
-                        <span className={`status-dot dot-${user.status.replace(/\s+/g, '-').toLowerCase()}`}></span>
-                        {user.status}
-                      </div>
-                    </td>
-                    <td className="time-cell">{user.lastActive}</td>
-                    <td className="actions-cell">
-                      <button className="action-btn edit-btn">Edit</button>
-                      <button className="action-btn revoke-btn">Revoke</button>
-                    </td>
+            {loading ? (
+              <p style={{ padding: '20px', color: '#94a3b8' }}>Syncing with FlowGuard Database...</p>
+            ) : (
+              <table className="users-table">
+                <thead>
+                  <tr>
+                    <th>Personnel</th>
+                    <th>System Role</th>
+                    <th>Email Address</th> 
+                    <th>Status</th>
+                    <th>Joined Date</th> 
+                    <th>Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {users.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" style={{ textAlign: 'center', padding: '20px' }}>No users found in database.</td>
+                    </tr>
+                  ) : (
+                    users.map((u) => (
+                      <tr key={u.id}>
+                        <td className="user-name-cell">
+                          <div className="user-avatar-small">
+                            {u.name.charAt(0).toUpperCase()}
+                          </div>
+                          <span className="user-name-text">{u.name}</span>
+                        </td>
+                        <td>
+                          <span className={`role-badge role-${u.role.toLowerCase()}`}>
+                            {u.role === 'FM' ? 'Facilities Manager' : 'Tenant'}
+                          </span>
+                        </td>
+                        <td className="access-cell">{u.email}</td>
+                        <td>
+                          <div className="status-indicator">
+                            <span className="status-dot dot-online"></span>
+                            Active
+                          </div>
+                        </td>
+                        <td className="time-cell">
+                          {new Date(u.createdAt).toLocaleDateString('en-SG')}
+                        </td>
+                        <td className="actions-cell">
+                          <button className="action-btn edit-btn">Edit</button>
+                          <button className="action-btn revoke-btn">Revoke</button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       </main>

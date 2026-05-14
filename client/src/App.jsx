@@ -14,6 +14,8 @@ import Settings from './pages/Settings';
 import Users from './pages/Users';
 import AIChatPopup from './components/AIChatPopup'; 
 import ProtectedRoute from './components/ProtectedRoute';
+import VPatrol from './pages/VPatrol';
+import Cameras from './pages/Cameras';
 import './App.css';
 
 function App() {
@@ -28,6 +30,8 @@ function App() {
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotKey />} />
         <Route path="/innovation" element={<AIInnovation />} />
+        <Route path="/vpatrol" element={<VPatrol />} />
+        <Route path="/cameras" element={<Cameras />} />
 
         {/* --- Protected Dashboard Routes --- */}
         {/* These require a valid Access Key (Token) to view */}

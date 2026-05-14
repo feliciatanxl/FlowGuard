@@ -53,4 +53,16 @@ router.post("/login", async (req, res) => {
     }
 });
 
+// Get all users for the Management Table
+router.get("/", async (req, res) => {
+  try {
+    const users = await User.findAll({
+      attributes: ['id', 'name', 'email', 'role', 'createdAt'] // Exclude passwords for security
+    });
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
