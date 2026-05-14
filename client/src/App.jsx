@@ -16,6 +16,9 @@ import AIChatPopup from './components/AIChatPopup';
 import ProtectedRoute from './components/ProtectedRoute';
 import VPatrol from './pages/VPatrol';
 import Cameras from './pages/Cameras';
+import DriverPass from './pages/DriverPass';
+import TenantLogistics from './pages/TenantLogistics';
+import DriverPortal from './pages/DriverPortal';
 import './App.css';
 
 function App() {
@@ -25,11 +28,14 @@ function App() {
         {/* --- Public Routes --- */}
         <Route path="/" element={<Home />} />
         <Route path="/system-health" element={<SystemHealth />} />
+        <Route path="/driver-pass/:bookingId" element={<DriverPass />} />
         <Route path="/contact" element={<Contact />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotKey />} />
+        <Route path="/logistics" element={<TenantLogistics />} />
         <Route path="/innovation" element={<AIInnovation />} />
+        <Route path="/driver-portal" element={<DriverPortal />} />
         <Route path="/vpatrol" element={<VPatrol />} />
         <Route path="/cameras" element={<Cameras />} />
 

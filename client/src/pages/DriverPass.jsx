@@ -1,6 +1,6 @@
 import React from 'react';
 import { useParams } from 'react-router-dom';
-import QRCode from 'react-qr-code'; 
+import { QRCode } from 'react-qr-code';
 
 const DriverPass = () => {
   const { bookingId } = useParams();
@@ -29,3 +29,5 @@ const DriverPass = () => {
     </div>
   );
 };
+
+export default DriverPass;

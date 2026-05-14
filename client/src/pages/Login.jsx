@@ -5,6 +5,7 @@ import NavBar from '../components/NavBar';
 import Footer from '../components/Footer';
 import LogoIcon from '../components/LogoIcon';
 import '../css/Login.css';
+import '../css/DriverPass.css';
 
 const Login = () => {
   const navigate = useNavigate();

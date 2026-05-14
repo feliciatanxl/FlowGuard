@@ -12,6 +12,7 @@
   "dependencies": {
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
+    "@googleapis/gmail": "^16.1.1",
     "@mui/icons-material": "^5.18.0",
     "@mui/material": "^5.18.0",
     "axios": "^1.15.2",
@@ -19,6 +20,7 @@
     "formik": "^2.4.9",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
+    "react-qr-code": "^2.0.21",
     "react-router-dom": "^7.14.2",
     "react-router-hash-link": "^2.4.3",
     "yup": "^1.7.1"

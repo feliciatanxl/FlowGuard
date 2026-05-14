@@ -1,0 +1,188 @@
+/* --- TENANT LOGISTICS (DESKTOP GRID) --- */
+.booking-grid {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 30px;
+}
+
+.booking-card {
+  background: #1e2539;
+  border-radius: 16px;
+  border: 1px solid #2d364f;
+  padding: 30px;
+}
+
+.booking-card h2 {
+  margin: 0 0 25px 0;
+  font-size: 1.4rem;
+  color: #f8fafc;
+}
+
+/* --- DARK FORMS --- */
+.dark-form .form-group {
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.dark-form label {
+  color: #94a3b8;
+  font-size: 0.85rem;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.dark-form input, .dark-form select {
+  background: #0b0f1a;
+  border: 1px solid #2d364f;
+  color: #f8fafc;
+  padding: 14px;
+  border-radius: 8px;
+  font-size: 1rem;
+  transition: 0.2s;
+  outline: none;
+}
+
+.dark-form input:focus, .dark-form select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.submit-booking-btn {
+  width: 100%;
+  padding: 16px;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 10px;
+  transition: 0.2s;
+}
+
+.submit-booking-btn:hover { background: #2563eb; }
+
+/* --- ACTIVE BOOKINGS LIST --- */
+.arrival-list {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.arrival-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px;
+  background: #0b0f1a;
+  border-radius: 10px;
+  border: 1px solid #2d364f;
+}
+
+.arrival-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.arrival-info strong { color: #f8fafc; font-size: 1rem; }
+.arrival-info span { color: #707a91; font-size: 0.8rem; margin-top: 4px; }
+
+.time-badge {
+  background: rgba(52, 211, 153, 0.15);
+  color: #34d399;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.time-badge.warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+/* =========================================
+   DRIVER PORTAL (MOBILE-FIRST)
+   ========================================= */
+.driver-mobile-layout {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background-color: #0b0f1a;
+  padding: 20px;
+  font-family: 'Inter', sans-serif;
+}
+
+.driver-mobile-container {
+  width: 100%;
+  max-width: 450px; 
+  background: #1e2539;
+  border-radius: 24px;
+  border: 1px solid #2d364f;
+  padding: 30px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+}
+
+.mobile-header {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+.mobile-header h2 { margin: 0; font-size: 1.8rem; }
+.mobile-header p { color: #94a3b8; margin: 5px 0 0 0; font-size: 0.9rem; }
+
+.instruction-box h3 { color: #f8fafc; margin: 0 0 5px 0; font-size: 1.2rem; }
+.instruction-box p { color: #707a91; font-size: 0.9rem; margin: 0 0 20px 0; line-height: 1.4; }
+
+.time-slot-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+  margin-bottom: 30px;
+}
+
+.time-slot-btn {
+  background: #0b0f1a;
+  border: 1px solid #2d364f;
+  color: #f8fafc;
+  padding: 15px;
+  border-radius: 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.time-slot-btn:hover { border-color: #60a5fa; }
+
+.time-slot-btn.selected {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: white;
+  box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
+}
+
+.confirm-slot-btn {
+  width: 100%;
+  padding: 18px;
+  background: #34d399;
+  color: #0b0f1a;
+  border: none;
+  border-radius: 12px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.confirm-slot-btn:disabled {
+  background: #2d364f;
+  color: #707a91;
+  cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .booking-grid { grid-template-columns: 1fr; }
+}
