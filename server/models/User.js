@@ -42,6 +42,17 @@ module.exports = (sequelize, DataTypes) => {
             type: DataTypes.INTEGER,
             allowNull: true
         },
+        // --- BIOMETRIC SECURITY LOGIC ---
+        isEnrolled: {
+            type: DataTypes.BOOLEAN,
+            defaultValue: false, // Forces new users to the enrollment screen
+            allowNull: false
+        },
+        faceVector: {
+            type: DataTypes.TEXT, // Stores the 512-dimension array as a JSON string
+            allowNull: true
+        },
+        // ---------------------------------------
         isActive: {
             type: DataTypes.BOOLEAN,
             defaultValue: true,

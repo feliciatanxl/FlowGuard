@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const yup = require('yup');
 const axios = require('axios'); 
 const crypto = require('crypto'); 
+const { verifyToken } = require('../middlewares/auth');
 require('dotenv').config();
 
 // --- MIDDLEWARE ---
@@ -164,9 +165,9 @@ router.put("/generate-code", authenticateToken, async (req, res) => {
 
         await User.update({ 
             companyCode: newCode,
-            codeCreatedAt: new Date(),   // Reset clock to "Now"
-            codeCurrentUsage: 0,         // Reset "punches" to 0
-            codeMaxUsage: 10             // Default capacity of 10 staff members
+            codeCreatedAt: new Date(),   
+            codeCurrentUsage: 0,         
+            codeMaxUsage: 10             
         }, { 
             where: { id: req.user.id } 
         });
@@ -177,7 +178,6 @@ router.put("/generate-code", authenticateToken, async (req, res) => {
     }
 });
 
-// --- THE REMAINING ROUTES ---
 
 router.post("/login", async (req, res) => {
     let { email, password, recaptchaToken } = req.body;
@@ -202,7 +202,16 @@ router.post("/login", async (req, res) => {
             { expiresIn: '1h' }
         );
 
-        res.json({ token, user: { id: user.id, name: user.name, role: user.role } });
+        res.json({ 
+            token, 
+            user: { 
+                id: user.id, 
+                name: user.name, 
+                role: user.role,
+                isEnrolled: user.isEnrolled 
+            } 
+        });
+
     } catch (err) {
         res.status(500).json({ message: "Internal server error" });
     }
@@ -297,6 +306,44 @@ router.delete("/:id", authenticateToken, async (req, res) => {
         res.json({ message: "Removed successfully." });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// POST: /user/enroll-face
+router.post('/enroll-face', verifyToken, async (req, res) => {
+    try {
+        const { images } = req.body;
+        
+        // This requires your JWT middleware to attach the user ID to req.user
+        const userId = req.user.id; 
+
+        console.log(`Starting face enrollment for User ID: ${userId}`);
+
+        // 1. Send the images to the Python AI service
+        const pythonResponse = await axios.post('http://127.0.0.1:8000/api/encode-faces', {
+            front: images.front,
+            left: images.left,
+            right: images.right
+        });
+
+        const faceVector = pythonResponse.data.vector; // The 512-number array
+
+        // 2. Save to PostgreSQL using Sequelize
+        await User.update(
+            { 
+                faceVector: JSON.stringify(faceVector), 
+                isEnrolled: true 
+            },
+            { 
+                where: { id: userId } 
+            }
+        );
+
+        res.status(200).json({ message: "Biometric enrollment successful" });
+
+    } catch (error) {
+        console.error("Enrollment Error:", error.response ? error.response.data : error.message);
+        res.status(500).json({ error: "Failed to generate biometric vector." });
     }
 });
 

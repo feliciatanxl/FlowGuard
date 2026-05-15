@@ -1,0 +1,247 @@
+/* --- Full Screen Takeover --- */
+.enrollment-layout {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background-color: #0f172a; /* Deep FlowGuard background */
+    font-family: 'Inter', sans-serif;
+    padding: 20px;
+}
+
+/* --- The Main Wizard Card --- */
+.enrollment-card {
+    background-color: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 20px;
+    padding: 40px;
+    width: 100%;
+    max-width: 600px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    text-align: center;
+    animation: slideUpFade 0.5s ease-out;
+}
+
+/* --- Header Section --- */
+.enrollment-header {
+    margin-bottom: 30px;
+}
+
+.security-icon {
+    font-size: 3rem;
+    display: block;
+    margin-bottom: 10px;
+}
+
+.enrollment-header h2 {
+    color: #f8fafc;
+    font-size: 1.75rem;
+    font-weight: 700;
+    margin: 0 0 10px 0;
+    letter-spacing: 0.5px;
+}
+
+.enrollment-header p {
+    color: #94a3b8;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    margin: 0;
+}
+
+/* --- Progress Tracker --- */
+.progress-tracker {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 40px;
+    gap: 10px;
+}
+
+.tracker-badge {
+    background: #334155;
+    color: #94a3b8;
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    transition: all 0.3s ease;
+}
+
+.tracker-badge.active {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    border: 1px solid #3b82f6;
+    box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
+}
+
+.tracker-badge.done {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+    border: 1px solid #10b981;
+}
+
+.tracker-line {
+    height: 2px;
+    width: 40px;
+    background: #334155;
+}
+
+/* --- Camera Container & Circular Cutout --- */
+.camera-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 25px;
+}
+
+.video-wrapper {
+    position: relative;
+    width: 280px;
+    height: 280px;
+    border-radius: 50%; /* Makes the camera feed a perfect circle */
+    overflow: hidden;
+    background-color: #000;
+    border: 4px solid #334155;
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
+    transition: border-color 0.3s ease;
+}
+
+.live-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover; /* Ensures video fills the circle without stretching */
+    transform: scaleX(-1); /* MIRRORS the video so it acts like a real mirror */
+}
+
+/* --- Face Direction Overlay (The Cool Part) --- */
+.face-guide-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    pointer-events: none; /* Lets clicks pass through to the video */
+    box-shadow: inset 0 0 0 0 transparent;
+    transition: box-shadow 0.5s ease-in-out;
+}
+
+/* Glows specific sides of the circle to guide the user's head */
+.face-guide-overlay.front { box-shadow: inset 0 0 20px 5px rgba(59, 130, 246, 0.4); }
+.face-guide-overlay.left { box-shadow: inset 40px 0 30px -10px rgba(59, 130, 246, 0.6); }
+.face-guide-overlay.right { box-shadow: inset -40px 0 30px -10px rgba(59, 130, 246, 0.6); }
+
+/* --- Preview Grid (Final State) --- */
+.preview-grid {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    animation: fadeIn 0.4s ease-out;
+}
+
+.preview-thumb {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 3px solid #10b981; /* Green border for success */
+    transform: scaleX(-1); /* Keeps the preview mirrored */
+    box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
+}
+
+/* --- Typography & Instructions --- */
+.instruction-text {
+    color: #e2e8f0;
+    font-size: 1.1rem;
+    font-weight: 500;
+    height: 30px; /* Fixed height so buttons don't jump around */
+    margin-bottom: 30px;
+}
+
+/* --- Action Buttons --- */
+.enrollment-actions {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+}
+
+.capture-btn {
+    background: #3b82f6;
+    color: white;
+    border: none;
+    padding: 14px 40px;
+    border-radius: 12px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
+    transition: all 0.2s;
+    width: 100%;
+    max-width: 300px;
+}
+
+.capture-btn:hover {
+    background: #2563eb;
+    transform: translateY(-2px);
+}
+
+.capture-btn:active {
+    transform: translateY(1px);
+}
+
+.retake-btn {
+    background: transparent;
+    color: #94a3b8;
+    border: 1px solid #475569;
+    padding: 14px 30px;
+    border-radius: 12px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.retake-btn:hover {
+    background: #334155;
+    color: #f8fafc;
+}
+
+.submit-btn {
+    background: #10b981;
+    color: white;
+    border: none;
+    padding: 14px 40px;
+    border-radius: 12px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
+    transition: all 0.2s;
+    flex-grow: 1;
+    max-width: 300px;
+}
+
+.submit-btn:hover:not(:disabled) {
+    background: #059669;
+    transform: translateY(-2px);
+}
+
+.submit-btn:disabled {
+    background: #475569;
+    color: #94a3b8;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+/* --- Animations --- */
+@keyframes slideUpFade {
+    from { transform: translateY(30px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: scale(1); }
+}

@@ -1,169 +1,225 @@
 /* =========================================
-   DESKTOP LAYOUT (Full-Width / Stretched)
+   VPATROL GRID (Matches Booking Layout)
    ========================================= */
-
-.vpatrol-container {
-    width: 100%;
-    /* Remove max-width and margins to let it align with the header's edges */
-    max-width: none; 
-    margin: 0;
-    /* Vertical padding only to separate from header, 0 on sides to match title/btn */
-    padding: 20px 0 40px 0; 
-    background: transparent; /* Removes the outer blue background */
-    border: none;            /* Removes the outer border */
-    box-shadow: none;        /* Removes any outer glow */
-}
-
-.incident-feed {
-    display: flex;
-    flex-direction: column;
-    gap: 12px; /* Tighter gap for a cleaner, modern look */
-    width: 100%;
-}
-
-.incident-row {
-    background-color: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 12px;
-    padding: 20px 24px;
+.vpatrol-grid {
     display: grid;
-    /* Fixed width for sides, 1fr lets the middle text area stretch to match header length */
-    grid-template-columns: 140px 1fr 180px; 
-    align-items: center;
-    gap: 30px; 
-    transition: all 0.2s ease-in-out;
-    width: 100%;
-    box-sizing: border-box;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 30px;
 }
 
-.incident-row:hover {
-    border-color: #475569;
-    background-color: #242f42; /* Slightly lighter on hover */
-    transform: translateX(4px); /* Subtle "nudge" feedback */
-}
-
-/* --- Severity Indicators (Left Border) --- */
-.severity-critical { border-left: 6px solid #f87171; }
-.severity-high { border-left: 6px solid #fb923c; }
-.severity-medium { border-left: 6px solid #fbbf24; }
-.severity-safe { border-left: 6px solid #4ade80; }
-
-/* --- Left Section: Time & ID --- */
-.incident-time {
+.vpatrol-card {
+    background: #1e2539; /* Matches .booking-card */
+    border-radius: 16px;
+    border: 1px solid #2d364f;
+    padding: 30px;
+    height: 580px; /* Extended height we agreed on */
     display: flex;
     flex-direction: column;
 }
 
-.incident-time strong { 
-    color: #f8fafc; 
-    font-size: 1rem; 
-}
-
-.incident-time span { 
-    color: #94a3b8; 
-    font-size: 0.8rem; 
-    font-family: monospace; 
-}
-
-/* --- Middle Section: Details --- */
-.type-group { 
-    display: flex; 
-    align-items: center; 
-    gap: 10px; 
-    margin-bottom: 5px; 
-}
-
-.log-icon { 
-    font-size: 1.3rem; 
-}
-
-.incident-details h3 { 
-    color: #f8fafc; 
-    margin: 0; 
-    font-size: 1.15rem; 
-}
-
-.incident-details p { 
-    color: #cbd5e1; 
-    margin: 0; 
-    font-size: 1rem; 
-    line-height: 1.5; 
-}
-
-/* --- Right Section: Action Button --- */
-.incident-action {
-    display: flex;
-    justify-content: flex-end;
-}
-
-.review-btn {
-    background: rgba(59, 130, 246, 0.1);
-    color: #60a5fa;
-    border: 1px solid rgba(59, 130, 246, 0.3);
-    padding: 10px 20px;
-    border-radius: 8px;
-    font-weight: 600;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: all 0.2s;
-}
-
-.review-btn:hover {
-    background: #3b82f6;
-    color: white;
-}
-
-/* --- Header Button Consistency --- */
-.export-pdf-btn {
-    background-color: #334155;
-    color: white;
-    border: 1px solid #475569;
-    padding: 10px 20px;
-    border-radius: 8px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.2s;
-}
-
-.export-pdf-btn:hover {
-    background-color: #475569;
+.vpatrol-card h2 {
+    margin: 0 0 25px 0;
+    font-size: 1.4rem;
+    color: #f8fafc;
 }
 
 /* =========================================
-   MOBILE VIEW (Under 768px)
+   CCTV MONITOR (OSD Tech Styling)
    ========================================= */
-@media (max-width: 768px) {
-    .vpatrol-container {
-        padding: 10px 0;
+.cctv-container {
+    position: relative;
+    width: 100%;
+    flex: 1;
+    background: #0b0f1a;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid #2d364f;
+}
+
+.video-feed {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: brightness(0.8) contrast(1.2);
+}
+
+/* Technical HUD overlay */
+.hud-overlay {
+    position: absolute;
+    inset: 0;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    pointer-events: none;
+    font-family: 'Courier New', Courier, monospace;
+}
+
+.hud-top { display: flex; justify-content: space-between; font-size: 0.7rem; }
+.hud-status { color: #3b82f6; font-weight: bold; letter-spacing: 1px; }
+
+.hud-clock {
+    color: #3b82f6 !important;
+    font-weight: 800;
+    font-size: 1.1rem;
+}
+
+.identity-osd {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(11, 15, 26, 0.9);
+    border: 1px solid #3b82f6;
+    padding: 20px 40px;
+    text-align: center;
+    backdrop-filter: blur(8px);
+    border-radius: 4px;
+}
+
+.identity-osd h2 { color: #fff; margin: 0; font-size: 1.8rem; font-weight: 900; }
+.osd-scanner-line {
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 2px;
+    background: #3b82f6;
+    box-shadow: 0 0 15px #3b82f6;
+    animation: scanLine 2s linear infinite;
+}
+
+@keyframes scanLine { 0% { top: 0; } 100% { top: 100%; } }
+
+/* =========================================
+   TIMELINE LIST (Matches Booking List)
+   ========================================= */
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 25px;
+}
+
+.vpatrol-list {
+    flex: 1;
+    overflow-y: auto;
+    padding-right: 8px;
+    scrollbar-width: thin;
+    scrollbar-color: #2d364f transparent;
+}
+
+.vpatrol-item {
+    background: #0b0f1a;
+    border-radius: 10px;
+    border: 1px solid #2d364f;
+    padding: 15px;
+    margin-bottom: 15px;
+    border-left: 4px solid #475569;
+}
+
+.vpatrol-item.critical { border-left-color: #ef4444; }
+.vpatrol-item.high { border-left-color: #f59e0b; }
+.vpatrol-item.safe { border-left-color: #10b981; }
+
+.item-header {
+    display: flex;
+    justify-content: space-between;
+    font-family: monospace;
+    font-size: 0.7rem;
+    color: #707a91;
+    margin-bottom: 8px;
+}
+
+.item-time { color: #3b82f6; font-weight: bold; }
+
+.item-body { display: flex; gap: 12px; align-items: flex-start; }
+.item-text h4 { color: #f8fafc; margin: 0; font-size: 0.9rem; }
+.item-text p { color: #707a91; margin: 4px 0 0; font-size: 0.8rem; line-height: 1.4; }
+
+.export-csv-btn {
+    background: transparent;
+    color: #3b82f6;
+    border: 1px solid #2d364f;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.item-action-btn {
+    width: 100%;
+    margin-top: 12px;
+    background: #1e2539;
+    color: #707a91;
+    border: 1px solid #2d364f;
+    padding: 8px;
+    font-size: 0.65rem;
+    font-weight: bold;
+    font-family: monospace;
+    cursor: pointer;
+}
+
+.item-action-btn:hover { color: #3b82f6; border-color: #3b82f6; }
+
+.hud-overlay.secure_match {
+    border: 4px inset #22c55e;
+    background: rgba(34, 197, 94, 0.05);
+}
+
+.hud-overlay.access_denied {
+    border: 4px inset #ef4444;
+    background: rgba(239, 68, 68, 0.05);
+}
+
+/* =========================================
+   MOBILE & TABLET OPTIMIZATION
+   ========================================= */
+
+@media (max-width: 1024px) {
+    .vpatrol-grid {
+        grid-template-columns: 1fr; /* Stack columns vertically */
+        gap: 20px;
     }
 
-    .incident-row {
-        grid-template-columns: 1fr; /* Stack elements vertically on mobile */
-        padding: 15px;
-        gap: 15px;
+    .vpatrol-card {
+        height: auto; /* Remove the fixed 580px for mobile */
+        min-height: 450px; 
+        padding: 20px;
     }
 
-    .incident-time {
-        flex-direction: row;
-        justify-content: space-between;
-        align-items: center;
-        border-bottom: 1px solid #334155;
-        padding-bottom: 10px;
+    .cctv-container {
+        height: 300px; /* Give the camera a specific height on mobile */
+        flex: none;
     }
 
-    .incident-details {
-        text-align: left;
+    .vpatrol-page {
+        padding: 20px !important;
     }
 
-    .incident-action {
-        width: 100%;
-        justify-content: center;
+    /* Adjust the AI identity popup for smaller screens */
+    .identity-osd {
+        width: 85%;
+        padding: 15px 20px;
     }
 
-    .review-btn {
-        width: 100%; /* Full width button for easy tapping */
-        padding: 14px;
-        background: #3b82f6;
-        color: white;
+    .identity-osd h2 {
+        font-size: 1.3rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .vpatrol-header h1 {
+        font-size: 1.2rem;
+    }
+
+    .cctv-container {
+        height: 280px;
+    }
+
+    .hud-clock {
+        font-size: 0.9rem;
+    }
+
+    /* Hide coordinates on very small phones to save space */
+    .hud-bottom p:first-child {
+        display: none;
     }
 }

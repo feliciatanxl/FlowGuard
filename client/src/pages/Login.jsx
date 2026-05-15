@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { useGoogleReCaptcha } from 'react-google-recaptcha-v3'; // 1. Import the hook
+import { useGoogleReCaptcha } from 'react-google-recaptcha-v3'; 
 import NavBar from '../components/NavBar';
 import Footer from '../components/Footer';
 import LogoIcon from '../components/LogoIcon';
@@ -14,42 +14,44 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
 
-  // 2. Initialize the reCAPTCHA engine
   const { executeRecaptcha } = useGoogleReCaptcha();
 
-  // 3. Make this function async so we can await the token
   const handleLogin = async (e) => {
     e.preventDefault();
     setError(null);
 
-    // 4. Safety check: Ensure reCAPTCHA is ready
     if (!executeRecaptcha) {
       setError("Security system is still loading. Please try again in a second.");
       return;
     }
 
     try {
-      // 5. Generate the one-time token for this login attempt
       const token = await executeRecaptcha('login_submit');
 
-      // 6. Pass the token in your Axios request
       const res = await axios.post('http://localhost:5000/user/login', { 
         email, 
         password,
-        recaptchaToken: token // The "Key" your backend will check
+        recaptchaToken: token 
       });
 
-      // Existing logic
+      // Save credentials to local storage
       localStorage.setItem("accessToken", res.data.token);
       localStorage.setItem("userRole", res.data.user.role);
       localStorage.setItem("userName", res.data.user.name);
       localStorage.setItem("userId", res.data.user.id);
       
       console.log(`Authenticated as ${res.data.user.role}. Welcome to FlowGuard.`);
-      navigate('/dashboard');
+      
+      // --- THE NEW BIOMETRIC LOCKOUT LOGIC ---
+      if (res.data.user.isEnrolled) {
+          // They have a face vector. Welcome to the factory.
+          navigate('/dashboard'); 
+      } else {
+          // First time? Go take your 3 angles.
+          navigate('/enrollment'); 
+      }
 
     } catch (err) {
-      // Handle both reCAPTCHA failures and wrong passwords
       setError(err.response?.data?.message || "Authentication failed");
     }
   };

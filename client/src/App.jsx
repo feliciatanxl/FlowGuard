@@ -22,6 +22,7 @@ import DriverPortal from './pages/DriverPortal';
 import StaffManagement from './pages/StaffManagement';
 import UserLogs from './pages/UserLogs';
 import TenantManagement from './pages/TenantManagement';
+import FaceEnrollment from './pages/FaceEnrollment';
 import './App.css';
 
 function App() {
@@ -35,6 +36,7 @@ function App() {
         <Route path="/tenant-management" element={<TenantManagement />} />
         <Route path="/user-logs/:id" element={<UserLogs />} />
         <Route path="/staff" element={<StaffManagement />} />
+        <Route path="/enrollment" element={<FaceEnrollment />} />
         <Route path="/contact" element={<Contact />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
