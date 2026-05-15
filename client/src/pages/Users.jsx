@@ -12,8 +12,6 @@ const Users = () => {
   const [modal, setModal] = useState({ isOpen: false, user: null });
 
   const token = localStorage.getItem("accessToken");
-  
-  // 1. Retrieve the current logged-in user's ID
   const currentUserId = localStorage.getItem("userId"); 
 
   const fetchUsers = async () => {
@@ -73,6 +71,7 @@ const Users = () => {
       <Sidebar />
 
       <main className="dashboard-main">
+        {/* Security Modal Logic */}
         {modal.isOpen && (
           <div className="modal-overlay">
             <div className="modal-content security-modal">
@@ -97,6 +96,7 @@ const Users = () => {
         )}
 
         <div className="users-container">
+          {/* Header titles are wrapped to maintain consistency across the app */}
           <header className="dashboard-header">
             <div className="header-titles">
               <h1>User Access Management</h1>
@@ -106,7 +106,9 @@ const Users = () => {
 
           <div className="table-wrapper">
             {loading ? (
-              <p style={{ padding: '20px', color: '#94a3b8' }}>Syncing with FlowGuard Database...</p>
+              <p style={{ padding: '40px', color: '#94a3b8', textAlign: 'center' }}>
+                Syncing with FlowGuard Database...
+              </p>
             ) : (
               <table className="users-table">
                 <thead>
@@ -122,16 +124,17 @@ const Users = () => {
                 <tbody>
                   {users.length === 0 ? (
                     <tr>
-                      <td colSpan="6" style={{ textAlign: 'center', padding: '20px' }}>No users found in database.</td>
+                      <td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>
+                        No users found in database.
+                      </td>
                     </tr>
                   ) : (
                     users.map((u) => {
-                      // 2. Determine if the current row is the logged-in user
                       const isSelf = String(u.id) === String(currentUserId);
 
                       return (
                         <tr key={u.id} className={u.isActive === false ? 'row-suspended' : ''}>
-                          <td className="user-name-cell">
+                          <td className="user-name-cell" data-label="Personnel">
                             <div className="user-avatar-small">
                               {u.name.charAt(0).toUpperCase()}
                             </div>
@@ -139,13 +142,13 @@ const Users = () => {
                               {u.name} {isSelf && <span className="self-tag">(You)</span>}
                             </span>
                           </td>
-                          <td>
+                          <td data-label="System Role">
                             <span className={`role-badge role-${u.role.toLowerCase()}`}>
                               {u.role === 'FM' ? 'Facilities Manager' : u.role === 'Tenant' ? 'Tenant' : 'Staff'}
                             </span>
                           </td>
-                          <td className="access-cell">{u.email}</td>
-                          <td>
+                          <td className="access-cell" data-label="Email Address">{u.email}</td>
+                          <td data-label="Presence">
                             <div className={`presence-tag ${u.locationStatus === 'On-Site' ? 'on-site' : 'off-site'}`}>
                               {u.locationStatus === 'On-Site' ? (
                                 <><span>📍</span> On-Site</>
@@ -154,10 +157,10 @@ const Users = () => {
                               )}
                             </div>
                           </td>
-                          <td className="time-cell">
+                          <td className="time-cell" data-label="Joined Date">
                             {new Date(u.createdAt).toLocaleDateString('en-SG')}
                           </td>
-                          <td className="actions-cell">
+                          <td className="actions-cell" data-label="Actions">
                             <button 
                               className="action-btn edit-btn"
                               onClick={() => navigate(`/user-logs/${u.id}`)}
@@ -165,7 +168,6 @@ const Users = () => {
                               View Logs
                             </button>
                             
-                            {/* 3. Conditional rendering for the Suspend button */}
                             <button 
                               className="action-btn revoke-btn"
                               onClick={() => !isSelf && openModal(u)}

@@ -40,14 +40,18 @@ const Sidebar = () => {
           <NavLink to="/vpatrol" onClick={() => setIsOpen(false)}>V-Patrol</NavLink>
           <NavLink to="/logistics" onClick={() => setIsOpen(false)}>Logistics & Bays</NavLink>
 
-          {/* 1. Visible ONLY to the Boss (Tenant) */}
+          {/* Visible ONLY to the Boss (Tenant) */}
           {user.role === 'Tenant' && (
             <NavLink to="/staff" onClick={() => setIsOpen(false)}>My Staff</NavLink>
           )}
 
-          {/* 2. Visible ONLY to the Admin (FM) */}
+          {/* Visible ONLY to the Admin (FM) */}
           {user.role === 'FM' && (
-            <NavLink to="/users" onClick={() => setIsOpen(false)}>Users</NavLink>
+            <>
+              <NavLink to="/users" onClick={() => setIsOpen(false)}>User Management</NavLink>
+              {/* NEW: Link to the Invitation/Onboarding system */}
+              <NavLink to="/tenant-management" onClick={() => setIsOpen(false)}>Tenant Onboarding</NavLink>
+            </>
           )}
 
           <NavLink to="/settings" onClick={() => setIsOpen(false)}>Settings</NavLink>
@@ -59,7 +63,6 @@ const Sidebar = () => {
             <div className="user-meta">
               <span className="user-name">{user.name}</span>
               <span className="user-role-tag">
-                {/* 3. Updated role display logic */}
                 {user.role === 'FM' ? 'Manager' : user.role === 'Tenant' ? 'Tenant' : 'Staff'}
               </span>
             </div>

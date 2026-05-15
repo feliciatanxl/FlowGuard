@@ -12,8 +12,8 @@ const Register = () => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState('Tenant'); 
-  const [tenantCode, setTenantCode] = useState(''); // 1. New state for the secret code
+  const [role, setRole] = useState('Staff'); // Defaulting to Staff
+  const [tenantCode, setTenantCode] = useState(''); 
   const [error, setError] = useState(null);
 
   const { executeRecaptcha } = useGoogleReCaptcha();
@@ -30,22 +30,30 @@ const Register = () => {
     try {
       const token = await executeRecaptcha('register_submit');
 
-      // 2. Include the tenantCode in the payload ONLY if they are staff
+      // 1. Updated Payload: tenantCode is now required for both Staff AND Tenant roles
       const payload = { 
         name, 
         email, 
         password, 
         role,
-        tenantCode: role === 'Staff' ? tenantCode : null, 
+        tenantCode: (role === 'Staff' || role === 'Tenant') ? tenantCode : null, 
         recaptchaToken: token 
       };
 
       const res = await axios.post('http://localhost:5000/user/register', payload);
-      console.log("Registration request submitted for approval.");
+      console.log("Registration successful.");
       navigate('/login');
 
     } catch (err) {
-      setError(err.response?.data?.errors?.[0] || err.response?.data?.message || "Registration failed. Please try again.");
+      // Cleaner error handling to prevent React objects-in-render crash
+      const errorData = err.response?.data?.errors;
+      let displayMessage = "Registration failed. Please check your credentials.";
+
+      if (Array.isArray(errorData) && errorData.length > 0) {
+        displayMessage = typeof errorData[0] === 'object' ? errorData[0].message : errorData[0];
+      }
+      
+      setError(displayMessage);
     }
   };
 
@@ -60,11 +68,15 @@ const Register = () => {
                 <LogoIcon size={48} />
               </div>
               <h1>Request Access</h1>
-              <p>Register for authorization to the IoT Dashboard.</p>
+              <p>Register for authorization to the FlowGuard network.</p>
             </header>
 
             <form className="login-form" onSubmit={handleRegister}>
-              {error && <div className="error-message" style={{ color: '#fb7185', marginBottom: '15px', fontSize: '0.875rem' }}>{error}</div>}
+              {error && (
+                <div className="error-message" style={{ color: '#fb7185', marginBottom: '15px', fontSize: '0.875rem', background: 'rgba(251, 113, 133, 0.1)', padding: '10px', borderRadius: '6px' }}>
+                  {String(error)}
+                </div>
+              )}
               
               <div className="input-group">
                 <label>Full Name</label>
@@ -105,32 +117,37 @@ const Register = () => {
                 <select 
                   className="role-select"
                   value={role}
-                  onChange={(e) => setRole(e.target.value)}
-                  style={{ width: '100%', padding: '12px', borderRadius: '8px', background: '#1e293b', color: 'white', border: '1px solid #334155', marginBottom: role === 'Staff' ? '0' : '15px' }}
+                  onChange={(e) => {
+                    setRole(e.target.value);
+                    setTenantCode(''); // Clear code when switching roles
+                  }}
+                  style={{ width: '100%', padding: '12px', borderRadius: '8px', background: '#1e293b', color: 'white', border: '1px solid #334155' }}
                 >
-                  <option value="Tenant">Tenant / Unit Owner</option>
-                  <option value="FM">Facilities Manager (Admin)</option>
-                  <option value="Staff">Factory Staff</option> {/* 3. Added Staff Option */}
+                  <option value="Staff">Factory Staff</option>
+                  <option value="Tenant">Unit Owner / Tenant</option>
+                  {/* FM is removed for security; admins are created internally */}
                 </select>
               </div>
 
-              {/* 4. The Blockade: Only show this if "Staff" is selected */}
-              {role === 'Staff' && (
-                <div className="input-group" style={{ animation: 'fadeIn 0.3s ease-in-out', marginTop: '15px', marginBottom: '15px' }}>
-                  <label>Company Registration Code</label>
-                  <input 
-                    type="text" 
-                    placeholder="e.g. HARRISON-99X" 
-                    value={tenantCode}
-                    onChange={(e) => setTenantCode(e.target.value)}
-                    required={role === 'Staff'} // Force them to fill it out
-                    style={{ borderColor: '#3b82f6', outline: 'none', boxShadow: '0 0 0 1px #3b82f6' }} // Give it a nice blue highlight to draw attention
-                  />
-                  <small style={{ color: '#94a3b8', fontSize: '0.75rem', marginTop: '5px', display: 'block' }}>
-                    Ask your unit manager for this code.
-                  </small>
-                </div>
-              )}
+              {/* 2. DYNAMIC INPUT: Label changes based on selection */}
+              <div className="input-group" style={{ animation: 'fadeIn 0.3s ease-in-out', marginTop: '15px', marginBottom: '15px' }}>
+                <label>
+                  {role === 'Staff' ? "Unit Registration Code" : "One-Time Invitation Code"}
+                </label>
+                <input 
+                  type="text" 
+                  placeholder={role === 'Staff' ? "e.g. FLOW-XXXXXX" : "e.g. INVITE-XXXXXX"} 
+                  value={tenantCode}
+                  onChange={(e) => setTenantCode(e.target.value)}
+                  required
+                  style={{ borderColor: '#3b82f6', outline: 'none', boxShadow: '0 0 0 1px #3b82f6' }}
+                />
+                <small style={{ color: '#94a3b8', fontSize: '0.75rem', marginTop: '5px', display: 'block' }}>
+                  {role === 'Staff' 
+                    ? "Ask your unit manager for this code." 
+                    : "Required for first-time setup. Contact the FM office."}
+                </small>
+              </div>
 
               <button type="submit" className="login-submit-btn">
                 Submit Request <span className="button-icon">→</span>
@@ -138,7 +155,7 @@ const Register = () => {
             </form>
 
             <footer className="login-footer">
-              <p className="security-badge">Subject to FlowGuard Administrator Approval</p>
+              <p className="security-badge">Subject to Industrial Security Protocol Approval</p>
               <div className="auth-links">
                 <Link to="/login">Already authorized?</Link>
               </div>

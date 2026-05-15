@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { User, Attendance } = require('../models'); 
+const { User, Attendance, Invite } = require('../models'); 
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const yup = require('yup');
@@ -28,7 +28,7 @@ const authenticateToken = async (req, res, next) => {
     });
 };
 
-// --- REGISTRATION (Hybrid Security Logic) ---
+// --- REGISTRATION (Multi-Level Security Gate) ---
 router.post("/register", async (req, res) => {
     const { recaptchaToken, ...userData } = req.body;
     try {
@@ -52,36 +52,62 @@ router.post("/register", async (req, res) => {
             name: yup.string().trim().required("Full name is required"),
             email: yup.string().trim().email("Invalid email format").required("Email is required"),
             password: yup.string().trim().min(8, "Password must be at least 8 characters").required(),
-            role: yup.string().oneOf(['FM', 'Tenant', 'Staff']),
-            tenantCode: yup.string().nullable()
+            role: yup.string().oneOf(['FM', 'Tenant', 'Staff']).required("Role is required"),
+            tenantCode: yup.string().required("Access code is required")
         });
 
         let validatedData = await validationSchema.validate(userData, { abortEarly: false });
         
-        // 3. HYBRID SECURITY CHECK (Staff Only)
+        // --- 3. THE SECURITY GATE ---
+
+        // BLOCK A: Prevent anyone from registering as FM publicly
+        if (validatedData.role === 'FM') {
+            return res.status(403).json({ errors: ["Administrative accounts cannot be created publicly."] });
+        }
+
+        // BLOCK B: Tenant Registration (One-Time Invite Check)
+        if (validatedData.role === 'Tenant') {
+            const invite = await Invite.findOne({ 
+                where: { code: validatedData.tenantCode, role: 'Tenant', isUsed: false } 
+            });
+
+            if (!invite) {
+                return res.status(401).json({ errors: ["Invalid or used Invitation Code. Contact the FM office."] });
+            }
+
+            // Check Expiration (e.g., 24h/48h set when invite was created)
+            if (new Date() > invite.expiresAt) {
+                return res.status(401).json({ errors: ["This invitation code has expired."] });
+            }
+
+            // Mark invite as used so it cannot be used again
+            await invite.update({ isUsed: true });
+        }
+
+        // BLOCK C: Staff Registration (Hybrid Security Logic)
         if (validatedData.role === 'Staff') {
             const employer = await User.findOne({ 
                 where: { role: 'Tenant', companyCode: validatedData.tenantCode } 
             });
 
             if (!employer) {
-                return res.status(400).json({ errors: ["Invalid Company Code. Please contact your manager."] });
+                return res.status(400).json({ errors: ["Invalid Unit Registration Code. Contact your manager."] });
             }
 
-            // Check A: Time Expiration (48 Hours)
+            // Time Expiration Check (48 Hours)
             const fortyEightHours = 48 * 60 * 60 * 1000;
             const isExpired = Date.now() - new Date(employer.codeCreatedAt).getTime() > fortyEightHours;
 
             if (isExpired) {
-                return res.status(401).json({ errors: ["This registration code has expired (48h limit). Request a new one from your unit manager."] });
+                return res.status(401).json({ errors: ["This unit code has expired (48h limit). Ask your manager to refresh it."] });
             }
 
-            // Check B: Usage Limit (Capacity)
+            // Usage Limit Check (Capacity)
             if (employer.codeCurrentUsage >= employer.codeMaxUsage) {
-                return res.status(401).json({ errors: ["Registration capacity reached for this code. Manager must refresh the key."] });
+                return res.status(401).json({ errors: ["Registration capacity reached for this unit."] });
             }
 
-            // If passes both, link to manager and increment usage
+            // Link Staff to Tenant and increment usage
             validatedData.managerId = employer.id; 
             await employer.increment('codeCurrentUsage');
         }
@@ -90,19 +116,41 @@ router.post("/register", async (req, res) => {
         validatedData.password = await bcrypt.hash(validatedData.password, 10);
         let result = await User.create(validatedData);
 
-        res.json({ message: "Account created successfully.", id: result.id });
+        res.json({ message: "Account registered successfully.", id: result.id });
 
     } catch (err) {
-        console.error("Registration Error:", err);
+        console.error("Registration Error Logic:", err);
         let errorMessages = [];
         if (err.name === 'SequelizeUniqueConstraintError') {
-            errorMessages = ["This email is already registered."];
+            errorMessages = ["This email is already registered in our system."];
         } else if (err.errors) {
             errorMessages = err.errors.map(e => (typeof e === 'object' ? e.message : e));
         } else {
-            errorMessages = [err.message || "Internal system error."];
+            errorMessages = [err.message || "An unexpected system error occurred."];
         }
         res.status(400).json({ errors: errorMessages });
+    }
+});
+
+// --- FM ONLY: Get all generated invites ---
+router.post("/invite-tenant", authenticateToken, async (req, res) => { 
+    try {
+        if (req.user.role !== 'FM') return res.status(403).json({ message: "Access Denied." });
+
+        const inviteCode = `INVITE-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+        const expiry = new Date(Date.now() + 48 * 60 * 60 * 1000); 
+
+        // CRITICAL: Ensure Invite is imported at the top of this file
+        await Invite.create({
+            code: inviteCode,
+            role: 'Tenant',
+            expiresAt: expiry
+        });
+
+        res.json({ inviteCode, message: "Invitation generated." });
+    } catch (err) {
+        console.error("Invite Error:", err); 
+        res.status(500).json({ error: "Failed to generate invitation." });
     }
 });
 

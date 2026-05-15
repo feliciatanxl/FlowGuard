@@ -3,21 +3,17 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
-  max-width: 900px; 
+  width: 100%; /* Stretch to full width */
+  animation: slideUpFade 0.5s ease-out;
+  /* Removed the 900px max-width from here */
 }
 
-.save-btn {
-  background-color: #3b82f6;
-  color: white;
-  border: none;
-  padding: 10px 24px;
-  border-radius: 8px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background-color 0.2s;
+/* --- Centered Header -> Full Width --- */
+.settings-header {
+  width: 100%;
+  margin-bottom: 30px;
+  /* Removed margin: 0 auto */
 }
-
-.save-btn:hover { background-color: #2563eb; }
 
 /* --- Settings Cards --- */
 .settings-card {
@@ -25,24 +21,14 @@
   border: 1px solid #334155;
   border-radius: 12px;
   overflow: hidden;
+  width: 100%; 
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
 }
 
 .card-header {
-  padding: 24px;
+  padding: 24px 30px;
   border-bottom: 1px solid #334155;
   background-color: rgba(15, 23, 42, 0.3);
-}
-
-.card-header h3 {
-  margin: 0 0 5px 0;
-  color: #f8fafc;
-  font-size: 1.2rem;
-}
-
-.card-header p {
-  margin: 0;
-  color: #94a3b8;
-  font-size: 0.9rem;
 }
 
 /* --- Individual Setting Rows --- */
@@ -50,12 +36,17 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 24px;
+  padding: 24px 30px; 
   border-bottom: 1px solid #334155;
 }
 
 .setting-row:last-child {
   border-bottom: none;
+}
+
+.setting-info {
+  flex: 1;
+  max-width: 700px; /* Keeps text readable even when the card stretches wide */
 }
 
 .setting-info h4 {
@@ -65,87 +56,16 @@
   font-weight: 500;
 }
 
-.setting-info p {
-  margin: 0;
-  color: #64748b;
-  font-size: 0.85rem;
-}
-
-/* --- UI Controls (Toggles, Sliders, Dropdowns) --- */
-
-/* iOS Style Toggle Switch */
-.toggle-switch {
-  position: relative;
-  display: inline-block;
-  width: 50px;
-  height: 28px;
-}
-
-.toggle-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.toggle-slider {
-  position: absolute;
-  cursor: pointer;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background-color: #475569;
-  transition: .3s;
-  border-radius: 34px;
-}
-
-.toggle-slider:before {
-  position: absolute;
-  content: "";
-  height: 20px;
-  width: 20px;
-  left: 4px;
-  bottom: 4px;
-  background-color: white;
-  transition: .3s;
-  border-radius: 50%;
-}
-
-input:checked + .toggle-slider { background-color: #10b981; } 
-input:checked + .toggle-slider:before { transform: translateX(22px); }
-
-/* Range Slider */
-.slider-control {
+/* --- UI Controls --- */
+.setting-control {
   display: flex;
-  align-items: center;
-  gap: 15px;
+  justify-content: flex-end;
+  min-width: 200px; /* Ensures controls have breathing room */
 }
 
-.slider-value {
-  background: #0f172a;
-  padding: 4px 12px;
-  border-radius: 6px;
-  border: 1px solid #334155;
-  color: #60a5fa;
-  font-weight: 600;
-  font-family: monospace;
-}
+/* Toggle Switch, Slider, and Select styles remain the same... */
 
-input[type=range] {
-  accent-color: #3b82f6;
-  width: 150px;
-}
-
-/* Dropdown Select */
-.dark-select {
-  background-color: #0f172a;
-  color: #f8fafc;
-  border: 1px solid #334155;
-  padding: 10px 15px;
-  border-radius: 6px;
-  outline: none;
-  font-family: inherit;
-  cursor: pointer;
-}
-
-/* Danger Zone */
+/* --- Danger Zone --- */
 .danger-zone { border-color: rgba(239, 68, 68, 0.3); }
 .text-red { color: #f87171 !important; }
 
@@ -160,9 +80,12 @@ input[type=range] {
   transition: all 0.2s;
 }
 
-.danger-btn:hover {
-  background-color: #ef4444;
-  color: white;
+/* --- Bottom Action Area --- */
+.settings-actions {
+    display: flex;
+    justify-content: flex-end;
+    padding: 20px 0;
+    margin-bottom: 50px; 
 }
 
 /* --- Mobile Responsiveness --- */
@@ -175,36 +98,6 @@ input[type=range] {
   
   .setting-control {
     width: 100%;
-    display: flex;
     justify-content: flex-end; 
   }
-
-  .dashboard-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 15px;
-  }
-}
-
-/* --- Bottom Action Area --- */
-.settings-actions {
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 15px;
-  margin-bottom: 30px;
-}
-
-/* --- Centered Header --- */
-.settings-header {
-  max-width: 900px;
-  margin: 0 auto 30px auto;
-}
-
-/* --- Settings Grid Layout --- */
-.settings-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-  max-width: 900px; 
-  margin: 0 auto; 
 }

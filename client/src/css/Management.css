@@ -2,13 +2,22 @@
    DESKTOP LAYOUT (Full-Width / Stretched)
    ========================================= */
 
+/* TIGHTENED: Reduced bottom margin to pull content up */
+.dashboard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1rem !important; 
+}
+
 .management-container {
     width: 100%;
     max-width: none; 
     margin: 0;
-    padding: 1.5rem 0; 
+    /* TIGHTENED: Reduced top padding from 1.5rem to 0.2rem */
+    padding: 0.2rem 0 1.5rem 0; 
     color: #f8fafc;
-    animation: slideUpFade 0.5s ease-out;
+    /* animation: slideUpFade 0.5s ease-out; */
 }
 
 /* Header Tweaks */
@@ -29,6 +38,7 @@
     background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
     padding: 30px; 
     border-radius: 12px; 
+    margin-top: 0; /* Ensures no extra gap above the card */
     margin-bottom: 30px;
     border: 1px solid #334155;
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
@@ -41,7 +51,7 @@
     left: 0;
     width: 4px;
     height: 100%;
-    background: #3b82f6; /* Identity color for David Tenant's Unit */
+    background: #3b82f6; 
 }
 
 .code-flex-row {
@@ -130,12 +140,21 @@
     font-size: 0.75rem;
     font-weight: 700;
     text-transform: uppercase;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    letter-spacing: 0.5px;
 }
 
 .status-badge.active {
     background: rgba(16, 185, 129, 0.1);
     color: #10b981;
     border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+/* Badge specific for "USED" or expired statuses */
+.status-badge.expired {
+    background: rgba(244, 63, 94, 0.1);
+    color: #f43f5e;
+    border: 1px solid rgba(244, 63, 94, 0.2);
 }
 
 .edit-btn {
@@ -156,7 +175,6 @@
     background: #334155;
 }
 
-/* Danger Button Styling */
 .revoke-btn {
     color: #f43f5e;
     font-size: 0.8rem;
@@ -292,8 +310,6 @@
         margin-bottom: 20px;
     }
 
-    /* 1. Fix the Title & Capacity Badge Overlap */
-    /* Targets the flex div inside the code card */
     .code-generator-card > div:first-child {
         flex-direction: column !important;
         align-items: flex-start !important;
@@ -310,7 +326,6 @@
         margin-bottom: 5px;
     }
 
-    /* 2. Stack the Code Box and Refresh Button */
     .code-flex-row {
         flex-direction: column;
         align-items: stretch;
@@ -331,7 +346,6 @@
         padding: 15px !important;
     }
 
-    /* 3. Refine Table-to-Card Transformation */
     .management-table thead {
         display: none; 
     }
@@ -346,7 +360,7 @@
 
     .management-table tr {
         margin-bottom: 15px;
-        background: #1e293b; /* Solid color for better contrast on mobile */
+        background: #1e293b; 
         border: 1px solid #334155;
         border-radius: 12px;
         padding: 8px;
@@ -368,7 +382,6 @@
         padding: 20px 10px 10px 10px;
     }
 
-    /* Create the Left-Side Labels */
     .management-table td::before {
         content: attr(data-label);
         font-weight: 700;
@@ -389,7 +402,6 @@
         font-size: 0.75rem;
     }
 
-    /* Adjust Action Buttons for easier tapping */
     .management-table .edit-btn, 
     .management-table .revoke-btn {
         flex: 1;
@@ -398,7 +410,6 @@
         margin: 0;
     }
 
-    /* 4. Modal & Toast Adjustments */
     .modal-content {
         width: 95%;
         padding: 20px;
@@ -423,16 +434,9 @@
     to { transform: translateX(0); opacity: 1; }
 }
 
-/* Add this to Management.css */
 .expired-box {
     border: 1px solid #f43f5e !important;
     color: #f43f5e !important;
     opacity: 0.6;
     text-decoration: line-through;
-}
-
-/* Ensure badges look like solid UI elements */
-.status-badge {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    letter-spacing: 0.5px;
 }
