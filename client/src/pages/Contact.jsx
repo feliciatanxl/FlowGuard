@@ -9,7 +9,7 @@ const Contact = () => {
       <NavBar />
       
       <main className="contact-main">
-        <div className="section-header">
+        <div className="contact-header">
           <h2 className="section-title">Connect with FlowGuard</h2>
           <p className="section-subtitle">Direct inquiries for the Harrison Food Factory deployment.</p>
         </div>

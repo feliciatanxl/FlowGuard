@@ -320,7 +320,7 @@ router.post('/enroll-face', verifyToken, async (req, res) => {
         console.log(`Starting face enrollment for User ID: ${userId}`);
 
         // 1. Send the images to the Python AI service
-        const pythonResponse = await axios.post('http://127.0.0.1:8000/api/encode-faces', {
+        const pythonResponse = await axios.post('http://127.0.0.1:8500/api/encode-faces', {
             front: images.front,
             left: images.left,
             right: images.right

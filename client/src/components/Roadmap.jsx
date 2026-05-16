@@ -21,7 +21,7 @@ const Roadmap = () => {
 
   return (
     <section id="roadmap" className="roadmap-section">
-      <div className="section-header">
+      <div className="roadmap-header">
         <h2 className="section-title">Deployment Roadmap</h2>
         <p className="section-subtitle">
           Phased implementation at Harrison Food Factory.

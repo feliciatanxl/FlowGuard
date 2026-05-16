@@ -22,7 +22,7 @@ const FeatureCards = () => {
   return (
     <section id="technology" className="features-section">
       {/* Unified Section Header */}
-      <div className="section-header">
+      <div className="features-header">
         <h2 className="section-title">Industrial Intelligence Solutions</h2>
         <p className="section-subtitle">
           Advanced IoT and AI for food manufacturing.

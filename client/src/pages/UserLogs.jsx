@@ -9,16 +9,22 @@ const UserLogs = () => {
   const { id } = useParams(); 
   const navigate = useNavigate();
   const [logs, setLogs] = useState([]);
+  const [employeeName, setEmployeeName] = useState("");
   const [loading, setLoading] = useState(true);
   const token = localStorage.getItem("accessToken");
 
   useEffect(() => {
     const fetchLogs = async () => {
       try {
-        const res = await axios.get(`http://localhost:5000/user/logs/${id}`, {
+        // 🎯 Connected directly to our new server-side user bridge endpoint
+        const res = await axios.get(`http://localhost:5000/api/security/logs/user/${id}`, {
           headers: { Authorization: `Bearer ${token}` }
         });
-        setLogs(res.data);
+        
+        if (res.data) {
+          setLogs(res.data.logs || []);
+          setEmployeeName(res.data.personnelName || "Verified User");
+        }
       } catch (err) {
         console.error("Failed to fetch logs:", err);
       } finally {
@@ -34,7 +40,6 @@ const UserLogs = () => {
       <main className="dashboard-main">
         <header className="dashboard-header">
           <div className="header-titles">
-            {/* FIX: Use navigate(-1) to avoid the 403 error for Tenants */}
             <button 
               onClick={() => navigate(-1)} 
               className="edit-btn" 
@@ -42,8 +47,9 @@ const UserLogs = () => {
             >
               ← Back to Personnel
             </button>
-            <h1>Personnel Activity Log</h1>
-            <p>Historical "IN/OUT" data for Sector User ID: #{id}</p>
+            {/* 🎯 Displays their actual registered identity dynamically! */}
+            <h1>Activity Log // {loading ? "Loading..." : employeeName}</h1>
+            <p>Historical biometric scan dataset for System ID: #{id}</p>
           </div>
         </header>
 
@@ -52,8 +58,8 @@ const UserLogs = () => {
             <thead>
               <tr>
                 <th>TIMESTAMP</th>
-                <th>ACTION</th>
-                <th>STATUS</th>
+                <th>ACCESS EVENT</th>
+                <th>SECURITY THREAT STATUS</th>
                 <th>SECTOR GATE</th>
               </tr>
             </thead>
@@ -65,23 +71,26 @@ const UserLogs = () => {
                   </td>
                 </tr>
               ) : logs.length > 0 ? logs.map((log, index) => (
-                <tr key={index}>
-                  <td style={{ color: '#cbd5e1' }}>
-                    {new Date(log.timestamp).toLocaleString('en-SG', { 
-                        dateStyle: 'medium', 
-                        timeStyle: 'medium' 
-                    })}
+                <tr key={log.id || index}>
+                  <td style={{ color: '#cbd5e1', fontFamily: 'monospace' }}>
+                    {/* Displays the date/time string captured by the gantry overlay */}
+                    {log.time || new Date(log.createdAt).toLocaleTimeString()}
                   </td>
                   <td>
-                    <span className={`presence-tag ${log.type === 'IN' ? 'on-site' : 'off-site'}`}>
-                      {log.type === 'IN' ? 'CHECK-IN' : 'CHECK-OUT'}
+                    {/* Displays the specific biometric transaction tag */}
+                    <span className="presence-tag on-site">
+                      {log.type ? log.type.toUpperCase() : "GANTRY SCAN"}
                     </span>
                   </td>
                   <td>
-                    <span className="status-badge active">Verified</span>
+                    {/* Dynamically flags entries if an unauthorized manipulation occurred */}
+                    <span className={`status-badge ${log.severity === 'safe' ? 'active' : 'inactive'}`}>
+                      {log.severity === 'safe' ? 'Liveness Verified' : 'Threat Flagged'}
+                    </span>
                   </td>
                   <td style={{ color: '#64748b', fontFamily: 'monospace' }}>
-                    GATE-{Math.floor(Math.random() * 10) + 1}
+                    {/* Extracts the random or preset ID assigned to the gantry instance */}
+                    {log.id ? `GATE-${log.id.split('-')[1] || '01'}` : 'MAIN_GANTRY'}
                   </td>
                 </tr>
               )) : (

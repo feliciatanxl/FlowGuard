@@ -10,7 +10,7 @@ const ImpactStats = () => {
 
   return (
     <section className="stats-container" id="mission">
-      <div className="section-header">
+      <div className="impact-header">
         <h2 className="section-title">Our Strategic Mission</h2>
         <p className="section-subtitle">Optimizing Harrison Food Factory operations through AI-driven insights.</p>
       </div>

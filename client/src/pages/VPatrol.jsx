@@ -8,52 +8,80 @@ const VPatrol = () => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   
-  const [scanStatus, setScanStatus] = useState("INITIALIZING...");
+  // Staged States: SYSTEM_ACTIVE, PRESENCE_DETECTED, TARGET_LOCKING, LIVENESS_CHECK, SECURE_MATCH, UNKNOWN_QUERY
+  const [scanStatus, setScanStatus] = useState("SYSTEM_ACTIVE"); 
   const [identifiedUser, setIdentifiedUser] = useState(null);
-  const [lastScanTime, setLastScanTime] = useState(null);
+  const [faceBox, setFaceBox] = useState(null); 
+  const [scanProgress, setScanProgress] = useState(0); 
+  
+  const scanStatusRef = useRef("SYSTEM_ACTIVE");
+  const lockTimerRef = useRef(null);
+  const progressIntervalRef = useRef(null);
 
-  // --- STEP 1: ADD LIVE CLOCK STATE ---
+  // LIVENESS MEMORY: Tracks the head-turn validation
+  const candidateUserRef = useRef(null); 
+  const lastLogRef = useRef({ name: null, timestamp: 0 });
+
   const [systemTime, setSystemTime] = useState(new Date().toLocaleTimeString('en-SG', { 
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true 
   }));
 
-  const [incidentLogs, setIncidentLogs] = useState([
-    { id: 'LOG-882', time: '10:24:05 PM', type: 'PPE Violation', desc: 'Missing hardhat in Sector 2.', severity: 'high', icon: '⚠️' },
-    { id: 'LOG-881', time: '09:15:22 PM', type: 'Unauthorized Access', desc: 'Unknown personnel in Server Room.', severity: 'critical', icon: '🚨' },
-    { id: 'LOG-880', time: '08:05:11 PM', type: 'Hygiene Check', desc: 'Routine scan successful.', severity: 'safe', icon: '✅' },
-  ]);
+  const [incidentLogs, setIncidentLogs] = useState([]);
 
   const token = localStorage.getItem("accessToken");
+  const NODE_SERVER_URL = "http://localhost:5000/api/security/logs"; 
 
-  // --- STEP 2: UPDATE THE USEEFFECT LOOP ---
+  const changeScanState = (nextState) => {
+    setScanStatus(nextState);
+    scanStatusRef.current = nextState;
+  };
+
   useEffect(() => {
     startCCTV();
 
-    // LIVE CLOCK: Ticks every 1 second
+    // FETCH PERMANENT LOGS ON LOAD
+    axios.get(NODE_SERVER_URL, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => {
+        if (res.data && res.data.length > 0) {
+          setIncidentLogs(res.data);
+        } else {
+          setIncidentLogs([{ id: 'SYS-001', time: new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }), type: 'System Online', desc: 'Biometric sensors initialized.', severity: 'safe', icon: '✅' }]);
+        }
+      })
+      .catch(err => {
+        console.error("Database connection waiting...", err);
+        setIncidentLogs([{ id: 'SYS-001', time: new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }), type: 'System Offline', desc: 'Cannot connect to security database.', severity: 'critical', icon: '⚠️' }]);
+      });
+
     const clockInterval = setInterval(() => {
       setSystemTime(new Date().toLocaleTimeString('en-SG', { 
         hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true 
       }));
     }, 1000);
 
-    // AI SCAN: Runs every 3 seconds
     const scanInterval = setInterval(() => { 
       performLiveScan(); 
-    }, 3000);
+    }, 800); 
 
     return () => {
       stopCCTV();
       clearInterval(clockInterval);
       clearInterval(scanInterval);
+      if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
     };
   }, []);
 
   const startCCTV = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" } 
+      });
       if (videoRef.current) videoRef.current.srcObject = stream;
-      setScanStatus("SYSTEM_ACTIVE");
-    } catch (err) { setScanStatus("HARDWARE_ERR"); }
+      changeScanState("SYSTEM_ACTIVE");
+    } catch (err) { 
+      changeScanState("HARDWARE_ERR"); 
+    }
   };
 
   const stopCCTV = () => {
@@ -66,75 +94,185 @@ const VPatrol = () => {
     const audioPath = type === 'success' ? '/sounds/success.mp3' : '/sounds/denied.mp3';
     const audio = new Audio(audioPath);
     audio.volume = 0.4; 
-    audio.play().catch(err => console.log("Audio waiting for interaction"));
+    audio.play().catch(() => console.log("Audio waiting for user gesture"));
+  };
+
+  // 🎯 HELPER: Handles DB logging after Liveness is proven
+  const grantFinalAccess = (detectedName) => {
+    playFeedback('success');
+    changeScanState("SECURE_MATCH");
+    setIdentifiedUser(detectedName);
+    setScanProgress(100);
+    
+    const currentTimestamp = Date.now();
+    const logTimeStr = new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+
+    if (lastLogRef.current.name !== detectedName || (currentTimestamp - lastLogRef.current.timestamp > 30000)) {
+      const newLog = {
+        id: `ACC-${Math.floor(Math.random() * 900) + 100}`,
+        time: logTimeStr,
+        type: 'Gantry Access',
+        desc: `Identity & Liveness Verified: ${detectedName}`,
+        severity: 'safe',
+        icon: '🔓',
+        personnelName: detectedName // 🎯 NEW: Linked Directly to backend schemas column
+      };
+      
+      setIncidentLogs(prev => [newLog, ...prev.slice(0, 14)]); 
+      lastLogRef.current = { name: detectedName, timestamp: currentTimestamp };
+      
+      // BURN TO NODE.JS DATABASE
+      axios.post(NODE_SERVER_URL, newLog, { headers: { Authorization: `Bearer ${token}` } })
+        .catch(e => console.log("DB Save Failed", e));
+    }
+
+    setTimeout(() => { resetScanner(); }, 3500);
   };
 
   const performLiveScan = async () => {
-  const video = videoRef.current;
-  const canvas = canvasRef.current;
-  if (!video || !canvas) return;
-
-  const context = canvas.getContext('2d');
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  context.drawImage(video, 0, 0, canvas.width, canvas.height);
-  
-  // High quality is good, but 0.6 keeps the Base64 string smaller for faster scans
-  const imageBase64 = canvas.toDataURL('image/jpeg', 0.6);
-
-  try {
-    // FIX 1: Change port to 8000 to talk to the Python AI Service
-    const res = await axios.post('http://localhost:8000/user/recognize', 
-      { image: imageBase64 }, 
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-
-    const currentTime = new Date().toLocaleTimeString('en-SG', { 
-      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true 
-    });
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
     
-    // Always update the scan time to show the heartbeat is alive
-    setLastScanTime(currentTime);
+    if (!video || !canvas || video.videoWidth === 0) return;
+    if (scanStatusRef.current === "SECURE_MATCH" || scanStatusRef.current === "UNKNOWN_QUERY") return;
 
-    // FIX 2: Handle the specific response from your AI Service
-    // We check if res.data.user exists and that it's not the default "UNAUTHORIZED"
-    if (res.data.user && res.data.user.name !== "UNAUTHORIZED") {
-      setScanStatus("SECURE_MATCH");
-      setIdentifiedUser(res.data.user.name);
-      
-      // Play "Access Granted" sound
-      playFeedback('success'); 
+    const context = canvas.getContext('2d');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    const imageBase64 = canvas.toDataURL('image/jpeg', 0.4);
 
-      const newLog = {
-        id: `ACC-${Math.floor(Math.random() * 900) + 100}`,
-        time: currentTime,
-        type: 'Gantry Access',
-        desc: `Identity Verified: ${res.data.user.name}`,
-        severity: 'safe',
-        icon: '🔓'
-      };
-      
-      setIncidentLogs(prev => [newLog, ...prev.slice(0, 5)]);
+    try {
+      const res = await axios.post('/ai/user/recognize', 
+        { image: imageBase64 }, 
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
 
-      // Optional: Post the log to your Node backend (Port 5000) for persistent audit
-      await axios.post('http://localhost:5000/api/security/logs', newLog, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      if (scanStatusRef.current === "SECURE_MATCH" || scanStatusRef.current === "UNKNOWN_QUERY") return;
 
-    } else {
-      // Logic for Access Denied
-      setScanStatus("UNKNOWN_QUERY");
-      setIdentifiedUser("ACCESS_DENIED");
-      
-      // Play "Buzzer" sound
-      playFeedback('denied');
+      if (res.data && res.data.box && res.data.box.length >= 4) {
+        
+        let rawX, rawY, boxWidth, boxHeight;
+        const [v1, v2, v3, v4] = res.data.box;
+
+        if (v2 > v4 && v3 > v1) {
+            rawY = v1;           
+            rawX = v4;           
+            boxWidth = v2 - v4;  
+            boxHeight = v3 - v1; 
+        } else {
+            rawX = v1;
+            rawY = v2;
+            boxWidth = v3;
+            boxHeight = v4;
+        }
+        
+        const faceProximityPercentage = (boxWidth / video.videoWidth) * 100; 
+        const livenessRatio = res.data.liveness_ratio || 0.5; // 🎯 FIX: Changed from currentEAR to match Python math changes
+
+        const targetBox = {
+          left: `${(rawX / video.videoWidth) * 100}%`,
+          top: `${(rawY / video.videoHeight) * 100}%`,
+          width: `${(boxWidth / video.videoWidth) * 100}%`,
+          height: `${(boxHeight / video.videoHeight) * 100}%`
+        };
+
+        if (faceProximityPercentage < 8 && scanStatusRef.current !== "LIVENESS_CHECK") {
+          if (scanStatusRef.current === "SYSTEM_ACTIVE" || scanStatusRef.current === "PRESENCE_DETECTED") {
+            changeScanState("PRESENCE_DETECTED");
+            setFaceBox(null); 
+            setScanProgress(0);
+          }
+          return;
+        }
+
+        // 🎯 STAGE 3: THE 3D HEAD-TURN LIVENESS CHECK
+        if (scanStatusRef.current === "LIVENESS_CHECK") {
+          setFaceBox(targetBox); 
+          
+          // If the profile calculation swings left or right out of center bounds, confirm human activity
+          if (livenessRatio < 0.35 || livenessRatio > 0.65) {
+            grantFinalAccess(candidateUserRef.current);
+          }
+          return; 
+        }
+
+        // STAGE 2: TARGET LOCKING
+        if (scanStatusRef.current === "SYSTEM_ACTIVE" || scanStatusRef.current === "PRESENCE_DETECTED") {
+          changeScanState("TARGET_LOCKING");
+          setFaceBox(targetBox);
+          setScanProgress(12);
+
+          let progress = 12;
+          progressIntervalRef.current = setInterval(() => {
+            progress += Math.floor(Math.random() * 14) + 4;
+            if (progress >= 96) {
+              setScanProgress(96);
+              clearInterval(progressIntervalRef.current);
+            } else {
+              setScanProgress(progress);
+            }
+          }, 120);
+
+          lockTimerRef.current = setTimeout(() => {
+            clearInterval(progressIntervalRef.current);
+            
+            const currentTimestamp = Date.now();
+            const logTimeStr = new Date().toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+
+            if (res.data.user && res.data.user.name !== "UNAUTHORIZED") {
+              candidateUserRef.current = res.data.user.name;
+              changeScanState("LIVENESS_CHECK");
+            } else {
+              playFeedback('denied');
+              changeScanState("UNKNOWN_QUERY");
+              setIdentifiedUser("UNKNOWN PERSONNEL");
+              setScanProgress(0);
+
+              if (lastLogRef.current.name !== "UNKNOWN" || (currentTimestamp - lastLogRef.current.timestamp > 10000)) {
+                const newLog = {
+                  id: `SEC-${Math.floor(Math.random() * 900) + 100}`,
+                  time: logTimeStr,
+                  type: 'Intrusion Alert',
+                  desc: 'Unregistered personnel detected at gantry.',
+                  severity: 'critical',
+                  icon: '🚨',
+                  personnelName: null
+                };
+
+                setIncidentLogs(prev => [newLog, ...prev.slice(0, 14)]);
+                lastLogRef.current = { name: "UNKNOWN", timestamp: currentTimestamp };
+                
+                axios.post(NODE_SERVER_URL, newLog, { headers: { Authorization: `Bearer ${token}` } })
+                  .catch(e => console.log("DB Save Failed", e));
+              }
+
+              setTimeout(() => { resetScanner(); }, 3500);
+            }
+          }, 1800);
+
+        } else if (scanStatusRef.current === "TARGET_LOCKING") {
+          setFaceBox(targetBox);
+        }
+
+      } else {
+        if (scanStatusRef.current !== "LIVENESS_CHECK" && scanStatusRef.current !== "TARGET_LOCKING") {
+          resetScanner();
+        }
+      }
+    } catch (err) {
+      console.error("AI Command Loop Fault:", err);
     }
-  } catch (err) {
-    // If the Python server is off, this catch block triggers
-    console.error("AI Service Offline:", err);
-    setScanStatus("SCANNING...");
-  }
-};
+  };
+
+  const resetScanner = () => {
+    setIdentifiedUser(null);
+    setFaceBox(null);
+    setScanProgress(0);
+    candidateUserRef.current = null;
+    changeScanState("SYSTEM_ACTIVE");
+  };
 
   return (
     <div className="dashboard-layout">
@@ -149,27 +287,67 @@ const VPatrol = () => {
 
         <div className="vpatrol-grid">
           <div className="vpatrol-card monitor-section">
-            <div className="cctv-container">
+            <div className={`cctv-container state-theme-${scanStatus.toLowerCase()}`}>
               <video ref={videoRef} autoPlay playsInline muted className="video-feed" />
               <canvas ref={canvasRef} style={{ display: 'none' }} />
               
-              <div className={`hud-overlay ${scanStatus.toLowerCase()}`}>
+              {faceBox && (
+                <div 
+                  className={`face-tracking-box state-${scanStatus.toLowerCase()}`}
+                  style={{
+                    top: faceBox.top,
+                    left: faceBox.left,
+                    width: faceBox.width,
+                    height: faceBox.height
+                  }}
+                >
+                  <div className="corner-bracket top-left"></div>
+                  <div className="corner-bracket top-right"></div>
+                  <div className="corner-bracket bottom-left"></div>
+                  <div className="corner-bracket bottom-right"></div>
+                  
+                  {scanStatus === "TARGET_LOCKING" && <div className="matrix-scan-line"></div>}
+                  
+                  <div className="box-identity-panel">
+                    <span className="access-status-label">
+                      {scanStatus === "TARGET_LOCKING" && `ANALYZING: ${scanProgress}%`}
+                      {scanStatus === "LIVENESS_CHECK" && "⚠️ LIVENESS CHECK"}
+                      {scanStatus === "SECURE_MATCH" && "✓ GRANT ACCESS"}
+                      {scanStatus === "UNKNOWN_QUERY" && "🚨 ACCESS DENIED"}
+                    </span>
+                    <span className="person-name-label">
+                      {scanStatus === "TARGET_LOCKING" && "LOCKING VECTORS..."}
+                      {scanStatus === "LIVENESS_CHECK" && "TURN HEAD SLIGHTLY"}
+                      {scanStatus === "SECURE_MATCH" && identifiedUser}
+                      {scanStatus === "UNKNOWN_QUERY" && "SUSPICIOUS ACTIVITY"}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <div className="hud-overlay">
                 <div className="hud-top">
-                  <span className="hud-node">NODE_A1 // OS_V2.1</span>
-                  <span className="hud-status">{scanStatus}</span>
+                  <div className="hud-left-meta">
+                    <span className="hud-node">SYS_MODE // BIOMETRIC_GANTRY</span>
+                    {scanStatus === "PRESENCE_DETECTED" && (
+                      <span className="hud-radar-alert">⚠️ PROXIMITY SIGNAL DETECTED</span>
+                    )}
+                  </div>
+                  <span className={`hud-status-badge status-${scanStatus.toLowerCase()}`}>
+                    {scanStatus === "SYSTEM_ACTIVE" && "● IDLE MONITORING"}
+                    {scanStatus === "PRESENCE_DETECTED" && "⚡ MOTION ACQUIRED"}
+                    {scanStatus === "TARGET_LOCKING" && "⏳ VECTOR LOCK ACTIVE"}
+                    {scanStatus === "LIVENESS_CHECK" && "🔄 AWAITING MOVEMENT"}
+                    {scanStatus === "SECURE_MATCH" && "SUCCESS MATCH"}
+                    {scanStatus === "UNKNOWN_QUERY" && "ALERT WARNING"}
+                  </span>
                 </div>
                 
-                {identifiedUser && (
-                  <div className="identity-osd">
-                    <div className="osd-scanner-line"></div>
-                    <p>BIOMETRIC_ID</p>
-                    <h2>{identifiedUser}</h2>
-                  </div>
-                )}
-
                 <div className="hud-bottom">
-                  <p>1.3521 N / 103.8198 E</p>
-                  {/* --- STEP 3: USE SYSTEMTIME INSTEAD OF LASTSCANTIME --- */}
+                  <div className="hud-coordinates-telemetry">
+                    <p>LAT: 1.3521° N // LON: 103.8198° E</p>
+                    <p className="hud-engine-log">MATRIX_ENGINE: ACTIVE_v3.42</p>
+                  </div>
                   <p className="hud-clock">{systemTime}</p>
                 </div>
               </div>
@@ -179,7 +357,6 @@ const VPatrol = () => {
           <div className="vpatrol-card timeline-section">
             <div className="section-header">
               <h2>Security Timeline</h2>
-              <button className="export-csv-btn">Export_CSV</button>
             </div>
             
             <div className="vpatrol-list">
@@ -187,7 +364,7 @@ const VPatrol = () => {
                 <div key={log.id} className={`vpatrol-item ${log.severity}`}>
                   <div className="item-header">
                     <span className="item-id">#{log.id}</span>
-                    <span className="item-time">{log.time}</span>
+                    <span className="item-type-timestamp">{log.time}</span>
                   </div>
                   <div className="item-body">
                     <div className="item-icon">{log.icon}</div>
@@ -196,7 +373,6 @@ const VPatrol = () => {
                       <p>{log.desc}</p>
                     </div>
                   </div>
-                  <button className="item-action-btn">Review Evidence</button>
                 </div>
               )) : <p>Initializing security sensors...</p>}
             </div>

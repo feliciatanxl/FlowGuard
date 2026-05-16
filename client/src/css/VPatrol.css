@@ -1,5 +1,5 @@
 /* =========================================
-   VPATROL GRID (Matches Booking Layout)
+   1. V-PATROL LAYOUT CONFIGURATION
    ========================================= */
 .vpatrol-grid {
     display: grid;
@@ -8,11 +8,11 @@
 }
 
 .vpatrol-card {
-    background: #1e2539; /* Matches .booking-card */
+    background: #1e2539; 
     border-radius: 16px;
     border: 1px solid #2d364f;
     padding: 30px;
-    height: 580px; /* Extended height we agreed on */
+    height: 580px; 
     display: flex;
     flex-direction: column;
 }
@@ -24,26 +24,118 @@
 }
 
 /* =========================================
-   CCTV MONITOR (OSD Tech Styling)
+   2. SURVEILLANCE CCTV FEED DISPLAY
    ========================================= */
 .cctv-container {
     position: relative;
     width: 100%;
-    flex: 1;
+    aspect-ratio: 16 / 9;
     background: #0b0f1a;
     border-radius: 12px;
     overflow: hidden;
-    border: 1px solid #2d364f;
+    border: 2px solid #2d364f;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .video-feed {
     width: 100%;
     height: 100%;
-    object-fit: cover;
-    filter: brightness(0.8) contrast(1.2);
+    object-fit: contain;
+    filter: brightness(0.8) contrast(1.25) sepia(5%);
 }
 
-/* Technical HUD overlay */
+/* Container Border Transitions Based On Scanner States */
+.state-theme-target_locking { border-color: #06b6d4 !important; box-shadow: 0 0 20px rgba(6, 182, 212, 0.2); }
+.state-theme-secure_match   { border-color: #10b981 !important; box-shadow: 0 0 25px rgba(16, 185, 129, 0.35); }
+.state-theme-unknown_query  { border-color: #ef4444 !important; box-shadow: 0 0 25px rgba(239, 68, 68, 0.35); }
+
+/* =========================================
+   3. HIGH-TECH REAL-TIME BOUNDING BOXES
+   ========================================= */
+.face-tracking-box {
+    position: absolute;
+    border: 1px dashed rgba(255, 255, 255, 0.2);
+    z-index: 10;
+    pointer-events: none;
+    transition: all 0.08s linear; /* Responsive tracking anchor speeds */
+}
+
+/* Bounding Bracket State Theme Switching Rules */
+.face-tracking-box.state-target_locking { border-color: #06b6d4; }
+.face-tracking-box.state-secure_match   { border-color: #10b981; }
+.face-tracking-box.state-unknown_query  { border-color: #ef4444; animation: shake 0.3s ease; }
+
+/* Mechanical Target Edge Brackets layout templates */
+.corner-bracket {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border: 3px solid #06b6d4;
+    transition: border-color 0.2s ease;
+}
+.state-secure_match .corner-bracket { border-color: #10b981; }
+.state-unknown_query .corner-bracket { border-color: #ef4444; }
+
+.top-left     { top: -2px; left: -2px; border-right: none; border-bottom: none; }
+.top-right    { top: -2px; right: -2px; border-left: none; border-bottom: none; }
+.bottom-left  { bottom: -2px; left: -2px; border-right: none; border-top: none; }
+.bottom-right { bottom: -2px; right: -2px; border-left: none; border-top: none; }
+
+/* Cinematic Moving Sci-Fi Target Laser Line */
+.matrix-scan-line {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    background: linear-gradient(to right, transparent, #22d3ee, transparent);
+    box-shadow: 0 0 12px #22d3ee;
+    animation: scannerRadarSweep 1.5s ease-in-out infinite alternate;
+}
+
+/* =========================================
+   4. FLOATING BOX LABELS
+   ========================================= */
+.box-identity-panel {
+    position: absolute;
+    bottom: -62px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.access-status-label {
+    font-size: 0.65rem;
+    font-weight: 900;
+    font-family: monospace;
+    padding: 3px 8px;
+    border-radius: 4px;
+    color: #ffffff;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.state-target_locking .access-status-label { background: #06b6d4; box-shadow: 0 0 8px rgba(6, 182, 212, 0.4); }
+.state-secure_match .access-status-label   { background: #10b981; box-shadow: 0 4px 10px rgba(16, 185, 129, 0.3); }
+.state-unknown_query .access-status-label  { background: #ef4444; box-shadow: 0 4px 10px rgba(239, 68, 68, 0.3); }
+
+.person-name-label {
+    font-size: 0.9rem;
+    font-weight: 900;
+    color: #ffffff;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9), 0 0 8px rgba(0, 0, 0, 0.6);
+}
+.state-target_locking .person-name-label { color: #a5f3fc; animation: pulseFade 1s infinite; }
+.state-unknown_query .person-name-label  { color: #f87171; }
+
+/* =========================================
+   5. Survelliance HUD Framework Layouts
+   ========================================= */
 .hud-overlay {
     position: absolute;
     inset: 0;
@@ -53,48 +145,57 @@
     justify-content: space-between;
     pointer-events: none;
     font-family: 'Courier New', Courier, monospace;
+    z-index: 5;
 }
 
-.hud-top { display: flex; justify-content: space-between; font-size: 0.7rem; }
-.hud-status { color: #3b82f6; font-weight: bold; letter-spacing: 1px; }
-
-.hud-clock {
-    color: #3b82f6 !important;
-    font-weight: 800;
-    font-size: 1.1rem;
+.hud-left-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: #707a91;
+    font-weight: bold;
 }
 
-.identity-osd {
-    position: absolute;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    background: rgba(11, 15, 26, 0.9);
-    border: 1px solid #3b82f6;
-    padding: 20px 40px;
-    text-align: center;
-    backdrop-filter: blur(8px);
+.hud-radar-alert {
+    color: #f59e0b;
+    font-size: 0.75rem;
+    font-weight: 900;
+    animation: pulseFade 0.8s infinite alternate;
+}
+
+/* OSD Frame State Badges */
+.hud-status-badge {
+    font-size: 0.7rem;
+    font-weight: 900;
+    padding: 4px 10px;
     border-radius: 4px;
+    color: #fff;
+    letter-spacing: 0.5px;
+}
+.status-system_active     { background: rgba(30, 41, 59, 0.8); border: 1px solid #475569; color: #94a3b8; }
+.status-presence_detected { background: rgba(245, 158, 11, 0.15); border: 1px solid #f59e0b; color: #fbbf24; }
+.status-target_locking    { background: rgba(6, 182, 212, 0.15); border: 1px solid #06b6d4; color: #22d3ee; }
+.status-secure_match      { background: #10b981; color: white; }
+.status-unknown_query     { background: #ef4444; color: white; }
+
+.hud-coordinates-telemetry p {
+    margin: 0;
+    font-size: 0.7rem;
+    color: #4b5563;
+    line-height: 1.4;
 }
 
-.identity-osd h2 { color: #fff; margin: 0; font-size: 1.8rem; font-weight: 900; }
-.osd-scanner-line {
-    position: absolute;
-    top: 0; left: 0; width: 100%; height: 2px;
-    background: #3b82f6;
-    box-shadow: 0 0 15px #3b82f6;
-    animation: scanLine 2s linear infinite;
-}
-
-@keyframes scanLine { 0% { top: 0; } 100% { top: 100%; } }
+.hud-engine-log { color: #334155 !important; }
+.hud-clock { color: #3b82f6 !important; font-weight: 800; font-size: 1.1rem; }
 
 /* =========================================
-   TIMELINE LIST (Matches Booking List)
+   6. SECURITY TIMELINE TIMELINE LIST
    ========================================= */
 .section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 25px;
+    margin-bottom: 0;
 }
 
 .vpatrol-list {
@@ -127,13 +228,12 @@
     margin-bottom: 8px;
 }
 
-.item-time { color: #3b82f6; font-weight: bold; }
-
+.item-type-timestamp { color: #3b82f6; font-weight: bold; }
 .item-body { display: flex; gap: 12px; align-items: flex-start; }
 .item-text h4 { color: #f8fafc; margin: 0; font-size: 0.9rem; }
 .item-text p { color: #707a91; margin: 4px 0 0; font-size: 0.8rem; line-height: 1.4; }
 
-.export-csv-btn {
+.export-csv-btn, .item-action-btn {
     background: transparent;
     color: #3b82f6;
     border: 1px solid #2d364f;
@@ -149,77 +249,51 @@
     margin-top: 12px;
     background: #1e2539;
     color: #707a91;
-    border: 1px solid #2d364f;
     padding: 8px;
     font-size: 0.65rem;
-    font-weight: bold;
     font-family: monospace;
-    cursor: pointer;
 }
-
 .item-action-btn:hover { color: #3b82f6; border-color: #3b82f6; }
 
-.hud-overlay.secure_match {
-    border: 4px inset #22c55e;
-    background: rgba(34, 197, 94, 0.05);
+/* =========================================
+   7. CORE EXPERIMENTAL MOTIONS GRAPHICS
+   ========================================= */
+@keyframes scannerRadarSweep {
+    0% { top: 0%; opacity: 0.3; }
+    50% { opacity: 1; }
+    100% { top: 100%; opacity: 0.3; }
 }
 
-.hud-overlay.access_denied {
-    border: 4px inset #ef4444;
-    background: rgba(239, 68, 68, 0.05);
+@keyframes pulseFade {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
 }
 
 /* =========================================
-   MOBILE & TABLET OPTIMIZATION
+   8. RESPONSIVE HOOK MEDIAS
    ========================================= */
-
 @media (max-width: 1024px) {
-    .vpatrol-grid {
-        grid-template-columns: 1fr; /* Stack columns vertically */
-        gap: 20px;
+    .vpatrol-grid { grid-template-columns: 1fr; gap: 20px; }
+    .vpatrol-card { height: auto; min-height: 450px; padding: 20px; }
+    
+    .cctv-container { 
+        height: 460px !important; 
+        flex: none; 
+        border-radius: 16px; 
+        aspect-ratio: auto; 
+        background: #000; /* Deep backdrop for clean letterboxing */
     }
-
-    .vpatrol-card {
-        height: auto; /* Remove the fixed 580px for mobile */
-        min-height: 450px; 
-        padding: 20px;
-    }
-
-    .cctv-container {
-        height: 300px; /* Give the camera a specific height on mobile */
-        flex: none;
-    }
-
-    .vpatrol-page {
-        padding: 20px !important;
-    }
-
-    /* Adjust the AI identity popup for smaller screens */
-    .identity-osd {
-        width: 85%;
-        padding: 15px 20px;
-    }
-
-    .identity-osd h2 {
-        font-size: 1.3rem;
-    }
-}
-
-@media (max-width: 480px) {
-    .vpatrol-header h1 {
-        font-size: 1.2rem;
-    }
-
-    .cctv-container {
-        height: 280px;
-    }
-
-    .hud-clock {
-        font-size: 0.9rem;
-    }
-
-    /* Hide coordinates on very small phones to save space */
-    .hud-bottom p:first-child {
-        display: none;
+    
+    /* 🎯 MOBILE FIX: Prevents zoom cropping so tracking anchors match perfectly */
+    .video-feed { 
+        width: 100% !important; 
+        height: 100% !important; 
+        object-fit: contain !important; 
     }
 }

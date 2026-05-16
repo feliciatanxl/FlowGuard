@@ -1,5 +1,5 @@
 /* =========================================
-   1. CORE LAYOUT
+   1. CORE LAYOUT & VARIABLES
    ========================================= */
 .dashboard-layout {
   display: flex;
@@ -10,8 +10,25 @@
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
+/* Common Gradients & Colors */
+.gradient-text {
+  background: linear-gradient(to right, #60a5fa, #34d399);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.text-blue { color: #60a5fa; }
+.text-green { color: #34d399; }
+.text-red { color: #f87171; }
+
+/* Status Dots */
+.dot-online { background-color: #34d399; box-shadow: 0 0 8px #34d399; display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.dot-offline { background-color: #4b5563; display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.dot-warning { background-color: #f59e0b; box-shadow: 0 0 8px #f59e0b; display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+
 /* =========================================
-   2. SIDEBAR 
+   2. SIDEBAR COMPONENTS
    ========================================= */
 .sidebar {
   width: 240px;
@@ -24,34 +41,43 @@
   top: 0;
   height: 100vh;
   z-index: 100;
+  transition: left 0.3s ease; /* Smooth transition for mobile */
 }
 
+/* --- LOGO AREA FIX --- */
 .sidebar-logo {
   padding: 30px 20px;
   display: flex;
+  justify-content: space-between; /* Space between logo group and close btn */
   align-items: center;
-  gap: 10px;
   border-bottom: 1px solid #232a3d;
+  width: 100%;
+  box-sizing: border-box;
 }
 
-/* --- FORCE LOGO SIZE (Defends against homepage CSS leaks) --- */
-.sidebar-logo h2 {
+.logo-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo-title h2 {
   font-size: 22px !important;
   margin: 0 !important;
   line-height: 1 !important;
   font-weight: 700;
 }
 
-.gradient-text {
-  background: linear-gradient(to right, #60a5fa, #34d399);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+/* Close button hidden by default on desktop */
+.close-sidebar-btn {
+  display: none; 
 }
 
+/* --- NAVIGATION --- */
 .sidebar-nav {
   flex: 1;
   padding: 20px 0;
+  overflow-y: auto; /* Allow scrolling if many links */
 }
 
 .sidebar-nav a {
@@ -64,14 +90,14 @@
   border-left: 4px solid transparent;
 }
 
-.sidebar-nav a.active-nav-item, 
+.sidebar-nav a.active, /* Use .active for React Router NavLink default */
 .sidebar-nav a:hover {
   background: #1e2539;
   color: #60a5fa !important;
   border-left: 4px solid #3b82f6;
 }
 
-/* --- SIDEBAR BOTTOM (PROFILE & LOGOUT) --- */
+/* --- USER PROFILE (BOTTOM) --- */
 .sidebar-bottom {
   padding: 20px;
   border-top: 1px solid #232a3d;
@@ -89,9 +115,11 @@
   background: #0b0f1a;
   padding: 8px;
   border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-/* --- PROFILE UN-SQUISHER --- */
 .user-meta {
   display: flex !important;
   flex-direction: column !important;
@@ -122,7 +150,7 @@
   text-align: center;
   font-weight: 600;
   cursor: pointer;
-  transition: 0.2s;
+  transition: background 0.2s, color 0.2s;
 }
 
 .logout-btn:hover {
@@ -131,7 +159,7 @@
 }
 
 /* =========================================
-   3. MAIN CONTENT
+   3. MAIN CONTENT DASHBOARD
    ========================================= */
 .dashboard-main {
   flex: 1;
@@ -139,7 +167,6 @@
   overflow-y: auto;
 }
 
-/* --- HEADER ALIGNMENT FIX --- */
 .dashboard-header {
   display: flex;
   justify-content: space-between;
@@ -193,7 +220,6 @@
   border: 1px solid #2d364f;
 }
 
-/* Top Card Icons */
 .icon-wrapper {
   width: 45px;
   height: 45px;
@@ -203,6 +229,7 @@
   justify-content: center;
   font-size: 1.2rem;
 }
+
 .blue-icon { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
 .purple-icon { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
 .red-icon { background: rgba(239, 68, 68, 0.15); color: #f87171; }
@@ -227,10 +254,6 @@
 }
 
 .act-icon { font-size: 1.5rem; }
-.text-blue { color: #60a5fa; }
-.text-green { color: #34d399; }
-.text-red { color: #f87171; }
-
 .activity-card h2 { font-size: 2rem; margin: 10px 0; }
 .activity-card p { font-size: 0.8rem; color: #707a91; margin: 0; }
 
@@ -255,7 +278,6 @@
   margin-bottom: 15px;
 }
 
-/* THE BAR CHART FIX */
 .mock-bar-chart {
   display: flex;
   justify-content: space-around;
@@ -290,7 +312,6 @@
   color: #707a91;
 }
 
-/* Line Chart Placeholder */
 .mock-line-chart {
   height: 200px;
   background: #0b0f1a;
@@ -305,72 +326,7 @@
 }
 
 /* =========================================
-   4. MOBILE FIXES & HAMBURGER
-   ========================================= */
-
-.mobile-menu-btn {
-  display: none !important; 
-  position: absolute;
-}
-
-@media (max-width: 1024px) {
-  .top-summary-row { grid-template-columns: repeat(2, 1fr); }
-  .activity-cards-grid { grid-template-columns: repeat(2, 1fr); }
-  .charts-section { grid-template-columns: 1fr; }
-}
-
-@media (max-width: 768px) {
-  .mobile-menu-btn {
-    display: flex !important;
-    position: fixed;
-    top: 20px;
-    left: 20px;
-    z-index: 1000;
-    width: 45px;
-    height: 45px;
-    background: #3b82f6;
-    color: white;
-    border: none;
-    border-radius: 8px;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.5rem;
-    cursor: pointer;
-  }
-
-  .sidebar {
-    position: fixed;
-    left: -100%;
-    z-index: 999;
-    transition: 0.3s ease;
-  }
-
-  .sidebar.open {
-    left: 0;
-  }
-
-  .dashboard-main {
-    padding: 90px 20px 20px;
-  }
-
-  .dashboard-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 15px;
-  }
-
-  .header-time {
-    text-align: left;
-  }
-
-  .top-summary-row, 
-  .activity-cards-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* =========================================
-   5. CAMERAS PAGE SPECIFICS
+   4. CAMERAS PAGE SPECIFICS
    ========================================= */
 .camera-grid {
   display: grid;
@@ -383,7 +339,7 @@
   border-radius: 12px;
   border: 1px solid #2d364f;
   overflow: hidden;
-  transition: transform 0.2s;
+  transition: transform 0.2s, border-color 0.2s;
 }
 
 .camera-card:hover {
@@ -391,7 +347,6 @@
   border-color: #3b82f6;
 }
 
-/* Red border pulse for active alerts */
 .camera-alert {
   border: 1px solid #ef4444;
   box-shadow: 0 0 15px rgba(239, 68, 68, 0.2);
@@ -443,14 +398,8 @@
 .cam-title-row h3 { margin: 0; font-size: 1.1rem; color: #f8fafc; }
 .camera-info p { margin: 0; font-size: 0.85rem; color: #707a91; }
 
-/* Status Dots */
-.dot-online { background-color: #34d399; box-shadow: 0 0 8px #34d399; }
-.dot-offline { background-color: #4b5563; }
-.dot-warning { background-color: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
-
-
 /* =========================================
-   6. V-PATROL PAGE SPECIFICS
+   5. V-PATROL PAGE SPECIFICS
    ========================================= */
 .vpatrol-container {
   background: #1e2539;
@@ -471,7 +420,6 @@
   border-bottom: none;
 }
 
-/* Left-side color coding based on severity */
 .severity-critical { border-left: 4px solid #ef4444; }
 .severity-high { border-left: 4px solid #f59e0b; }
 .severity-medium { border-left: 4px solid #3b82f6; }
@@ -501,10 +449,108 @@
   border-radius: 6px;
   cursor: pointer;
   font-weight: 600;
-  transition: 0.2s;
+  transition: background 0.2s, color 0.2s;
 }
 
 .review-btn:hover {
   background: #3b82f6;
   color: white;
+}
+
+/* =========================================
+   6. RESPONSIVE DESIGN (TABLET & MOBILE)
+   ========================================= */
+.mobile-menu-btn {
+  display: none !important; 
+  position: absolute;
+}
+
+@media (max-width: 1024px) {
+  .top-summary-row { grid-template-columns: repeat(2, 1fr); }
+  .activity-cards-grid { grid-template-columns: repeat(2, 1fr); }
+  .charts-section { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 768px) {
+  /* Hamburger Button */
+  .mobile-menu-btn {
+    display: flex !important;
+    position: fixed;
+    top: 15px;
+    left: 15px;
+    z-index: 1000;
+    width: 45px;
+    height: 45px;
+    background: rgba(30, 41, 59, 0.8);
+    color: white;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    cursor: pointer;
+    backdrop-filter: blur(5px);
+  }
+
+  /* Sidebar Canvas Behavior */
+  .sidebar {
+    position: fixed;
+    left: -100%;
+    z-index: 999;
+  }
+
+  .sidebar.open {
+    left: 0;
+  }
+
+  /* Activate Close Button inside Sidebar */
+  .close-sidebar-btn {
+    display: flex; 
+    background: transparent;
+    color: #94a3b8;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 5px;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.3s ease;
+  }
+
+  .close-sidebar-btn:hover,
+  .close-sidebar-btn:active {
+    color: #f8fafc;
+  }
+
+  /* Overlay Background */
+  .sidebar-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(2px);
+    z-index: 998; 
+  }
+
+  /* Main Content Adjustments */
+  .dashboard-main {
+    padding: 90px 20px 20px;
+  }
+
+  .dashboard-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 15px;
+  }
+
+  .header-time {
+    text-align: left;
+  }
+
+  .top-summary-row, 
+  .activity-cards-grid {
+    grid-template-columns: 1fr;
+  }
 }

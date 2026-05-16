@@ -15,19 +15,19 @@
 }
 
 /* --- Header Section --- */
-.section-header {
+.contact-header {
   text-align: center;
   margin-bottom: 50px;
 }
 
-.section-title {
+.contact-title {
   font-size: 2.5rem;
   color: #fff;
   margin-bottom: 12px;
   font-weight: 700;
 }
 
-.section-subtitle {
+.contact-subtitle {
   color: #94a3b8;
   font-size: 1.1rem;
 }
@@ -185,5 +185,18 @@
     grid-template-columns: 1fr; /* Stacks the form under the map on smaller screens */
     padding: 30px;
     gap: 40px;
+  }
+  
+  /* Mobile text scaling to prevent awkward wraps */
+  .contact-title {
+    font-size: 1.8rem;
+  }
+  
+  .contact-subtitle {
+    font-size: 0.95rem;
+  }
+  
+  .contact-header {
+    margin-bottom: 30px;
   }
 }

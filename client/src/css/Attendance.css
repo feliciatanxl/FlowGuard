@@ -1,0 +1,158 @@
+/* --- Layout Header & Actions --- */
+.attendance-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.launch-terminal-btn {
+  padding: 10px 16px;
+  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.launch-terminal-btn:hover {
+  opacity: 0.95;
+  transform: translateY(-1px);
+}
+
+/* --- High-Tech Analytics Grid Cards --- */
+.attendance-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+  margin-top: 20px;
+  margin-bottom: 30px;
+}
+
+.attendance-metric-card {
+  background: #1e293b;
+  padding: 20px;
+  border-radius: 12px;
+}
+
+.attendance-metric-card.blue-status { border-left: 4px solid #3b82f6; }
+.attendance-metric-card.green-status { border-left: 4px solid #10b981; }
+.attendance-metric-card.orange-status { border-left: 4px solid #f59e0b; }
+
+.attendance-metric-card h3 {
+  color: #94a3b8;
+  font-size: 14px;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.attendance-metric-card p {
+  font-size: 32px;
+  font-weight: bold;
+  margin: 10px 0 0 0;
+}
+
+.attendance-metric-card .value-neutral { color: #f8fafc; }
+.attendance-metric-card .value-success { color: #10b981; }
+.attendance-metric-card .value-warning { color: #f59e0b; }
+
+/* --- Table Structural Typography Utility Overrides --- */
+.cell-timestamp {
+  color: #cbd5e1;
+  font-family: monospace;
+}
+
+.cell-worker-name {
+  font-weight: 500;
+  color: #f8fafc;
+}
+
+.cell-role-badge {
+  background: #334155;
+  color: #cbd5e1;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.cell-placeholder-dash {
+  color: #64748b;
+}
+
+.table-notice-state {
+  text-align: center;
+  padding: 40px;
+}
+
+.table-notice-state.muted-text {
+  color: #94a3b8;
+}
+
+@media (max-width: 768px) {
+  
+  /* 1. Stack header titles and the camera kiosk launcher button vertically */
+  .attendance-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+    width: 100%;
+  }
+
+  .launch-terminal-btn {
+    width: 100%; 
+    text-align: center;
+    padding: 12px; 
+  }
+
+  /* 2. Collapse the cards grid layout from 3 columns down to 1 single clean stack row */
+  .attendance-metrics-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    margin-top: 15px;
+    margin-bottom: 20px;
+  }
+
+  .attendance-metric-card {
+    padding: 16px; 
+  }
+
+  .attendance-metric-card p {
+    font-size: 28px; 
+  }
+
+  /* 3. Inject native swipe container fallback properties */
+  .table-container {
+    width: 100%;
+    overflow-x: auto; 
+    -webkit-overflow-scrolling: touch; 
+    border-radius: 8px;
+  }
+
+  /* 4. 🎯 FORCE CONTENT TO THE LEFT OVERRIDE */
+  .management-table tr,
+  .management-table th,
+  .management-table td {
+    text-align: left !important; /* Forces layout typography alignment left */
+  }
+
+  /* If cells are structured as flex items or containers inside Management.css */
+  .management-table td {
+    display: flex !important;
+    justify-content: flex-start !important; /* Pushes layout content blocks left */
+    align-items: center !important;
+    width: 100% !important;
+    padding: 10px 14px !important;
+  }
+
+  /* Clear any margin pushes or right alignments from badges or inner text spans */
+  .management-table td *,
+  .presence-tag,
+  .status-badge,
+  .cell-role-badge {
+    text-align: left !important;
+    margin-left: 0 !important; /* Neutralizes code structures that push elements right */
+    margin-right: auto !important; /* Locks structural anchor points to the left border */
+  }
+}

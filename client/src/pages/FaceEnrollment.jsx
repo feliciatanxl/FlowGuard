@@ -78,7 +78,8 @@ const FaceEnrollment = () => {
     setErrorMessage(null); // Clear any previous errors
 
     try {
-      await axios.post('http://localhost:5000/user/enroll-face', {
+      // 🛑 THE FIX: Change to relative path so it uses the Vite Proxy
+      await axios.post('/user/enroll-face', {
         images: photos 
       }, {
         headers: { Authorization: `Bearer ${token}` }

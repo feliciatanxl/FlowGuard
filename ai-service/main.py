@@ -39,13 +39,10 @@ def load_authorized_faces():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        # Ensure the table name matches what you actually use in your Node.js backend
-        # E.g., 'users' instead of 'staff_members' if you use a unified table
         cur.execute('SELECT name, "faceVector" FROM users WHERE "faceVector" IS NOT NULL')
         rows = cur.fetchall()
         
         for name, embedding_json in rows:
-            # Convert the stored JSON string back into a NumPy array
             embedding = np.array(json.loads(embedding_json), dtype=np.float32)
             known_faces.append({"name": name, "embedding": embedding})
             
@@ -56,7 +53,7 @@ def load_authorized_faces():
         print(f"❌ DB Load Error: {e}")
 
 
-# --- NEW: Phase 2 - Biometric Enrollment Endpoint ---
+# --- Phase 2 - Biometric Enrollment Endpoint ---
 
 class FaceImages(BaseModel):
     front: str
@@ -65,7 +62,6 @@ class FaceImages(BaseModel):
 
 def base64_to_cv2(base64_string):
     """Helper to convert React's Base64 image into OpenCV format"""
-    # Remove the "data:image/jpeg;base64," prefix if it exists
     if ',' in base64_string:
         encoded_data = base64_string.split(',')[1]
     else:
@@ -80,7 +76,6 @@ async def encode_faces(images: FaceImages):
     try:
         vectors = []
         
-        # Process all 3 images
         for img_str in [images.front, images.left, images.right]:
             img = base64_to_cv2(img_str)
             faces = face_app.get(img)
@@ -90,15 +85,11 @@ async def encode_faces(images: FaceImages):
             if len(faces) > 1:
                 raise HTTPException(status_code=400, detail="Multiple faces detected. Please ensure you are alone.")
                 
-            # Use 'embedding', not 'normed_embedding' as that is what InsightFace provides by default
             vectors.append(faces[0].embedding)
             
-        # Average the 3 vectors into one robust profile
         avg_vector = np.mean(vectors, axis=0)
-        # Normalize it back (critical for accurate cosine similarity later)
         avg_vector = avg_vector / np.linalg.norm(avg_vector)
         
-        # Return as a standard list of floats so Node.js can save it
         return {"status": "success", "vector": avg_vector.tolist()}
         
     except Exception as e:
@@ -108,20 +99,37 @@ async def encode_faces(images: FaceImages):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins (or use ["http://localhost:5173"])
+    allow_origins=["*"],  
     allow_credentials=True,
-    allow_methods=["*"],  # Allows POST, OPTIONS, etc.
-    allow_headers=["*"],  # Allows Authorization headers
+    allow_methods=["*"],  
+    allow_headers=["*"],  
 )
 
-# --- EXISTING: Phase 3 - The CCTV Scan Endpoint ---
+# --- Phase 3 - The CCTV Scan Endpoint (With Head Turn Liveness) ---
+
+def calculate_head_turn(kps):
+    """Calculates 3D head turn ratio using the 5 major facial keypoints"""
+    if kps is None or len(kps) < 3:
+        return 0.5 # 0.5 means looking perfectly straight ahead
+
+    left_eye = kps[0]
+    right_eye = kps[1]
+    nose = kps[2]
+
+    # Measure the horizontal distance from the nose to each eye
+    dist_left = abs(nose[0] - left_eye[0])
+    dist_right = abs(right_eye[0] - nose[0])
+    
+    total_dist = dist_left + dist_right
+    if total_dist == 0: return 0.5
+
+    return float(dist_left / total_dist)
 
 class RecognitionRequest(BaseModel):
     image: str
 
 @app.post("/user/recognize")
 async def recognize(request: RecognitionRequest):
-    # 2. Decode the Base64 string back into an image
     try:
         header, encoded = request.image.split(",", 1)
         data = base64.b64decode(encoded)
@@ -132,7 +140,6 @@ async def recognize(request: RecognitionRequest):
 
     live_faces = face_app.get(img)
     
-    # 3. Process faces (Your existing logic)
     for face in live_faces:
         best_name = "UNAUTHORIZED"
         highest_similarity = 0.0
@@ -145,16 +152,27 @@ async def recognize(request: RecognitionRequest):
                 if sim > 0.45: 
                     best_name = known["name"]
         
-        # 4. Return the FIRST face found to match your React logic
+        bbox = face.bbox
+        x = int(bbox[0])
+        y = int(bbox[1])
+        width = int(bbox[2] - bbox[0])
+        height = int(bbox[3] - bbox[1])
+
+        # 🎯 Calculate the Head Turn Ratio
+        liveness_ratio = calculate_head_turn(face.kps)
+
+        # Return both the user, the box, and the 3D liveness ratio
         return {
             "user": {
                 "name": best_name,
                 "status": "AUTHORIZED" if best_name != "UNAUTHORIZED" else "DENIED",
                 "confidence": round(highest_similarity, 4)
-            }
+            },
+            "box": [x, y, width, height],
+            "liveness_ratio": liveness_ratio 
         }
         
-    return {"user": None} # No face detected
+    return {"user": None, "box": None, "liveness_ratio": 0.5}
 
 # Helper to refresh the list manually if a new staff joins
 @app.get("/refresh")
@@ -165,4 +183,4 @@ def refresh():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8500, reload=True)

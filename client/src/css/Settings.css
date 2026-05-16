@@ -4,7 +4,7 @@
   flex-direction: column;
   gap: 24px;
   width: 100%; /* Stretch to full width */
-  animation: slideUpFade 0.5s ease-out;
+  /* animation: slideUpFade 0.5s ease-out; */
   /* Removed the 900px max-width from here */
 }
 

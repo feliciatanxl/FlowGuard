@@ -1,3 +1,4 @@
+// client/src/components/Sidebar.jsx
 import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import LogoIcon from './LogoIcon';
@@ -22,34 +23,45 @@ const Sidebar = () => {
 
   return (
     <>
-      {/* 1. Hamburger Button (Visible only on Mobile) */}
-      <button className="mobile-menu-btn" onClick={() => setIsOpen(!isOpen)}>
-        {isOpen ? '✕' : '☰'}
-      </button>
+      {/* 1. Hamburger Button (Hidden when sidebar is open) */}
+      {!isOpen && (
+        <button className="mobile-menu-btn" onClick={() => setIsOpen(true)}>
+          ☰
+        </button>
+      )}
 
       {/* 2. Sidebar with dynamic "open" class */}
       <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
         <div className="sidebar-logo">
-          <LogoIcon size={28} />
-          <h2 className="gradient-text">FlowGuard</h2>
+          <div className="logo-title">
+            <LogoIcon size={28} />
+            <h2 className="gradient-text">FlowGuard</h2>
+          </div>
+          
+          <button className="close-sidebar-btn" onClick={() => setIsOpen(false)}>
+            ✕
+          </button>
         </div>
         
         <nav className="sidebar-nav">
           <NavLink to="/dashboard" onClick={() => setIsOpen(false)}>Dashboard</NavLink>
           <NavLink to="/cameras" onClick={() => setIsOpen(false)}>Cameras</NavLink>
           <NavLink to="/vpatrol" onClick={() => setIsOpen(false)}>V-Patrol</NavLink>
+          
+          {/* 🎯 NEW: Dynamic Workforce Attendance Tab (Hidden from raw staff accounts) */}
+          {(user.role === 'FM' || user.role === 'Tenant') && (
+            <NavLink to="/attendance" onClick={() => setIsOpen(false)}>Daily Attendance</NavLink>
+          )}
+
           <NavLink to="/logistics" onClick={() => setIsOpen(false)}>Logistics & Bays</NavLink>
 
-          {/* Visible ONLY to the Boss (Tenant) */}
           {user.role === 'Tenant' && (
             <NavLink to="/staff" onClick={() => setIsOpen(false)}>My Staff</NavLink>
           )}
 
-          {/* Visible ONLY to the Admin (FM) */}
           {user.role === 'FM' && (
             <>
               <NavLink to="/users" onClick={() => setIsOpen(false)}>User Management</NavLink>
-              {/* NEW: Link to the Invitation/Onboarding system */}
               <NavLink to="/tenant-management" onClick={() => setIsOpen(false)}>Tenant Onboarding</NavLink>
             </>
           )}

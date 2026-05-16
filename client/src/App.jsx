@@ -23,6 +23,8 @@ import StaffManagement from './pages/StaffManagement';
 import UserLogs from './pages/UserLogs';
 import TenantManagement from './pages/TenantManagement';
 import FaceEnrollment from './pages/FaceEnrollment';
+import Attendance from './pages/Attendance';
+import GateScanner from './pages/GateScanner';
 import './App.css';
 
 function App() {
@@ -37,8 +39,10 @@ function App() {
         <Route path="/user-logs/:id" element={<UserLogs />} />
         <Route path="/staff" element={<StaffManagement />} />
         <Route path="/enrollment" element={<FaceEnrollment />} />
+        <Route path="/attendance" element={<Attendance />} />
         <Route path="/contact" element={<Contact />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/gate-scanner" element={<GateScanner />} />
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotKey />} />
         <Route path="/logistics" element={<TenantLogistics />} />

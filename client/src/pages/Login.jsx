@@ -27,8 +27,11 @@ const Login = () => {
 
     try {
       const token = await executeRecaptcha('login_submit');
+      
+      // 🎯 THE FIX: Get the IP dynamically so phones can talk to the laptop
+      const currentIP = window.location.hostname;
 
-      const res = await axios.post('http://localhost:5000/user/login', { 
+      const res = await axios.post(`/user/login`, { 
         email, 
         password,
         recaptchaToken: token 
