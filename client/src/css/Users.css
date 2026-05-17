@@ -89,6 +89,7 @@
     align-items: center;
     font-weight: bold;
     color: white;
+    flex-shrink: 0;
 }
 
 /* --- Presence Status Tags --- */
@@ -306,4 +307,42 @@
     font-weight: 400;
     margin-left: 4px;
     font-style: italic;
+}
+
+/* =========================================
+   LAPTOP RESPONSIVENESS (1366px and below)
+   ========================================= */
+@media (max-width: 1366px) and (min-width: 769px) {
+    .users-table th,
+    .users-table td {
+        padding: 16px 14px; /* Relaxed the padding slightly so it doesn't feel suffocated */
+        font-size: 0.85rem; 
+    }
+
+    /* 🎯 THE MAGIC FIX: Forces badges, dates, and buttons to stay on one straight line */
+    .user-name-text,
+    .role-badge,
+    .presence-tag,
+    .time-cell,
+    .actions-cell {
+        white-space: nowrap;
+    }
+
+    .user-avatar-small {
+        width: 32px; /* Slightly larger than last time */
+        height: 32px;
+    }
+
+    .presence-tag {
+        padding: 5px 12px;
+        font-size: 0.75rem;
+    }
+
+    .action-btn {
+        font-size: 0.8rem;
+    }
+
+    .actions-cell {
+        gap: 10px; 
+    }
 }

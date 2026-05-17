@@ -18,6 +18,8 @@ const VPatrol = () => {
   const lockTimerRef = useRef(null);
   const progressIntervalRef = useRef(null);
 
+  const isScanningRef = useRef(false);
+
   // LIVENESS MEMORY: Tracks the head-turn validation
   const candidateUserRef = useRef(null); 
   const lastLogRef = useRef({ name: null, timestamp: 0 });
@@ -97,7 +99,6 @@ const VPatrol = () => {
     audio.play().catch(() => console.log("Audio waiting for user gesture"));
   };
 
-  // 🎯 HELPER: Handles DB logging after Liveness is proven
   const grantFinalAccess = (detectedName) => {
     playFeedback('success');
     changeScanState("SECURE_MATCH");
@@ -115,13 +116,12 @@ const VPatrol = () => {
         desc: `Identity & Liveness Verified: ${detectedName}`,
         severity: 'safe',
         icon: '🔓',
-        personnelName: detectedName // 🎯 NEW: Linked Directly to backend schemas column
+        personnelName: detectedName 
       };
       
       setIncidentLogs(prev => [newLog, ...prev.slice(0, 14)]); 
       lastLogRef.current = { name: detectedName, timestamp: currentTimestamp };
       
-      // BURN TO NODE.JS DATABASE
       axios.post(NODE_SERVER_URL, newLog, { headers: { Authorization: `Bearer ${token}` } })
         .catch(e => console.log("DB Save Failed", e));
     }
@@ -130,18 +130,31 @@ const VPatrol = () => {
   };
 
   const performLiveScan = async () => {
+    if (isScanningRef.current) return; 
+
     const video = videoRef.current;
     const canvas = canvasRef.current;
     
     if (!video || !canvas || video.videoWidth === 0) return;
     if (scanStatusRef.current === "SECURE_MATCH" || scanStatusRef.current === "UNKNOWN_QUERY") return;
 
+    isScanningRef.current = true; 
+
     const context = canvas.getContext('2d');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    
+    // 🚀 LAPTOP OPTIMIZATION: Shrink the image to 480px wide before sending to AI
+    // This dramatically reduces the mathematical load on your laptop's weak CPU!
+    const MAX_WIDTH = 480; 
+    const scaleDownRatio = MAX_WIDTH / video.videoWidth;
+    
+    canvas.width = MAX_WIDTH;
+    canvas.height = video.videoHeight * scaleDownRatio;
+    
+    // Draw the compressed version
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     
-    const imageBase64 = canvas.toDataURL('image/jpeg', 0.4);
+    // Send a highly compressed JPEG
+    const imageBase64 = canvas.toDataURL('image/jpeg', 0.3);
 
     try {
       const res = await axios.post('/ai/user/recognize', 
@@ -149,56 +162,56 @@ const VPatrol = () => {
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      if (scanStatusRef.current === "SECURE_MATCH" || scanStatusRef.current === "UNKNOWN_QUERY") return;
+      if (scanStatusRef.current === "SECURE_MATCH" || scanStatusRef.current === "UNKNOWN_QUERY") {
+         isScanningRef.current = false;
+         return;
+      }
 
       if (res.data && res.data.box && res.data.box.length >= 4) {
         
         let rawX, rawY, boxWidth, boxHeight;
         const [v1, v2, v3, v4] = res.data.box;
 
-        if (v2 > v4 && v3 > v1) {
-            rawY = v1;           
-            rawX = v4;           
-            boxWidth = v2 - v4;  
-            boxHeight = v3 - v1; 
+        // Note: The AI is now returning coordinates based on the SMALL 480px canvas, not the video
+        if (v3 > v1 && v4 > v2 && v3 <= canvas.width && v4 <= canvas.height) {
+          rawX = v1; rawY = v2; boxWidth = v3 - v1; boxHeight = v4 - v2;
+        } else if (v2 > v4 && v3 > v1) {
+          rawY = v1; rawX = v4; boxWidth = v2 - v4; boxHeight = v3 - v1; 
         } else {
-            rawX = v1;
-            rawY = v2;
-            boxWidth = v3;
-            boxHeight = v4;
+          rawX = v1; rawY = v2; boxWidth = v3; boxHeight = v4;
         }
         
-        const faceProximityPercentage = (boxWidth / video.videoWidth) * 100; 
-        const livenessRatio = res.data.liveness_ratio || 0.5; // 🎯 FIX: Changed from currentEAR to match Python math changes
+        // Calculate proximity based on the compressed canvas width
+        const faceProximityPercentage = (boxWidth / canvas.width) * 100; 
+        const livenessRatio = res.data.liveness_ratio || 0.5;
 
+        // 🎯 UPDATED MATH: Calculate percentages using the compressed canvas dimensions
         const targetBox = {
-          left: `${(rawX / video.videoWidth) * 100}%`,
-          top: `${(rawY / video.videoHeight) * 100}%`,
-          width: `${(boxWidth / video.videoWidth) * 100}%`,
-          height: `${(boxHeight / video.videoHeight) * 100}%`
+          left: `${(rawX / canvas.width) * 100}%`,
+          top: `${(rawY / canvas.height) * 100}%`,
+          width: `${(boxWidth / canvas.width) * 100}%`,
+          height: `${(boxHeight / canvas.height) * 100}%`
         };
 
-        if (faceProximityPercentage < 8 && scanStatusRef.current !== "LIVENESS_CHECK") {
+        if (faceProximityPercentage < 5 && scanStatusRef.current !== "LIVENESS_CHECK") {
           if (scanStatusRef.current === "SYSTEM_ACTIVE" || scanStatusRef.current === "PRESENCE_DETECTED") {
             changeScanState("PRESENCE_DETECTED");
             setFaceBox(null); 
             setScanProgress(0);
           }
+          isScanningRef.current = false; 
           return;
         }
 
-        // 🎯 STAGE 3: THE 3D HEAD-TURN LIVENESS CHECK
         if (scanStatusRef.current === "LIVENESS_CHECK") {
           setFaceBox(targetBox); 
           
-          // If the profile calculation swings left or right out of center bounds, confirm human activity
-          if (livenessRatio < 0.35 || livenessRatio > 0.65) {
+          if (livenessRatio < 0.45 || livenessRatio > 0.55) {
             grantFinalAccess(candidateUserRef.current);
           }
           return; 
         }
 
-        // STAGE 2: TARGET LOCKING
         if (scanStatusRef.current === "SYSTEM_ACTIVE" || scanStatusRef.current === "PRESENCE_DETECTED") {
           changeScanState("TARGET_LOCKING");
           setFaceBox(targetBox);
@@ -263,6 +276,8 @@ const VPatrol = () => {
       }
     } catch (err) {
       console.error("AI Command Loop Fault:", err);
+    } finally {
+      isScanningRef.current = false; 
     }
   };
 
