@@ -49,7 +49,7 @@ module.exports = (sequelize, DataTypes) => {
             allowNull: false
         },
         faceVector: {
-            type: DataTypes.TEXT, // Stores the 512-dimension array as a JSON string
+            type: DataTypes.VECTOR(512), // Use the specific vector type
             allowNull: true
         },
         // ---------------------------------------

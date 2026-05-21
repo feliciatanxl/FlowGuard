@@ -181,21 +181,39 @@ router.put("/generate-code", authenticateToken, async (req, res) => {
 
 router.post("/login", async (req, res) => {
     let { email, password, recaptchaToken } = req.body;
+
     try {
-        if (!recaptchaToken) return res.status(400).json({ message: "Security token missing." });
+        // 1. Validate ReCAPTCHA Token with Google
+        const recaptchaRes = await fetch(`https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET}&response=${recaptchaToken}`, {
+            method: 'POST'
+        });
+        const recaptchaData = await recaptchaRes.json();
 
-        const user = await User.findOne({ where: { email } });
-        if (!user) return res.status(400).json({ message: "Invalid email or password" });
-
-        if (user.isActive === false) {
-            return res.status(403).json({ 
-                message: "Access Denied: Your account has been suspended." 
-            });
+        if (!recaptchaData.success) {
+            return res.status(400).json({ message: "Security verification failed." });
         }
 
-        const match = await bcrypt.compare(password, user.password);
-        if (!match) return res.status(400).json({ message: "Invalid email or password" });
+        // 2. Find User (Use timing-attack protection logic)
+        const user = await User.findOne({ where: { email } });
+        
+        // Define a dummy hash to compare against if user doesn't exist
+        const dummyHash = "$2b$10$abcdefghijklmnopqrstuv"; 
+        const passwordToCompare = user ? user.password : dummyHash;
+        
+        // 3. Compare password
+        const match = await bcrypt.compare(password, passwordToCompare);
 
+        // If user not found OR password doesn't match
+        if (!user || !match) {
+            return res.status(400).json({ message: "Invalid email or password" });
+        }
+
+        // 4. Check account status
+        if (user.isActive === false) {
+            return res.status(403).json({ message: "Access Denied: Account suspended." });
+        }
+
+        // 5. Generate JWT Token
         const token = jwt.sign(
             { id: user.id, email: user.email, role: user.role },
             process.env.APP_SECRET, 
@@ -213,6 +231,7 @@ router.post("/login", async (req, res) => {
         });
 
     } catch (err) {
+        console.error("Login Route Error:", err);
         res.status(500).json({ message: "Internal server error" });
     }
 });
@@ -331,7 +350,7 @@ router.post('/enroll-face', verifyToken, async (req, res) => {
         // 2. Save to PostgreSQL using Sequelize
         await User.update(
             { 
-                faceVector: JSON.stringify(faceVector), 
+                faceVector: faceVector, 
                 isEnrolled: true 
             },
             { 

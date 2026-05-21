@@ -34,10 +34,11 @@ const db = require('./models');
 db.sequelize.sync({ alter: true }) 
     .then(() => {
         let port = process.env.APP_PORT || 5000;
-        
-        // 🛑 THE FIX #2: Add '0.0.0.0' to broadcast across your Wi-Fi network
         app.listen(port, '0.0.0.0', () => {
-            console.log(`⚡ FlowGuard Server securely broadcasting on port ${port} across local Wi-Fi`);
+            // Add this specific log to know exactly when to start testing
+            console.log("--------------------------------------------------");
+            console.log(`⚡ FlowGuard Server is FULLY READY on port ${port}`);
+            console.log("--------------------------------------------------");
         });
     })
     .catch((err) => {
