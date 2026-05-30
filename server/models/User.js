@@ -1,4 +1,6 @@
+const pgvector = require('pgvector/sequelize');
 module.exports = (sequelize, DataTypes) => {
+    pgvector.registerType(sequelize.Sequelize);
     const User = sequelize.define("User", {
         name: {
             type: DataTypes.STRING(100),

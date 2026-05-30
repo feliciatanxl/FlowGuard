@@ -34,7 +34,7 @@ const db = require('./models');
 db.sequelize.sync({ alter: true }) 
     .then(() => {
         let port = process.env.APP_PORT || 5000;
-        app.listen(port, '0.0.0.0', () => {
+        app.listen(port, '127.0.0.1', () => {
             // Add this specific log to know exactly when to start testing
             console.log("--------------------------------------------------");
             console.log(`⚡ FlowGuard Server is FULLY READY on port ${port}`);
