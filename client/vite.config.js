@@ -10,7 +10,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/user': {
-        target: 'http://localhost:5000', // Routes login requests to Node
+        target: 'http://127.0.0.1:5000', // Routes login requests to Node
         changeOrigin: true,
         secure: false,
       },
