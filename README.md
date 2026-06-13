@@ -37,7 +37,7 @@ User accounts/authentication are a shared feature across the team.
 
 | Module | Owner | Responsibility |
 |--------|-------|----------------|
-| **Facial Recognition & Access Management** | **Felicia (Tan Xiu Li)** | Biometric enrolment (auto webcam scan + manual photo upload), live gate recognition, access-permission management, PDPA-compliant off-boarding, security logs |
+| **Facial Recognition & Access Management** | **Felicia** | Biometric enrolment (auto webcam scan + manual photo upload), live gate recognition, access-permission management, PDPA-compliant off-boarding, security logs |
 | **Object Detection & Space Management** | **Charlisa** | Monitoring zones & AI rules, unattended-item detection, people-counting/density analytics, alert lifecycle, log purging |
 | **AI Helpdesk & Facility Support** | **Lucas** | AI support chatbot, chat-transcript logging, FM ticketing & escalation, knowledge-base updates |
 | **Incident Tracking & Resolution** | **Gladwin** | Centralised incident dashboard, automatic + manual incident creation, resolution pipeline, archiving |
