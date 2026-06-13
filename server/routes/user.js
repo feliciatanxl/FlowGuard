@@ -1,18 +1,18 @@
 const express = require('express');
 const router = express.Router();
-const { User, Attendance, Invite } = require('../models'); 
+const { User, Attendance, Invite } = require('../models');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const yup = require('yup');
-const axios = require('axios'); 
-const crypto = require('crypto'); 
+const axios = require('axios');
+const crypto = require('crypto');
 const { verifyToken } = require('../middlewares/auth');
 require('dotenv').config();
 
 // --- MIDDLEWARE ---
 const authenticateToken = async (req, res, next) => {
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; 
+    const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) return res.status(401).json({ message: "Access denied. No token provided." });
 
@@ -40,10 +40,10 @@ router.post("/register", async (req, res) => {
         params.append('secret', process.env.RECAPTCHA_SECRET_KEY);
         params.append('response', recaptchaToken);
 
-        const googleResponse = await axios.post('https://www.google.com/recaptcha/api/siteverify', params, { 
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' } 
+        const googleResponse = await axios.post('https://www.google.com/recaptcha/api/siteverify', params, {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
-        
+
         if (!googleResponse.data.success || googleResponse.data.score < 0.5) {
             return res.status(403).json({ errors: ["Security check failed. Please try again."] });
         }
@@ -58,7 +58,7 @@ router.post("/register", async (req, res) => {
         });
 
         let validatedData = await validationSchema.validate(userData, { abortEarly: false });
-        
+
         // --- 3. THE SECURITY GATE ---
 
         // BLOCK A: Prevent anyone from registering as FM publicly
@@ -68,8 +68,8 @@ router.post("/register", async (req, res) => {
 
         // BLOCK B: Tenant Registration (One-Time Invite Check)
         if (validatedData.role === 'Tenant') {
-            const invite = await Invite.findOne({ 
-                where: { code: validatedData.tenantCode, role: 'Tenant', isUsed: false } 
+            const invite = await Invite.findOne({
+                where: { code: validatedData.tenantCode, role: 'Tenant', isUsed: false }
             });
 
             if (!invite) {
@@ -87,8 +87,8 @@ router.post("/register", async (req, res) => {
 
         // BLOCK C: Staff Registration (Hybrid Security Logic)
         if (validatedData.role === 'Staff') {
-            const employer = await User.findOne({ 
-                where: { role: 'Tenant', companyCode: validatedData.tenantCode } 
+            const employer = await User.findOne({
+                where: { role: 'Tenant', companyCode: validatedData.tenantCode }
             });
 
             if (!employer) {
@@ -109,7 +109,7 @@ router.post("/register", async (req, res) => {
             }
 
             // Link Staff to Tenant and increment usage
-            validatedData.managerId = employer.id; 
+            validatedData.managerId = employer.id;
             await employer.increment('codeCurrentUsage');
         }
 
@@ -134,12 +134,12 @@ router.post("/register", async (req, res) => {
 });
 
 // --- FM ONLY: Get all generated invites ---
-router.post("/invite-tenant", authenticateToken, async (req, res) => { 
+router.post("/invite-tenant", authenticateToken, async (req, res) => {
     try {
         if (req.user.role !== 'FM') return res.status(403).json({ message: "Access Denied." });
 
         const inviteCode = `INVITE-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
-        const expiry = new Date(Date.now() + 48 * 60 * 60 * 1000); 
+        const expiry = new Date(Date.now() + 48 * 60 * 60 * 1000);
 
         // CRITICAL: Ensure Invite is imported at the top of this file
         await Invite.create({
@@ -150,7 +150,7 @@ router.post("/invite-tenant", authenticateToken, async (req, res) => {
 
         res.json({ inviteCode, message: "Invitation generated." });
     } catch (err) {
-        console.error("Invite Error:", err); 
+        console.error("Invite Error:", err);
         res.status(500).json({ error: "Failed to generate invitation." });
     }
 });
@@ -163,13 +163,13 @@ router.put("/generate-code", authenticateToken, async (req, res) => {
         const randomString = crypto.randomBytes(3).toString('hex').toUpperCase();
         const newCode = `FLOW-${randomString}`;
 
-        await User.update({ 
+        await User.update({
             companyCode: newCode,
-            codeCreatedAt: new Date(),   
-            codeCurrentUsage: 0,         
-            codeMaxUsage: 10             
-        }, { 
-            where: { id: req.user.id } 
+            codeCreatedAt: new Date(),
+            codeCurrentUsage: 0,
+            codeMaxUsage: 10
+        }, {
+            where: { id: req.user.id }
         });
 
         res.json({ companyCode: newCode });
@@ -184,9 +184,10 @@ router.post("/login", async (req, res) => {
 
     try {
         // 1. Validate ReCAPTCHA Token with Google
-        const recaptchaRes = await fetch(`https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET}&response=${recaptchaToken}`, {
-            method: 'POST'
-        });
+        const recaptchaRes = await fetch(
+            `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${recaptchaToken}`,
+            { method: 'POST' }
+        );
         const recaptchaData = await recaptchaRes.json();
 
         if (!recaptchaData.success) {
@@ -195,11 +196,11 @@ router.post("/login", async (req, res) => {
 
         // 2. Find User (Use timing-attack protection logic)
         const user = await User.findOne({ where: { email } });
-        
+
         // Define a dummy hash to compare against if user doesn't exist
-        const dummyHash = "$2b$10$abcdefghijklmnopqrstuv"; 
+        const dummyHash = "$2b$10$abcdefghijklmnopqrstuv";
         const passwordToCompare = user ? user.password : dummyHash;
-        
+
         // 3. Compare password
         const match = await bcrypt.compare(password, passwordToCompare);
 
@@ -216,18 +217,18 @@ router.post("/login", async (req, res) => {
         // 5. Generate JWT Token
         const token = jwt.sign(
             { id: user.id, email: user.email, role: user.role },
-            process.env.APP_SECRET, 
+            process.env.APP_SECRET,
             { expiresIn: '1h' }
         );
 
-        res.json({ 
-            token, 
-            user: { 
-                id: user.id, 
-                name: user.name, 
+        res.json({
+            token,
+            user: {
+                id: user.id,
+                name: user.name,
                 role: user.role,
-                isEnrolled: user.isEnrolled 
-            } 
+                isEnrolled: user.isEnrolled
+            }
         });
 
     } catch (err) {
@@ -238,8 +239,8 @@ router.post("/login", async (req, res) => {
 
 router.get("/my-code", authenticateToken, async (req, res) => {
     try {
-        const user = await User.findByPk(req.user.id, { 
-            attributes: ['companyCode', 'codeCurrentUsage', 'codeMaxUsage', 'codeCreatedAt'] 
+        const user = await User.findByPk(req.user.id, {
+            attributes: ['companyCode', 'codeCurrentUsage', 'codeMaxUsage', 'codeCreatedAt']
         });
         res.json(user);
     } catch (err) {
@@ -260,29 +261,29 @@ router.get("/my-staff", authenticateToken, async (req, res) => {
 });
 
 router.get("/", async (req, res) => {
-  try {
-    const users = await User.findAll({
-      attributes: ['id', 'name', 'email', 'role', 'isActive', 'createdAt'],
-      include: [{
-        model: Attendance,
-        as: 'Attendances',
-        limit: 1,
-        order: [['timestamp', 'DESC']]
-      }]
-    });
+    try {
+        const users = await User.findAll({
+            attributes: ['id', 'name', 'email', 'role', 'isActive', 'createdAt'],
+            include: [{
+                model: Attendance,
+                as: 'Attendances',
+                limit: 1,
+                order: [['timestamp', 'DESC']]
+            }]
+        });
 
-    const userList = users.map(user => {
-      const latestScan = user.Attendances[0];
-      return {
-        ...user.toJSON(),
-        locationStatus: latestScan ? (latestScan.type === 'IN' ? 'On-Site' : 'Off-Site') : 'Off-Site'
-      };
-    });
+        const userList = users.map(user => {
+            const latestScan = user.Attendances[0];
+            return {
+                ...user.toJSON(),
+                locationStatus: latestScan ? (latestScan.type === 'IN' ? 'On-Site' : 'Off-Site') : 'Off-Site'
+            };
+        });
 
-    res.json(userList);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+        res.json(userList);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 router.put("/suspend/:id", authenticateToken, async (req, res) => {
@@ -301,7 +302,7 @@ router.put("/suspend/:id", authenticateToken, async (req, res) => {
 
 router.get("/logs/:id", authenticateToken, async (req, res) => {
     try {
-        const logs = await Attendance.findAll({ 
+        const logs = await Attendance.findAll({
             where: { userId: req.params.id },
             order: [['timestamp', 'DESC']],
             limit: 50
@@ -332,9 +333,9 @@ router.delete("/:id", authenticateToken, async (req, res) => {
 router.post('/enroll-face', verifyToken, async (req, res) => {
     try {
         const { images } = req.body;
-        
+
         // This requires your JWT middleware to attach the user ID to req.user
-        const userId = req.user.id; 
+        const userId = req.user.id;
 
         console.log(`Starting face enrollment for User ID: ${userId}`);
 
@@ -349,12 +350,12 @@ router.post('/enroll-face', verifyToken, async (req, res) => {
 
         // 2. Save to PostgreSQL using Sequelize
         await User.update(
-            { 
-                faceVector: faceVector, 
-                isEnrolled: true 
+            {
+                faceVector: faceVector,
+                isEnrolled: true
             },
-            { 
-                where: { id: userId } 
+            {
+                where: { id: userId }
             }
         );
 
