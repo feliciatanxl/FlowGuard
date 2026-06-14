@@ -16,25 +16,26 @@ const Attendance = () => {
   const userRole = localStorage.getItem("userRole") || 'Tenant';
   const userName = localStorage.getItem("userName") || 'User';
 
-  useEffect(() => {
-    const fetchAttendanceData = async () => {
-      try {
-        const res = await axios.get('http://localhost:5000/api/attendance/logs', {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        
-        if (res.data) {
-          setLogs(res.data);
-          calculateMetrics(res.data);
-        }
-      } catch (err) {
-        console.error("Failed to load workforce attendance metrics:", err);
-      } finally {
-        setLoading(false);
+  const fetchAttendanceData = async () => {
+    try {
+      const res = await axios.get('http://localhost:5000/api/attendance/logs', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.data) {
+        setLogs(res.data);
+        calculateMetrics(res.data);
       }
-    };
+    } catch (err) {
+      console.error("Failed to load workforce attendance metrics:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchAttendanceData();
+    const pollInterval = setInterval(fetchAttendanceData, 30000); // auto-refresh every 30s
+    return () => clearInterval(pollInterval);
   }, [token]);
 
   const calculateMetrics = (attendanceData) => {
@@ -92,12 +93,14 @@ const Attendance = () => {
           </div>
           
           {/* 🎯 Class assigned here */}
-          <button 
-            onClick={() => navigate('/gate-scanner')} 
-            className="launch-terminal-btn"
-          >
-            Launch Gate Terminal
-          </button>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button onClick={fetchAttendanceData} className="launch-terminal-btn" style={{ background: '#334155' }}>
+              Refresh
+            </button>
+            <button onClick={() => navigate('/gate-scanner')} className="launch-terminal-btn">
+              Launch Gate Terminal
+            </button>
+          </div>
         </header>
 
         {/* 🎯 Classes assigned to the metrics block items below */}

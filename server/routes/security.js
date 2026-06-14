@@ -1,22 +1,23 @@
 const express = require('express');
 const router = express.Router();
+const { randomUUID } = require('crypto');
 
 // 🎯 FIX: Destructure BOTH sequelize (for raw queries) and SecurityLog from the auto-loader
-const { sequelize, SecurityLog } = require('../models'); 
+const { sequelize, SecurityLog } = require('../models');
 
 // 1. POST Route: Catch the log from React and save it to PostgreSQL
 router.post('/logs', async (req, res) => {
   try {
-    const { id, time, type, desc, severity, icon, personnelName } = req.body;
+    const { time, type, desc, severity, icon, personnelName } = req.body;
 
     const newLog = await SecurityLog.create({
-      id,
+      id: randomUUID(),   // server-generated UUID — no more duplicate key collisions
       time,
       type,
       desc,
       severity,
       icon,
-      personnelName 
+      personnelName
     });
 
     res.status(201).json({ message: "Log secured in database", log: newLog });

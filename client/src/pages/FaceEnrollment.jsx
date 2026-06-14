@@ -1,21 +1,23 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import '../css/Enrollment.css'; 
+import '../css/Enrollment.css';
 
 const FaceEnrollment = () => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const navigate = useNavigate();
 
-  // State to track which angle we are capturing
+  const [enrollmentMode, setEnrollmentMode] = useState('camera'); // 'camera' | 'upload'
   const [stage, setStage] = useState('front'); // 'front', 'left', 'right', 'ready'
   const [photos, setPhotos] = useState({ front: null, left: null, right: null });
   const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState(null); // New state for custom UI error
+  const [errorMessage, setErrorMessage] = useState(null);
 
   const token = localStorage.getItem("accessToken");
   const userName = localStorage.getItem("userName");
+
+  const allUploaded = photos.front && photos.left && photos.right;
 
   useEffect(() => {
     startCamera();
@@ -66,11 +68,33 @@ const FaceEnrollment = () => {
     }
   };
 
+  const switchMode = (mode) => {
+    if (mode === enrollmentMode) return;
+    setEnrollmentMode(mode);
+    setPhotos({ front: null, left: null, right: null });
+    setErrorMessage(null);
+    setStage('front');
+    if (mode === 'camera') {
+      startCamera();
+    } else {
+      stopCamera();
+    }
+  };
+
+  const handleFileUpload = (angle, file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setPhotos(prev => ({ ...prev, [angle]: e.target.result }));
+    };
+    reader.readAsDataURL(file);
+  };
+
   const resetCapture = () => {
     setPhotos({ front: null, left: null, right: null });
     setErrorMessage(null);
     setStage('front');
-    startCamera();
+    if (enrollmentMode === 'camera') startCamera();
   };
 
   const submitEnrollment = async () => {
@@ -99,6 +123,9 @@ const FaceEnrollment = () => {
   };
 
   const getInstructions = () => {
+    if (enrollmentMode === 'upload') {
+      return allUploaded ? "All angles uploaded. Ready to submit." : "Upload a clear photo for each angle below.";
+    }
     switch(stage) {
       case 'front': return "Look directly at the camera.";
       case 'left': return "Turn your head slightly to the left.";
@@ -117,32 +144,67 @@ const FaceEnrollment = () => {
           <p>Welcome, {userName}. We need 3 angles to build a robust factory access profile.</p>
         </div>
 
+        {/* --- MODE TOGGLE --- */}
+        <div className="mode-toggle">
+          <button className={`mode-btn ${enrollmentMode === 'camera' ? 'active' : ''}`} onClick={() => switchMode('camera')}>
+            📷 Use Camera
+          </button>
+          <button className={`mode-btn ${enrollmentMode === 'upload' ? 'active' : ''}`} onClick={() => switchMode('upload')}>
+            ⬆ Upload Photos
+          </button>
+        </div>
+
         <div className="progress-tracker">
-            <span className={`tracker-badge ${photos.front ? 'done' : stage === 'front' ? 'active' : ''}`}>Front</span>
+            <span className={`tracker-badge ${photos.front ? 'done' : enrollmentMode === 'camera' && stage === 'front' ? 'active' : ''}`}>Front</span>
             <span className="tracker-line"></span>
-            <span className={`tracker-badge ${photos.left ? 'done' : stage === 'left' ? 'active' : ''}`}>Left</span>
+            <span className={`tracker-badge ${photos.left ? 'done' : enrollmentMode === 'camera' && stage === 'left' ? 'active' : ''}`}>Left</span>
             <span className="tracker-line"></span>
-            <span className={`tracker-badge ${photos.right ? 'done' : stage === 'right' ? 'active' : ''}`}>Right</span>
+            <span className={`tracker-badge ${photos.right ? 'done' : enrollmentMode === 'camera' && stage === 'right' ? 'active' : ''}`}>Right</span>
         </div>
 
         <div className="camera-container">
           <canvas ref={canvasRef} style={{ display: 'none' }} />
-          
-          {stage === 'ready' ? (
-            <div className="preview-grid">
+
+          {enrollmentMode === 'camera' ? (
+            stage === 'ready' ? (
+              <div className="preview-grid">
                 <img src={photos.front} alt="Front" className="preview-thumb" />
                 <img src={photos.left} alt="Left" className="preview-thumb" />
                 <img src={photos.right} alt="Right" className="preview-thumb" />
-            </div>
+              </div>
+            ) : (
+              <div className="video-wrapper">
+                <video ref={videoRef} autoPlay playsInline muted className="live-video" />
+                <div className={`face-guide-overlay ${stage}`}></div>
+              </div>
+            )
           ) : (
-            <div className="video-wrapper">
-              <video ref={videoRef} autoPlay playsInline muted className="live-video" />
-              <div className={`face-guide-overlay ${stage}`}></div> 
+            <div className="upload-grid">
+              {['front', 'left', 'right'].map((angle) => (
+                <label key={angle} className={`upload-zone ${photos[angle] ? 'uploaded' : ''}`}>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={(e) => handleFileUpload(angle, e.target.files[0])}
+                  />
+                  {photos[angle] ? (
+                    <>
+                      <img src={photos[angle]} alt={angle} className="upload-preview" />
+                      <span className="upload-label done-label">✓ {angle.charAt(0).toUpperCase() + angle.slice(1)}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="upload-icon">+</span>
+                      <span className="upload-label">{angle.charAt(0).toUpperCase() + angle.slice(1)}</span>
+                    </>
+                  )}
+                </label>
+              ))}
             </div>
           )}
         </div>
 
-        {/* --- CUSTOM ERROR BANNER --- */}
         {errorMessage && (
             <div className="error-banner">
                 <span className="error-icon">⚠️</span>
@@ -153,16 +215,23 @@ const FaceEnrollment = () => {
         <h3 className="instruction-text">{getInstructions()}</h3>
 
         <div className="enrollment-actions">
-          {stage !== 'ready' ? (
-            <button className="capture-btn" onClick={capturePhoto}>
-              Capture {stage.charAt(0).toUpperCase() + stage.slice(1)}
-            </button>
+          {enrollmentMode === 'camera' ? (
+            stage !== 'ready' ? (
+              <button className="capture-btn" onClick={capturePhoto}>
+                Capture {stage.charAt(0).toUpperCase() + stage.slice(1)}
+              </button>
+            ) : (
+              <>
+                <button className="retake-btn" onClick={resetCapture} disabled={loading}>Start Over</button>
+                <button className="submit-btn" onClick={submitEnrollment} disabled={loading}>
+                  {loading ? "Vectoring..." : "Confirm & Unlock System"}
+                </button>
+              </>
+            )
           ) : (
             <>
-              <button className="retake-btn" onClick={resetCapture} disabled={loading}>
-                Start Over
-              </button>
-              <button className="submit-btn" onClick={submitEnrollment} disabled={loading}>
+              <button className="retake-btn" onClick={resetCapture} disabled={loading}>Clear All</button>
+              <button className="submit-btn" onClick={submitEnrollment} disabled={!allUploaded || loading}>
                 {loading ? "Vectoring..." : "Confirm & Unlock System"}
               </button>
             </>

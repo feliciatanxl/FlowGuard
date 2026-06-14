@@ -363,7 +363,8 @@ router.post('/enroll-face', verifyToken, async (req, res) => {
 
     } catch (error) {
         console.error("Enrollment Error:", error.response ? error.response.data : error.message);
-        res.status(500).json({ error: "Failed to generate biometric vector." });
+        const pythonError = error.response?.data?.detail || "Failed to generate biometric vector.";
+        res.status(500).json({ error: pythonError });
     }
 });
 

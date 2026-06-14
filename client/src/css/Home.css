@@ -559,6 +559,22 @@
     }
     
     .sensor-value {
-        font-size: 1.8rem; 
+        font-size: 1.8rem;
+    }
+}
+
+@media (max-width: 480px) {
+    .hero-title {
+        font-size: clamp(1.8rem, 5vw, 2.5rem);
+    }
+    .hero-description {
+        font-size: 0.95rem;
+        line-height: 1.5;
+    }
+    .section-title {
+        font-size: 1.8rem;
+    }
+    .hero-container {
+        padding: 50px 16px;
     }
 }

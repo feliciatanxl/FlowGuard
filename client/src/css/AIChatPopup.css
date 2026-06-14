@@ -132,8 +132,14 @@
 
 /* Mobile Adjustments */
 @media (max-width: 480px) {
+  .chat-popup-wrapper {
+    right: 10px;
+    bottom: 20px;
+  }
   .chat-window {
-    width: calc(100vw - 40px);
-    right: -10px;
+    width: calc(100vw - 20px);
+    right: 0;
+    height: 60vh;
+    max-height: 400px;
   }
 }

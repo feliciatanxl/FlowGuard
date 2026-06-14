@@ -110,7 +110,7 @@ const VPatrol = () => {
 
     if (lastLogRef.current.name !== detectedName || (currentTimestamp - lastLogRef.current.timestamp > 30000)) {
       const newLog = {
-        id: `ACC-${Math.floor(Math.random() * 900) + 100}`,
+        id: `ACC-${Date.now()}`,
         time: logTimeStr,
         type: 'Gantry Access',
         desc: `Identity & Liveness Verified: ${detectedName}`,
@@ -245,7 +245,7 @@ const VPatrol = () => {
 
               if (lastLogRef.current.name !== "UNKNOWN" || (currentTimestamp - lastLogRef.current.timestamp > 10000)) {
                 const newLog = {
-                  id: `SEC-${Math.floor(Math.random() * 900) + 100}`,
+                  id: `SEC-${Date.now()}`,
                   time: logTimeStr,
                   type: 'Intrusion Alert',
                   desc: 'Unregistered personnel detected at gantry.',
@@ -292,7 +292,7 @@ const VPatrol = () => {
   return (
     <div className="dashboard-layout">
       <Sidebar />
-      <main className="dashboard-main">
+      <main className="dashboard-main vpatrol-main">
         <header className="dashboard-header">
           <div className="header-titles">
             <h1>V-Patrol AI Command Center</h1>
@@ -302,7 +302,7 @@ const VPatrol = () => {
 
         <div className="vpatrol-grid">
           <div className="vpatrol-card monitor-section">
-            <div className={`cctv-container state-theme-${scanStatus.toLowerCase()}`}>
+            <div className={`cctv-container state-theme-${scanStatus.toLowerCase()}`} style={{ width: '100%', height: '100%' }}>
               <video ref={videoRef} autoPlay playsInline muted className="video-feed" />
               <canvas ref={canvasRef} style={{ display: 'none' }} />
               

@@ -4,21 +4,102 @@
 .vpatrol-grid {
     display: grid;
     grid-template-columns: 1.5fr 1fr;
-    gap: 30px;
+    gap: 12px;
 }
 
 .vpatrol-card {
-    background: #1e2539; 
+    background: #1e2539;
     border-radius: 16px;
     border: 1px solid #2d364f;
-    padding: 30px;
-    height: 480px; 
+    padding: 20px 16px;
+    height: 480px;
     display: flex;
     flex-direction: column;
 }
 
+/* Monitor card is a square — matches the square camera inside */
+.vpatrol-card.monitor-section {
+    height: auto;
+    aspect-ratio: 1 / 1;
+    width: 100%;
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+/* =========================================
+   CONSTRAINED LAYOUT: entire page fits in viewport
+   vpatrol-main → VPatrol.jsx only
+   gate-main    → GateScanner.jsx only
+   ========================================= */
+.vpatrol-main {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;           /* stop page-level scroll */
+    padding: 20px 8px;          /* tighter sides than default dashboard 30px */
+}
+
+.vpatrol-main .vpatrol-grid {
+    flex: 1;
+    min-height: 0;
+    display: flex;              /* flex row: height-driven sizing avoids grid/aspect-ratio conflicts */
+    flex-direction: row;
+    align-items: flex-start;
+}
+
+.vpatrol-main .vpatrol-card {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+/* camera card: height fills row (capped 600px), width auto-derived — always square */
+.vpatrol-main .vpatrol-card.monitor-section {
+    flex: none;
+    width: auto;
+    height: 100%;
+    max-height: 600px;
+    aspect-ratio: 1 / 1;
+    margin: 0;
+}
+
+/* timeline: header is fixed, list scrolls internally */
+.vpatrol-main .vpatrol-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+/* GateScanner: single square card centered in available space */
+.gate-main {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 20px 8px;
+}
+
+.gate-main .vpatrol-grid {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+}
+
+.gate-main .vpatrol-card.monitor-section {
+    flex: none;
+    width: auto;
+    height: 100%;
+    max-height: 600px;
+    aspect-ratio: 1 / 1;
+    margin: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
 .vpatrol-card h2 {
-    margin: 0 0 25px 0;
+    margin: 0 0 16px 0;
     font-size: 1.4rem;
     color: #f8fafc;
 }
@@ -288,21 +369,20 @@
    8. RESPONSIVE HOOK MEDIAS
    ========================================= */
 @media (max-width: 1024px) {
-    .vpatrol-grid { grid-template-columns: 1fr; gap: 20px; }
+    .vpatrol-grid { grid-template-columns: 1fr; gap: 12px; }
     .vpatrol-card { height: auto; min-height: 450px; padding: 20px; }
     
-    .cctv-container { 
-        height: 460px !important; 
-        flex: none; 
-        border-radius: 16px; 
-        aspect-ratio: auto; 
-        background: #000; /* Deep backdrop for clean letterboxing */
+    .cctv-container {
+        height: auto;
+        flex: none;
+        border-radius: 16px;
+        aspect-ratio: 1 / 1;
+        background: #000;
     }
-    
-    /* 🎯 MOBILE FIX: Prevents zoom cropping so tracking anchors match perfectly */
-    .video-feed { 
-        width: 100% !important; 
-        height: 100% !important; 
-        object-fit: contain !important; 
+
+    .video-feed {
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: cover !important;
     }
 }

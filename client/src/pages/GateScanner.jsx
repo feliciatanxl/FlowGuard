@@ -177,7 +177,7 @@ const GateScanner = () => {
   return (
     <div className="dashboard-layout">
       <Sidebar />
-      <main className="dashboard-main">
+      <main className="dashboard-main gate-main">
         <header className="dashboard-header">
           <div className="header-titles">
             <h1>Perimeter Gate Attendance Terminal</h1>
@@ -187,7 +187,7 @@ const GateScanner = () => {
 
         <div className="vpatrol-grid" style={{ gridTemplateColumns: '1fr' }}>
           <div className="vpatrol-card monitor-section">
-            <div className={`cctv-container state-theme-${scanStatus.toLowerCase()}`} style={{ height: '520px' }}>
+            <div className={`cctv-container state-theme-${scanStatus.toLowerCase()}`} style={{ width: '100%', height: '100%' }}>
               <video ref={videoRef} autoPlay playsInline muted className="video-feed" />
               <canvas ref={canvasRef} style={{ display: 'none' }} />
               
