@@ -10,12 +10,12 @@ export default defineConfig({
   server: {
     proxy: {
       '/user': {
-        target: 'http://127.0.0.1:5000', // Routes login requests to Node
+        target: 'http://127.0.0.1:5001',
         changeOrigin: true,
         secure: false,
       },
       '/api': {
-        target: 'http://localhost:5000', // Routes your other backend Node APIs
+        target: 'http://localhost:5001',
         changeOrigin: true,
         secure: false,
       },
