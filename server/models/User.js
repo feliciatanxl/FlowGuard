@@ -1,6 +1,4 @@
-const pgvector = require('pgvector/sequelize');
 module.exports = (sequelize, DataTypes) => {
-    pgvector.registerType(sequelize.Sequelize);
     const User = sequelize.define("User", {
         name: {
             type: DataTypes.STRING(100),
@@ -51,7 +49,7 @@ module.exports = (sequelize, DataTypes) => {
             allowNull: false
         },
         faceVector: {
-            type: DataTypes.VECTOR(512), // Use the specific vector type
+            type: DataTypes.ARRAY(DataTypes.FLOAT),
             allowNull: true
         },
         // ---------------------------------------
