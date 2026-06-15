@@ -18,7 +18,7 @@ const TenantManagement = () => {
 
   const fetchInvites = async () => {
     try {
-      const res = await axios.get('http://localhost:5000/user/tenant-invites', {
+      const res = await axios.get('/user/tenant-invites', {
         headers: { Authorization: `Bearer ${token}` }
       });
       setInvites(res.data);
@@ -30,7 +30,7 @@ const TenantManagement = () => {
   const handleGenerateInvite = async () => {
     setLoading(true);
     try {
-      const res = await axios.post('http://localhost:5000/user/invite-tenant', {}, {
+      const res = await axios.post('/user/invite-tenant', {}, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setNewCode(res.data.inviteCode);

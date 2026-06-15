@@ -19,6 +19,10 @@ app.get("/", (req, res) => {
 // Map Routes
 const incidentRoute = require('./routes/incident');
 app.use("/api/incident", incidentRoute);
+const zonesRoute = require('./routes/zones');
+app.use("/api/zones", zonesRoute);
+const detectionAlertsRoute = require('./routes/detectionAlerts');
+app.use("/api/detection-alerts", detectionAlertsRoute);
 const userRoute = require('./routes/user');
 app.use("/user", userRoute);
 const bookingRoutes = require('./routes/booking');

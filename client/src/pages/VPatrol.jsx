@@ -31,7 +31,7 @@ const VPatrol = () => {
   const [incidentLogs, setIncidentLogs] = useState([]);
 
   const token = localStorage.getItem("accessToken");
-  const NODE_SERVER_URL = "http://localhost:5000/api/security/logs"; 
+  const NODE_SERVER_URL = "/api/security/logs";
 
   const changeScanState = (nextState) => {
     setScanStatus(nextState);

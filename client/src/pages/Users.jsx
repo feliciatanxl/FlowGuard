@@ -17,7 +17,7 @@ const Users = () => {
   const fetchUsers = async () => {
     setLoading(true); 
     try {
-      const response = await axios.get('http://localhost:5000/user', {
+      const response = await axios.get('/user', {
         headers: { Authorization: `Bearer ${token}` }
       });
       
@@ -50,7 +50,7 @@ const Users = () => {
     const { id, isActive, name } = modal.user;
 
     try {
-      await axios.put(`http://localhost:5000/user/suspend/${id}`, {}, {
+      await axios.put(`/user/suspend/${id}`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       });
       

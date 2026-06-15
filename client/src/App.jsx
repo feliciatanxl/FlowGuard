@@ -25,6 +25,7 @@ import TenantManagement from './pages/TenantManagement';
 import FaceEnrollment from './pages/FaceEnrollment';
 import Attendance from './pages/Attendance';
 import GateScanner from './pages/GateScanner';
+import ObjectDetection from './pages/ObjectDetection';
 import './App.css';
 
 function App() {
@@ -50,6 +51,7 @@ function App() {
         <Route path="/driver-portal" element={<DriverPortal />} />
         <Route path="/vpatrol" element={<VPatrol />} />
         <Route path="/cameras" element={<Cameras />} />
+        <Route path="/object-detection" element={<ObjectDetection />} />
 
         {/* --- Protected Dashboard Routes --- */}
         {/* These require a valid Access Key (Token) to view */}
