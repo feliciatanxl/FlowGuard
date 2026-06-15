@@ -7,7 +7,7 @@ import '../css/ObjectDetection.css';
 const ZONES_URL = '/api/zones';
 const ALERTS_URL = '/api/detection-alerts';
 const PEOPLE_URL = '/ai/api/yolo/people-count';
-const STREAM_URL = '/ai/api/yolo/stream';
+const ANALYZE_FRAME_URL = '/ai/api/yolo/analyze-frame';
 
 const emptyForm = { zone_name: '', location: '', time_threshold: '' };
 
@@ -27,6 +27,14 @@ const ObjectDetection = () => {
   const [streamError, setStreamError] = useState(false);
   const [aiOffline, setAiOffline] = useState(false);
   const [nodeOffline, setNodeOffline] = useState(false);
+  const [cameraStatus, setCameraStatus] = useState('starting');
+  const [detections, setDetections] = useState([]);
+  const [browserCameraError, setBrowserCameraError] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const processingFrameRef = useRef(false);
 
   const token = localStorage.getItem('accessToken');
   const headers = { Authorization: `Bearer ${token}` };
@@ -51,6 +59,7 @@ const ObjectDetection = () => {
         setPeopleCount(res.data.count ?? 0);
         setDetectionActive(res.data.detection_active ?? false);
         setAiOffline(false);
+        setStreamError(false);
       })
       .catch(() => {
         setPeopleCount(0);
@@ -71,6 +80,91 @@ const ObjectDetection = () => {
     return () => {
       clearInterval(peopleInterval);
       clearInterval(alertsInterval);
+    };
+  }, []);
+
+  useEffect(() => {
+    let stream;
+    let frameInterval;
+
+    const stopBrowserCamera = () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
+
+    const analyzeCurrentFrame = async () => {
+      if (processingFrameRef.current) return;
+
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      if (!video || !canvas || video.videoWidth === 0) return;
+
+      processingFrameRef.current = true;
+      const context = canvas.getContext('2d');
+      const maxWidth = 360;
+      const scale = Math.min(1, maxWidth / video.videoWidth);
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const image = canvas.toDataURL('image/jpeg', 0.35);
+
+      try {
+        const res = await axios.post(ANALYZE_FRAME_URL, { image }, { timeout: 6000 });
+        setDetections(res.data.detections ?? []);
+        setPeopleCount(res.data.count ?? 0);
+        setDetectionActive(res.data.detection_active ?? false);
+        setCameraStatus(res.data.camera_status ?? 'browser_camera');
+        setAiOffline(false);
+        setStreamError(false);
+      } catch (err) {
+        setAiOffline(true);
+        setDetectionActive(false);
+        setCameraStatus('ai_offline');
+      } finally {
+        processingFrameRef.current = false;
+      }
+    };
+
+    const startBrowserCamera = async () => {
+      try {
+        setCameraStatus('requesting_browser_camera');
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 15, max: 20 },
+            facingMode: 'user'
+          },
+          audio: false
+        });
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.onloadedmetadata = async () => {
+            try {
+              await videoRef.current.play();
+              setCameraReady(true);
+              setCameraStatus('browser_camera_active');
+              analyzeCurrentFrame();
+            } catch (err) {
+              setCameraStatus('browser_camera_paused');
+            }
+          };
+          setBrowserCameraError(false);
+          frameInterval = setInterval(analyzeCurrentFrame, 1400);
+        }
+      } catch (err) {
+        setBrowserCameraError(true);
+        setCameraStatus('browser_camera_denied');
+      }
+    };
+
+    startBrowserCamera();
+
+    return () => {
+      clearInterval(frameInterval);
+      stopBrowserCamera();
     };
   }, []);
 
@@ -186,7 +280,7 @@ const ObjectDetection = () => {
             borderRadius: '10px', padding: '10px 16px', marginBottom: '14px',
             color: '#fbbf24', fontSize: '0.8rem', fontFamily: 'monospace'
           }}>
-            Python AI service offline — run <strong>uvicorn main:app --host 0.0.0.0 --port 8500 --reload</strong> in /ai-service
+            Python AI service offline — run <strong>uvicorn main:app --host 0.0.0.0 --port 8500</strong> in /ai-service
           </div>
         )}
 
@@ -204,19 +298,53 @@ const ObjectDetection = () => {
               }}>
                 {detectionActive ? '● YOLO ACTIVE' : '○ YOLO STANDBY'}
               </span>
+              <span style={{
+                fontSize: '0.65rem',
+                fontFamily: 'monospace',
+                color: '#94a3b8'
+              }}>
+                CAMERA: {cameraStatus.replace(/_/g, ' ').toUpperCase()}
+              </span>
             </div>
 
-            {streamError ? (
+            <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+            {browserCameraError ? (
+              <div className="od-stream-placeholder">
+                Browser camera blocked — allow camera permission and refresh this page
+              </div>
+            ) : streamError ? (
               <div className="od-stream-placeholder">
                 Python AI service offline — start ai-service to enable stream
               </div>
             ) : (
-              <img
-                src={STREAM_URL}
-                alt="Live YOLO annotated feed"
-                className="od-stream-img"
-                onError={() => setStreamError(true)}
-              />
+              <div className="od-video-stage">
+                <video ref={videoRef} autoPlay playsInline muted className="od-stream-img" />
+                {!cameraReady && (
+                  <div className="od-camera-message">
+                    Starting camera...
+                  </div>
+                )}
+                <div className="od-detection-layer">
+                  {detections.map((detection, index) => {
+                    const [x1, y1, x2, y2] = detection.box;
+                    return (
+                      <div
+                        key={`${detection.label}-${index}`}
+                        className={`od-detection-box ${detection.status}`}
+                        style={{
+                          left: `${(x1 / 360) * 100}%`,
+                          top: `${(y1 / 270) * 100}%`,
+                          width: `${((x2 - x1) / 360) * 100}%`,
+                          height: `${((y2 - y1) / 270) * 100}%`
+                        }}
+                      >
+                        <span>{detection.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </div>
 

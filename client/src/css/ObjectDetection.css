@@ -60,10 +60,78 @@
 
 .od-stream-img {
     width: 100%;
+    aspect-ratio: 4 / 3;
     border-radius: 10px;
     background: #0b0f1a;
     border: 1px solid #2d364f;
     display: block;
+    object-fit: cover;
+}
+
+.od-video-stage {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #0b0f1a;
+}
+
+.od-video-stage .od-stream-img {
+    height: 100%;
+}
+
+.od-detection-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.od-camera-message {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(11, 15, 26, 0.72);
+    color: #94a3b8;
+    font-family: monospace;
+    font-size: 0.85rem;
+    pointer-events: none;
+    z-index: 2;
+}
+
+.od-detection-box {
+    position: absolute;
+    border: 2px solid #f97316;
+    border-radius: 6px;
+    box-shadow: 0 0 12px rgba(249, 115, 22, 0.35);
+}
+
+.od-detection-box.suspicious {
+    border-color: #ef4444;
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.45);
+}
+
+.od-detection-box.authorized {
+    border-color: #22c55e;
+    box-shadow: 0 0 12px rgba(34, 197, 94, 0.45);
+}
+
+.od-detection-box span {
+    position: absolute;
+    left: -2px;
+    top: -28px;
+    max-width: 220px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.9);
+    color: #f8fafc;
+    font-size: 0.7rem;
+    font-family: monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .od-stream-placeholder {

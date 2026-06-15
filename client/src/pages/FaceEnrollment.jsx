@@ -27,7 +27,12 @@ const FaceEnrollment = () => {
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: 720, height: 720, facingMode: "user" } 
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 15, max: 20 },
+          facingMode: "user"
+        }
       });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -51,11 +56,13 @@ const FaceEnrollment = () => {
     
     if (video && canvas) {
       const context = canvas.getContext('2d');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+      const maxWidth = 640;
+      const scale = Math.min(1, maxWidth / video.videoWidth);
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
       
-      const imageDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+      const imageDataUrl = canvas.toDataURL('image/jpeg', 0.75);
       
       setPhotos(prev => ({ ...prev, [stage]: imageDataUrl }));
       
