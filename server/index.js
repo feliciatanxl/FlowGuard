@@ -54,7 +54,25 @@ async function startServer() {
             }
         }
 
-        await db.sequelize.sync({ alter: true });
+        const modelNames = Object.keys(db).filter(
+            k => k !== 'sequelize' && k !== 'Sequelize'
+        );
+        const failedModels = [];
+
+        for (const name of modelNames) {
+            try {
+                await db[name].sync({ alter: true });
+                console.log(`  ✔ Synced: ${name}`);
+            } catch (syncErr) {
+                failedModels.push(name);
+                console.error(`  ✖ Failed to sync ${name}:`, syncErr.message);
+            }
+        }
+
+        if (failedModels.length > 0) {
+            console.warn(`\nWARNING: ${failedModels.length} model(s) failed to sync: ${failedModels.join(', ')}`);
+            console.warn("The server will start, but those tables may be missing or outdated.\n");
+        }
 
         let port = process.env.APP_PORT || 5000;
         app.listen(port, '127.0.0.1', () => {

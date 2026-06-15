@@ -11,7 +11,7 @@ const DriverPass = () => {
         // Fetch the booking details using the reference
         const fetchBooking = async () => {
             try {
-                const response = await fetch(`http://localhost:5000/api/bookings/${ref}`);
+                const response = await fetch(`/api/bookings/${ref}`);
                 const data = await response.json();
                 setBooking(data);
                 setLoading(false);

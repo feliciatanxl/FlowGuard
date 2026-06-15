@@ -17,7 +17,7 @@ const UserLogs = () => {
     const fetchLogs = async () => {
       try {
         // 🎯 Connected directly to our new server-side user bridge endpoint
-        const res = await axios.get(`http://localhost:5000/api/security/logs/user/${id}`, {
+        const res = await axios.get(`/api/security/logs/user/${id}`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         

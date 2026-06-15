@@ -19,7 +19,7 @@ const GateScanner = () => {
   const candidateUserRef = useRef(null); 
 
   const token = localStorage.getItem("accessToken");
-  const ATTENDANCE_SCAN_URL = "http://localhost:5000/api/attendance/scan";
+  const ATTENDANCE_SCAN_URL = "/api/attendance/scan";
 
   const changeScanState = (nextState, message) => {
     setScanStatus(nextState);
@@ -41,9 +41,7 @@ const GateScanner = () => {
 
   const startGateCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" } 
-      });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
       if (videoRef.current) videoRef.current.srcObject = stream;
       changeScanState("SYSTEM_ACTIVE", "GATE TURNSTILE ONLINE // AWAITING TARGET");
     } catch (err) { 

@@ -13,7 +13,7 @@ const TenantLogistics = () => {
   // Fetch bookings on load
   const fetchBookings = async () => {
     try {
-      const response = await fetch('http://localhost:5000/api/bookings/all');
+      const response = await fetch('/api/bookings/all');
       const data = await response.json();
       setBookings(data);
     } catch (err) {
@@ -28,7 +28,7 @@ const TenantLogistics = () => {
   const handleBooking = async (e) => {
     e.preventDefault();
     try {
-      const response = await fetch('http://localhost:5000/api/bookings/create', {
+      const response = await fetch('/api/bookings/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
