@@ -47,6 +47,7 @@ const Sidebar = () => {
           <NavLink to="/dashboard" onClick={() => setIsOpen(false)}>Dashboard</NavLink>
           <NavLink to="/cameras" onClick={() => setIsOpen(false)}>Cameras</NavLink>
           <NavLink to="/vpatrol" onClick={() => setIsOpen(false)}>V-Patrol</NavLink>
+          <NavLink to="/object-detection" onClick={() => setIsOpen(false)}>Object Detection</NavLink>
           
           {/* 🎯 NEW: Dynamic Workforce Attendance Tab (Hidden from raw staff accounts) */}
           {(user.role === 'FM' || user.role === 'Tenant') && (

@@ -2,9 +2,12 @@ import cv2
 from ultralytics import YOLO
 
 # 1. Load the model
-model = YOLO("yolo26n.pt") 
+model = YOLO("yolov8n.pt")
 
 cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
+cap.set(cv2.CAP_PROP_FPS, 10)
 
 print("Manpower Monitoring Active... Press 'q' to quit.")
 
@@ -13,7 +16,7 @@ while True:
     if not ret: break
 
     # 2. Run detection
-    results = model(frame, stream=True)
+    results = model(frame, imgsz=416, classes=[0], stream=True, verbose=False)
     
     person_count = 0
     annotated_frame = frame

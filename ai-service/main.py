@@ -4,19 +4,43 @@ import numpy as np
 import psycopg2
 import json
 import base64
+import threading
+import time
+from collections import defaultdict
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from insightface.app import FaceAnalysis
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
+
+try:
+    import requests as http_requests
+    _REQUESTS_OK = True
+except ImportError:
+    _REQUESTS_OK = False
+    print("⚠️  'requests' not installed — alert POSTing will be disabled.")
+
+try:
+    from ultralytics import YOLO as _YOLO
+    _yolo_model = _YOLO('yolov8n.pt')
+    YOLO_AVAILABLE = True
+    print("✅ YOLOv8n Engine Loaded.")
+except Exception as _yolo_err:
+    YOLO_AVAILABLE = False
+    print(f"⚠️  YOLO not available: {_yolo_err}")
 
 load_dotenv()
 app = FastAPI()
 
 # 1. Initialize AI
 print("Loading InsightFace Engine...")
-face_app = FaceAnalysis(name='buffalo_l')
-face_app.prepare(ctx_id=0, det_size=(640, 640))
+_FACE_MODEL_NAME = os.getenv("FACE_MODEL_NAME", "buffalo_l")
+_FACE_DET_SIZE = int(os.getenv("FACE_DET_SIZE", "320"))
+_FACE_CTX_ID = int(os.getenv("FACE_CTX_ID", "-1"))
+face_app = FaceAnalysis(name=_FACE_MODEL_NAME)
+face_app.prepare(ctx_id=_FACE_CTX_ID, det_size=(_FACE_DET_SIZE, _FACE_DET_SIZE))
+print(f"InsightFace ready: {_FACE_MODEL_NAME}, det_size={_FACE_DET_SIZE}, ctx_id={_FACE_CTX_ID}")
 
 # 2. Database Connection Helper
 def get_db_connection():
@@ -44,7 +68,8 @@ def load_authorized_faces():
         rows = cur.fetchall()
         
         for name, embedding_json in rows:
-            embedding = np.array(json.loads(embedding_json), dtype=np.float32)
+            raw_embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
+            embedding = np.array(raw_embedding, dtype=np.float32)
             known_faces.append({"name": name, "embedding": embedding})
             
         cur.close()
@@ -182,6 +207,560 @@ def refresh():
     return {"message": "Staff list updated from database"}
 
 
+# ============================================================
+# YOLO OBJECT DETECTION — Module 2
+# ============================================================
+
+_UNATTENDED_CLASSES = {
+    'bottle', 'cup', 'book', 'backpack', 'handbag',
+    'suitcase', 'cell phone', 'laptop', 'bag'
+}
+_YOLO_CLASS_IDS = [0, 24, 26, 28, 39, 41, 63, 67, 73]
+_CAMERA_WIDTH = int(os.getenv("CAMERA_WIDTH", "640"))
+_CAMERA_HEIGHT = int(os.getenv("CAMERA_HEIGHT", "360"))
+_YOLO_IMG_SIZE = int(os.getenv("YOLO_IMG_SIZE", "416"))
+_YOLO_FPS = float(os.getenv("YOLO_FPS", "8"))
+_STREAM_FPS = float(os.getenv("STREAM_FPS", "12"))
+_FACE_RECOG_EVERY_N_FRAMES = int(os.getenv("FACE_RECOG_EVERY_N_FRAMES", "5"))
+_FACE_RECOG_MAX_PEOPLE = int(os.getenv("FACE_RECOG_MAX_PEOPLE", "2"))
+_PROXIMITY_PX = 160      # centroid distance threshold (pixels at 640-wide frame)
+_NODE_URL = os.getenv("NODE_SERVER_URL", "http://localhost:5000")
+
+# Shared state written by detection thread, read by endpoints
+_frame_lock = threading.Lock()
+_latest_frame = None
+_people_count = 0
+_detection_active = False
+_camera_status = "starting"
+
+# Unattended object tracker
+# key: (grid_x, grid_y, class_name)  — centroid snapped to 50 px grid for stability
+# value: {person_last_seen, unattended_since, alerted}
+_tracked_objects: dict = {}
+_person_name_cache = defaultdict(lambda: ("UNKNOWN", 0.0))
+
+# Zone threshold cache — refreshed from DB every 60 s
+_zone_threshold_sec = 300   # default 5 min
+_zone_name_cache = "Zone A"
+_threshold_fetched_at = 0.0
+_THRESHOLD_TTL = 60
+
+
+def _make_status_frame(message, detail=""):
+    frame = np.zeros((_CAMERA_HEIGHT, _CAMERA_WIDTH, 3), dtype=np.uint8)
+    cv2.putText(frame, message, (28, max(70, _CAMERA_HEIGHT // 2 - 20)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 220, 255), 2)
+    if detail:
+        cv2.putText(frame, detail, (28, max(110, _CAMERA_HEIGHT // 2 + 20)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (170, 170, 170), 1)
+    return frame
+
+
+def _is_usable_frame(frame):
+    if frame is None or frame.size == 0:
+        return False
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    return float(gray.mean()) > 6.0 and float(gray.std()) > 2.0
+
+
+def _open_camera():
+    camera_index = int(os.getenv("CAMERA_INDEX", "0"))
+    indexes = [camera_index] + [i for i in range(3) if i != camera_index]
+    backends = [cv2.CAP_DSHOW, cv2.CAP_MSMF, 0]
+
+    for index in indexes:
+        for backend in backends:
+            cap = cv2.VideoCapture(index, backend) if backend else cv2.VideoCapture(index)
+            if not cap.isOpened():
+                cap.release()
+                continue
+
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, _CAMERA_WIDTH)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _CAMERA_HEIGHT)
+            cap.set(cv2.CAP_PROP_FPS, _YOLO_FPS)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+            for _ in range(5):
+                cap.read()
+
+            ret, frame = cap.read()
+            if ret and _is_usable_frame(frame):
+                print(f"Camera opened: index={index}, backend={backend or 'default'}")
+                return cap
+
+            cap.release()
+
+    return None
+
+
+def _refresh_zone_info():
+    global _zone_threshold_sec, _zone_name_cache, _threshold_fetched_at
+    now = time.time()
+    if now - _threshold_fetched_at < _THRESHOLD_TTL:
+        return _zone_threshold_sec, _zone_name_cache
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT zone_name, time_threshold
+            FROM monitoring_zones
+            WHERE "deletedAt" IS NULL
+            ORDER BY time_threshold ASC
+            LIMIT 1
+        """)
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row:
+            _zone_name_cache = row[0]
+            _zone_threshold_sec = int(row[1]) * 60
+    except Exception as e:
+        print(f"Zone info fetch error: {e}")
+    _threshold_fetched_at = now
+    return _zone_threshold_sec, _zone_name_cache
+
+
+def _get_nearby_person(person_entries, ox, oy):
+    """Returns (is_nearby, person_name) for the first person within _PROXIMITY_PX."""
+    for box, pname in person_entries:
+        px = (box[0] + box[2]) / 2
+        py = (box[1] + box[3]) / 2
+        if ((px - ox) ** 2 + (py - oy) ** 2) ** 0.5 < _PROXIMITY_PX:
+            return True, pname
+    return False, None
+
+
+def _fire_alert(class_name, zone_name, duration_sec, person_name=None):
+    if not _REQUESTS_OK:
+        return
+    try:
+        http_requests.post(
+            f"{_NODE_URL}/api/detection-alerts",
+            json={
+                "zone_name": zone_name,
+                "camera_location": "Webcam Feed",
+                "status": "Active",
+                "object_class": class_name,
+                "duration_seconds": duration_sec,
+                "person_name": person_name
+            },
+            timeout=5
+        )
+        print(f"🚨 Alert sent: {class_name} unattended {duration_sec}s in {zone_name} (last seen: {person_name})")
+    except Exception as e:
+        print(f"Alert POST failed: {e}")
+
+
+def _recognize_person_crop(frame, x1, y1, x2, y2):
+    fh, fw = frame.shape[:2]
+    crop = frame[max(y1, 0):min(y2, fh), max(x1, 0):min(x2, fw)]
+    if crop.size == 0:
+        return "UNKNOWN", 0.0
+
+    try:
+        faces = face_app.get(crop)
+        if not faces:
+            return "UNKNOWN", 0.0
+
+        live_emb = faces[0].embedding
+        live_emb = live_emb / np.linalg.norm(live_emb)
+        best_sim, best_name = 0.0, "UNKNOWN"
+        for known in known_faces:
+            sim = float(np.dot(live_emb, known["embedding"]))
+            if sim > best_sim:
+                best_sim = sim
+                if sim > 0.45:
+                    best_name = known["name"]
+        return best_name, best_sim
+    except Exception:
+        return "UNKNOWN", 0.0
+
+
+def _annotate_detection_frame(frame, recognize_faces=True):
+    global _people_count, _tracked_objects
+
+    if not YOLO_AVAILABLE:
+        return frame, 0, []
+
+    results = _yolo_model(
+        frame,
+        imgsz=_YOLO_IMG_SIZE,
+        conf=0.35,
+        iou=0.45,
+        classes=_YOLO_CLASS_IDS,
+        verbose=False
+    )[0]
+    threshold_sec, zone_name = _refresh_zone_info()
+
+    person_boxes = []
+    object_detections = []
+    detections = []
+    people_count = 0
+    now = time.time()
+
+    for box in results.boxes:
+        cls_id = int(box.cls[0])
+        class_name = results.names[cls_id]
+        conf = float(box.conf[0])
+        x1, y1, x2, y2 = map(int, box.xyxy[0])
+
+        if class_name == 'person':
+            people_count += 1
+            recog_name = "UNKNOWN"
+            display_label = "SUSPICIOUS PERSON"
+            box_color = (0, 0, 200)
+            label_color = (0, 0, 200)
+
+            if recognize_faces and people_count <= _FACE_RECOG_MAX_PEOPLE:
+                recog_name, best_sim = _recognize_person_crop(frame, x1, y1, x2, y2)
+                if recog_name != "UNKNOWN":
+                    display_label = f"{recog_name} {best_sim:.2f}"
+                    box_color = (0, 200, 80)
+                    label_color = (0, 200, 80)
+
+            detections.append({
+                "type": "person",
+                "label": display_label,
+                "confidence": round(conf, 3),
+                "box": [x1, y1, x2, y2],
+                "status": "authorized" if recog_name != "UNKNOWN" else "suspicious"
+            })
+            person_boxes.append(([x1, y1, x2, y2], recog_name))
+            cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+            cv2.putText(frame, display_label,
+                        (x1, max(y1 - 8, 12)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, label_color, 2)
+
+        elif class_name in _UNATTENDED_CLASSES:
+            cx = (x1 + x2) // 2
+            cy = (y1 + y2) // 2
+            key = (cx // 50 * 50, cy // 50 * 50, class_name)
+            object_detections.append((key, [x1, y1, x2, y2], class_name, cx, cy))
+            detections.append({
+                "type": "object",
+                "label": f"{class_name} {conf:.2f}",
+                "confidence": round(conf, 3),
+                "box": [x1, y1, x2, y2],
+                "status": "object"
+            })
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 140, 0), 2)
+            cv2.putText(frame, f"{class_name} {conf:.2f}",
+                        (x1, max(y1 - 8, 12)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 140, 0), 2)
+
+    seen_keys = set()
+    for (key, box, class_name, cx, cy) in object_detections:
+        seen_keys.add(key)
+        nearby, nearby_name = _get_nearby_person(person_boxes, cx, cy)
+
+        if key not in _tracked_objects:
+            _tracked_objects[key] = {
+                'person_last_seen': now if nearby else None,
+                'unattended_since': None if nearby else now,
+                'alerted': False,
+                'last_person_name': nearby_name
+            }
+        else:
+            obj = _tracked_objects[key]
+            if nearby:
+                obj['person_last_seen'] = now
+                obj['unattended_since'] = None
+                obj['alerted'] = False
+                obj['last_person_name'] = nearby_name
+            else:
+                if obj['unattended_since'] is None and obj['person_last_seen'] is not None:
+                    obj['unattended_since'] = now
+                if (obj['unattended_since'] is not None
+                        and not obj['alerted']
+                        and now - obj['unattended_since'] >= threshold_sec):
+                    obj['alerted'] = True
+                    duration = int(now - obj['unattended_since'])
+                    threading.Thread(
+                        target=_fire_alert,
+                        args=(class_name, zone_name, duration, obj.get('last_person_name')),
+                        daemon=True
+                    ).start()
+                    cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 0, 220), 3)
+                    cv2.putText(frame, "UNATTENDED!",
+                                (box[0], max(box[1] - 20, 12)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 220), 2)
+
+    _tracked_objects = {k: v for k, v in _tracked_objects.items() if k in seen_keys}
+    cv2.putText(frame, f"People: {people_count}", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+    _people_count = people_count
+    return frame, people_count, detections
+
+
+def _yolo_detection_loop():
+    global _latest_frame, _people_count, _tracked_objects, _detection_active, _camera_status
+
+    if not YOLO_AVAILABLE:
+        _camera_status = "yolo_unavailable"
+        with _frame_lock:
+            _latest_frame = _make_status_frame("YOLO unavailable", "Check yolov8n.pt and ultralytics")
+        print("YOLO unavailable — detection loop skipped.")
+        return
+
+    # CAP_DSHOW (DirectShow) is more reliable than MSMF on Windows
+    cap = _open_camera()
+    if cap is None:
+        print("⚠️  Webcam not found — YOLO stream will show blank feed.")
+        _detection_active = False
+        _camera_status = "camera_unavailable"
+        with _frame_lock:
+            _latest_frame = _make_status_frame("Camera unavailable", "Close other camera pages/apps and restart AI")
+        return
+
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, _CAMERA_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, _CAMERA_HEIGHT)
+    cap.set(cv2.CAP_PROP_FPS, _YOLO_FPS)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    _detection_active = True
+    _camera_status = "active"
+    frame_index = 0
+    unusable_frame_count = 0
+    target_frame_delay = 1.0 / max(_YOLO_FPS, 1)
+
+    while True:
+        loop_started_at = time.time()
+        ret, frame = cap.read()
+        if not ret:
+            _camera_status = "read_failed"
+            time.sleep(0.1)
+            continue
+
+        if not _is_usable_frame(frame):
+            unusable_frame_count += 1
+            if unusable_frame_count >= max(3, int(_YOLO_FPS)):
+                _people_count = 0
+                _camera_status = "black_frame"
+                with _frame_lock:
+                    _latest_frame = _make_status_frame("Camera feed is black", "Camera may be busy, covered, or wrong index")
+                time.sleep(target_frame_delay)
+                continue
+        else:
+            unusable_frame_count = 0
+            _camera_status = "active"
+
+        frame_index += 1
+        results = _yolo_model(
+            frame,
+            imgsz=_YOLO_IMG_SIZE,
+            conf=0.35,
+            iou=0.45,
+            classes=_YOLO_CLASS_IDS,
+            verbose=False
+        )[0]
+        threshold_sec, zone_name = _refresh_zone_info()
+
+        person_boxes = []
+        object_detections = []
+        people_count = 0
+        now = time.time()
+
+        for box in results.boxes:
+            cls_id = int(box.cls[0])
+            class_name = results.names[cls_id]
+            conf = float(box.conf[0])
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+
+            if class_name == 'person':
+                people_count += 1
+
+                # --- Face recognition on this person's bounding-box crop ---
+                recog_name = "UNKNOWN"
+                box_color = (0, 0, 200)    # red  = unidentified
+                label_color = (0, 0, 200)
+                display_label = "SUSPICIOUS PERSON"
+
+                track_key = (x1 // 80, y1 // 80)
+                cached_name, cached_sim = _person_name_cache[track_key]
+                should_recognize_face = (
+                    people_count <= _FACE_RECOG_MAX_PEOPLE
+                    and frame_index % max(_FACE_RECOG_EVERY_N_FRAMES, 1) == 0
+                )
+
+                if should_recognize_face:
+                    fh, fw = frame.shape[:2]
+                    crop = frame[max(y1, 0):min(y2, fh), max(x1, 0):min(x2, fw)]
+                    if crop.size > 0:
+                        try:
+                            faces = face_app.get(crop)
+                            if faces:
+                                live_emb = faces[0].embedding
+                                live_emb = live_emb / np.linalg.norm(live_emb)
+                                best_sim, best_name = 0.0, "UNKNOWN"
+                                for known in known_faces:
+                                    sim = float(np.dot(live_emb, known["embedding"]))
+                                    if sim > best_sim:
+                                        best_sim = sim
+                                        if sim > 0.45:
+                                            best_name = known["name"]
+                                _person_name_cache[track_key] = (best_name, best_sim)
+                                cached_name, cached_sim = best_name, best_sim
+                        except Exception:
+                            pass
+
+                if cached_name != "UNKNOWN":
+                    recog_name = cached_name
+                    display_label = f"{cached_name} {cached_sim:.2f}"
+                    box_color = (0, 200, 80)   # green = identified
+                    label_color = (0, 200, 80)
+
+                person_boxes.append(([x1, y1, x2, y2], recog_name))
+                cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
+                cv2.putText(frame, display_label,
+                            (x1, max(y1 - 8, 12)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, label_color, 2)
+
+            elif class_name in _UNATTENDED_CLASSES:
+                cx = (x1 + x2) // 2
+                cy = (y1 + y2) // 2
+                key = (cx // 50 * 50, cy // 50 * 50, class_name)
+                object_detections.append((key, [x1, y1, x2, y2], class_name, cx, cy))
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 140, 0), 2)
+                cv2.putText(frame, f"{class_name} {conf:.2f}",
+                            (x1, max(y1 - 8, 12)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 140, 0), 2)
+
+        # --- Unattended object timer logic ---
+        seen_keys = set()
+        for (key, box, class_name, cx, cy) in object_detections:
+            seen_keys.add(key)
+            nearby, nearby_name = _get_nearby_person(person_boxes, cx, cy)
+
+            if key not in _tracked_objects:
+                _tracked_objects[key] = {
+                    'person_last_seen': now if nearby else None,
+                    'unattended_since': None if nearby else now,
+                    'alerted': False,
+                    'last_person_name': nearby_name
+                }
+            else:
+                obj = _tracked_objects[key]
+                if nearby:
+                    obj['person_last_seen'] = now
+                    obj['unattended_since'] = None
+                    obj['alerted'] = False
+                    obj['last_person_name'] = nearby_name
+                else:
+                    # Person just left → start timer
+                    if obj['unattended_since'] is None and obj['person_last_seen'] is not None:
+                        obj['unattended_since'] = now
+                    # Timer expired → fire alert once
+                    if (obj['unattended_since'] is not None
+                            and not obj['alerted']
+                            and now - obj['unattended_since'] >= threshold_sec):
+                        obj['alerted'] = True
+                        duration = int(now - obj['unattended_since'])
+                        threading.Thread(
+                            target=_fire_alert,
+                            args=(class_name, zone_name, duration, obj.get('last_person_name')),
+                            daemon=True
+                        ).start()
+                        # Red box for alerted objects
+                        cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 0, 220), 3)
+                        cv2.putText(frame, "UNATTENDED!",
+                                    (box[0], max(box[1] - 20, 12)),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 220), 2)
+
+        # Evict objects that left the frame
+        _tracked_objects = {k: v for k, v in _tracked_objects.items() if k in seen_keys}
+
+        # People count HUD
+        cv2.putText(frame, f"People: {people_count}", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
+
+        _people_count = people_count
+        with _frame_lock:
+            _latest_frame = frame.copy()
+
+        elapsed = time.time() - loop_started_at
+        time.sleep(max(0.0, target_frame_delay - elapsed))
+
+
+@app.on_event("startup")
+def start_yolo_thread():
+    if os.getenv("USE_SERVER_CAMERA", "false").lower() != "true":
+        print("Server camera stream disabled; using browser-captured frames for YOLO.")
+        return
+    t = threading.Thread(target=_yolo_detection_loop, daemon=True)
+    t.start()
+
+
+def _frame_generator():
+    blank = np.zeros((_CAMERA_HEIGHT, _CAMERA_WIDTH, 3), dtype=np.uint8)
+    cv2.putText(blank, "Initializing camera...", (140, 240),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (100, 100, 100), 2)
+    _, blank_buf = cv2.imencode('.jpg', blank)
+    blank_bytes = blank_buf.tobytes()
+
+    while True:
+        with _frame_lock:
+            frame = _latest_frame
+
+        if frame is None:
+            jpg_bytes = blank_bytes
+        else:
+            ret, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 65])
+            jpg_bytes = buf.tobytes() if ret else blank_bytes
+
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' +
+               jpg_bytes +
+               b'\r\n')
+        time.sleep(1.0 / max(_STREAM_FPS, 1))
+
+
+@app.get("/api/yolo/stream")
+async def yolo_stream():
+    """MJPEG stream of annotated webcam feed with YOLO bounding boxes."""
+    return StreamingResponse(
+        _frame_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+@app.post("/api/yolo/analyze-frame")
+async def yolo_analyze_frame(request: RecognitionRequest):
+    """Analyze a browser-captured frame and return an annotated JPEG."""
+    global _latest_frame, _detection_active, _camera_status
+
+    try:
+        img = base64_to_cv2(request.image)
+        if img is None:
+            raise ValueError("Could not decode image")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid image data")
+
+    annotated, people_count, detections = _annotate_detection_frame(img, recognize_faces=True)
+    _detection_active = YOLO_AVAILABLE
+    _camera_status = "browser_camera"
+
+    with _frame_lock:
+        _latest_frame = annotated.copy()
+
+    return {
+        "count": people_count,
+        "detections": detections,
+        "frame_width": int(img.shape[1]),
+        "frame_height": int(img.shape[0]),
+        "detection_active": _detection_active,
+        "camera_status": _camera_status
+    }
+
+
+@app.get("/api/yolo/people-count")
+async def yolo_people_count():
+    """Returns the current people count from the latest YOLO frame."""
+    return {
+        "count": _people_count,
+        "detection_active": _detection_active,
+        "camera_status": _camera_status
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8500, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8500, reload=False)

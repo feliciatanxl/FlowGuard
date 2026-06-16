@@ -260,8 +260,10 @@ router.get("/my-staff", authenticateToken, async (req, res) => {
     }
 });
 
-router.get("/", async (req, res) => {
+router.get("/", authenticateToken, async (req, res) => {
     try {
+        if (req.user.role !== 'FM') return res.status(403).json({ message: "Unauthorized." });
+
         const users = await User.findAll({
             attributes: ['id', 'name', 'email', 'role', 'isActive', 'createdAt'],
             include: [{
@@ -318,10 +320,18 @@ router.delete("/:id", authenticateToken, async (req, res) => {
         const staffMember = await User.findByPk(req.params.id);
         if (!staffMember) return res.status(404).json({ message: "Not found." });
 
-        if (req.user.role === 'Tenant' && staffMember.managerId !== req.user.id) {
+        if (String(staffMember.id) === String(req.user.id)) {
+            return res.status(400).json({ message: "Self-deletion is restricted. Ask another Facilities Manager to off-board this account." });
+        }
+
+        const isFacilitiesManager = req.user.role === 'FM';
+        const isTenantDeletingOwnStaff = req.user.role === 'Tenant' && staffMember.managerId === req.user.id;
+
+        if (!isFacilitiesManager && !isTenantDeletingOwnStaff) {
             return res.status(403).json({ message: "Unauthorized action." });
         }
 
+        await Attendance.destroy({ where: { userId: staffMember.id } });
         await staffMember.destroy();
         res.json({ message: "Removed successfully." });
     } catch (err) {
@@ -332,12 +342,30 @@ router.delete("/:id", authenticateToken, async (req, res) => {
 // POST: /user/enroll-face
 router.post('/enroll-face', verifyToken, async (req, res) => {
     try {
-        const { images } = req.body;
+        const { images, targetUserId } = req.body;
 
-        // This requires your JWT middleware to attach the user ID to req.user
-        const userId = req.user.id;
+        if (!images?.front || !images?.left || !images?.right) {
+            return res.status(400).json({ error: "Front, left, and right face images are required." });
+        }
 
-        console.log(`Starting face enrollment for User ID: ${userId}`);
+        const requester = await User.findByPk(req.user.id);
+        if (!requester || requester.isActive === false) {
+            return res.status(403).json({ error: "Account is inactive or no longer exists." });
+        }
+
+        const requestedUserId = targetUserId || req.user.id;
+        const isSelfEnrollment = String(requestedUserId) === String(req.user.id);
+
+        if (!isSelfEnrollment && requester.role !== 'FM') {
+            return res.status(403).json({ error: "Only Facilities Managers can re-enroll another user's Face ID." });
+        }
+
+        const targetUser = await User.findByPk(requestedUserId);
+        if (!targetUser) {
+            return res.status(404).json({ error: "Target user not found." });
+        }
+
+        console.log(`Starting face enrollment for User ID: ${targetUser.id}`);
 
         // 1. Send the images to the Python AI service
         const faceAiUrl = process.env.FACE_AI_URL || 'http://127.0.0.1:8500';
@@ -356,7 +384,7 @@ router.post('/enroll-face', verifyToken, async (req, res) => {
                 isEnrolled: true
             },
             {
-                where: { id: userId }
+                where: { id: targetUser.id }
             }
         );
 

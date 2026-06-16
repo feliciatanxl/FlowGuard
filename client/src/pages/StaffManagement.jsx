@@ -36,7 +36,7 @@ const StaffManagement = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const codeRes = await axios.get('http://localhost:5000/user/my-code', {
+      const codeRes = await axios.get('/user/my-code', {
         headers: { Authorization: `Bearer ${token}` }
       });
       
@@ -47,7 +47,7 @@ const StaffManagement = () => {
         createdAt: codeRes.data.codeCreatedAt // Received from Hybrid logic backend
       });
 
-      const staffRes = await axios.get('http://localhost:5000/user/my-staff', {
+      const staffRes = await axios.get('/user/my-staff', {
         headers: { Authorization: `Bearer ${token}` }
       });
       setStaff(staffRes.data);
@@ -75,7 +75,7 @@ const StaffManagement = () => {
   const handleConfirmDelete = async () => {
     const { id, name } = deleteModal.user;
     try {
-      await axios.delete(`http://localhost:5000/user/${id}`, {
+      await axios.delete(`/user/${id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setStaff(prev => prev.filter(m => m.id !== id));
@@ -89,7 +89,7 @@ const StaffManagement = () => {
 
   const handleGenerateCode = async () => {
     try {
-      const res = await axios.put('http://localhost:5000/user/generate-code', {}, {
+      const res = await axios.put('/user/generate-code', {}, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setCompanyCode(res.data.companyCode);

@@ -18,7 +18,7 @@ const Attendance = () => {
 
   const fetchAttendanceData = async () => {
     try {
-      const res = await axios.get('http://localhost:5000/api/attendance/logs', {
+      const res = await axios.get('/api/attendance/logs', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.data) {

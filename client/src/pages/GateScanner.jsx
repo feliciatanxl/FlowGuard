@@ -17,9 +17,10 @@ const GateScanner = () => {
   const lockTimerRef = useRef(null);
   const progressIntervalRef = useRef(null);
   const candidateUserRef = useRef(null); 
+  const isScanningRef = useRef(false);
 
   const token = localStorage.getItem("accessToken");
-  const ATTENDANCE_SCAN_URL = "http://localhost:5000/api/attendance/scan";
+  const ATTENDANCE_SCAN_URL = "/api/attendance/scan";
 
   const changeScanState = (nextState, message) => {
     setScanStatus(nextState);
@@ -29,7 +30,7 @@ const GateScanner = () => {
 
   useEffect(() => {
     startGateCamera();
-    const scanInterval = setInterval(() => performPerimeterScan(), 800); 
+    const scanInterval = setInterval(() => performPerimeterScan(), 1200);
 
     return () => {
       stopGateCamera();
@@ -41,10 +42,21 @@ const GateScanner = () => {
 
   const startGateCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" } 
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 15, max: 20 },
+          facingMode: "user"
+        },
+        audio: false
       });
-      if (videoRef.current) videoRef.current.srcObject = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current.play().catch(() => changeScanState("HARDWARE_ERR", "CAMERA STREAM PAUSED"));
+        };
+      }
       changeScanState("SYSTEM_ACTIVE", "GATE TURNSTILE ONLINE // AWAITING TARGET");
     } catch (err) { 
       changeScanState("HARDWARE_ERR", "HARDWARE FAILURE: CAMERA NOT DETECTED"); 
@@ -81,17 +93,22 @@ const GateScanner = () => {
   };
 
   const performPerimeterScan = async () => {
+    if (isScanningRef.current) return;
+
     const video = videoRef.current;
     const canvas = canvasRef.current;
     
     if (!video || !canvas || video.videoWidth === 0) return;
     if (scanStatusRef.current === "SECURE_MATCH" || scanStatusRef.current === "UNKNOWN_QUERY") return;
 
+    isScanningRef.current = true;
     const context = canvas.getContext('2d');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    const maxWidth = 420;
+    const scale = Math.min(1, maxWidth / video.videoWidth);
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const imageBase64 = canvas.toDataURL('image/jpeg', 0.4);
+    const imageBase64 = canvas.toDataURL('image/jpeg', 0.3);
 
     try {
       const res = await axios.post('/ai/user/recognize', { image: imageBase64 }, {
@@ -106,12 +123,12 @@ const GateScanner = () => {
         if (v2 > v4 && v3 > v1) { rawY = v1; rawX = v4; boxWidth = v2 - v4; boxHeight = v3 - v1; } 
         else { rawX = v1; rawY = v2; boxWidth = v3; boxHeight = v4; }
         
-        const faceProximityPercentage = (boxWidth / video.videoWidth) * 100; 
+        const faceProximityPercentage = (boxWidth / canvas.width) * 100;
         const livenessRatio = res.data.liveness_ratio || 0.5;
 
         const targetBox = {
-          left: `${(rawX / video.videoWidth) * 100}%`, top: `${(rawY / video.videoHeight) * 100}%`,
-          width: `${(boxWidth / video.videoWidth) * 100}%`, height: `${(boxHeight / video.videoHeight) * 100}%`
+          left: `${(rawX / canvas.width) * 100}%`, top: `${(rawY / canvas.height) * 100}%`,
+          width: `${(boxWidth / canvas.width) * 100}%`, height: `${(boxHeight / canvas.height) * 100}%`
         };
 
         if (faceProximityPercentage < 8 && scanStatusRef.current !== "LIVENESS_CHECK") {
@@ -164,6 +181,8 @@ const GateScanner = () => {
       }
     } catch (err) {
       console.error("Gate AI Link Fault:", err);
+    } finally {
+      isScanningRef.current = false;
     }
   };
 

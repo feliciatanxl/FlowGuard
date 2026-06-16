@@ -40,7 +40,7 @@ const Register = () => {
         recaptchaToken: token 
       };
 
-      const res = await axios.post('http://localhost:5000/user/register', payload);
+      const res = await axios.post('/user/register', payload);
       console.log("Registration successful.");
       navigate('/login');
 

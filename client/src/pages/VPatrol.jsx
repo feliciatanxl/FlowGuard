@@ -31,7 +31,7 @@ const VPatrol = () => {
   const [incidentLogs, setIncidentLogs] = useState([]);
 
   const token = localStorage.getItem("accessToken");
-  const NODE_SERVER_URL = "http://localhost:5000/api/security/logs"; 
+  const NODE_SERVER_URL = "/api/security/logs";
 
   const changeScanState = (nextState) => {
     setScanStatus(nextState);
@@ -63,7 +63,7 @@ const VPatrol = () => {
 
     const scanInterval = setInterval(() => { 
       performLiveScan(); 
-    }, 800); 
+    }, 1200);
 
     return () => {
       stopCCTV();
@@ -77,9 +77,19 @@ const VPatrol = () => {
   const startCCTV = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" } 
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 15, max: 20 },
+          facingMode: "user"
+        }
       });
-      if (videoRef.current) videoRef.current.srcObject = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current.play().catch(() => changeScanState("HARDWARE_ERR"));
+        };
+      }
       changeScanState("SYSTEM_ACTIVE");
     } catch (err) { 
       changeScanState("HARDWARE_ERR"); 
@@ -144,7 +154,7 @@ const VPatrol = () => {
     
     // 🚀 LAPTOP OPTIMIZATION: Shrink the image to 480px wide before sending to AI
     // This dramatically reduces the mathematical load on your laptop's weak CPU!
-    const MAX_WIDTH = 480; 
+    const MAX_WIDTH = 420;
     const scaleDownRatio = MAX_WIDTH / video.videoWidth;
     
     canvas.width = MAX_WIDTH;

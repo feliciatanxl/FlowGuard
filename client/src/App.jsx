@@ -25,6 +25,7 @@ import TenantManagement from './pages/TenantManagement';
 import FaceEnrollment from './pages/FaceEnrollment';
 import Attendance from './pages/Attendance';
 import GateScanner from './pages/GateScanner';
+import ObjectDetection from './pages/ObjectDetection';
 import './App.css';
 
 function App() {
@@ -38,7 +39,6 @@ function App() {
         <Route path="/tenant-management" element={<TenantManagement />} />
         <Route path="/user-logs/:id" element={<UserLogs />} />
         <Route path="/staff" element={<StaffManagement />} />
-        <Route path="/enrollment" element={<FaceEnrollment />} />
         <Route path="/attendance" element={<Attendance />} />
         <Route path="/contact" element={<Contact />} />
         <Route path="/login" element={<Login />} />
@@ -50,6 +50,7 @@ function App() {
         <Route path="/driver-portal" element={<DriverPortal />} />
         <Route path="/vpatrol" element={<VPatrol />} />
         <Route path="/cameras" element={<Cameras />} />
+        <Route path="/object-detection" element={<ObjectDetection />} />
 
         {/* --- Protected Dashboard Routes --- */}
         {/* These require a valid Access Key (Token) to view */}
@@ -62,6 +63,12 @@ function App() {
         <Route path="/settings" element={
           <ProtectedRoute>
             <Settings />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/enrollment" element={
+          <ProtectedRoute>
+            <FaceEnrollment />
           </ProtectedRoute>
         } />
 

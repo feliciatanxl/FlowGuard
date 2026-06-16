@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
 import '../css/Dashboard.css'; 
@@ -7,9 +7,11 @@ import '../css/Users.css';
 
 const Users = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState({ isOpen: false, user: null });
+  const [modal, setModal] = useState({ isOpen: false, user: null, action: null });
+  const [notification, setNotification] = useState(location.state?.notice || "");
 
   const token = localStorage.getItem("accessToken");
   const currentUserId = localStorage.getItem("userId"); 
@@ -17,7 +19,7 @@ const Users = () => {
   const fetchUsers = async () => {
     setLoading(true); 
     try {
-      const response = await axios.get('http://localhost:5000/user', {
+      const response = await axios.get('/user', {
         headers: { Authorization: `Bearer ${token}` }
       });
       
@@ -38,19 +40,55 @@ const Users = () => {
     fetchUsers();
   }, []);
 
-  const openModal = (user) => {
-    setModal({ isOpen: true, user });
+  useEffect(() => {
+    if (!notification) return;
+    const timer = setTimeout(() => setNotification(""), 4000);
+    return () => clearTimeout(timer);
+  }, [notification]);
+
+  const openModal = (user, action = 'suspend') => {
+    setModal({ isOpen: true, user, action });
   };
 
   const closeModal = () => {
-    setModal({ isOpen: false, user: null });
+    setModal({ isOpen: false, user: null, action: null });
+  };
+
+  const handleReEnroll = (user) => {
+    const params = new URLSearchParams({
+      userId: user.id,
+      name: user.name,
+      returnTo: '/users'
+    });
+    navigate(`/enrollment?${params.toString()}`);
+  };
+
+  const handleSelfReEnroll = () => {
+    const self = users.find(u => String(u.id) === String(currentUserId));
+    const params = new URLSearchParams({
+      userId: currentUserId,
+      name: self?.name || localStorage.getItem("userName") || "My profile",
+      returnTo: '/users'
+    });
+    navigate(`/enrollment?${params.toString()}`);
   };
 
   const handleConfirmAction = async () => {
     const { id, isActive, name } = modal.user;
 
     try {
-      await axios.put(`http://localhost:5000/user/suspend/${id}`, {}, {
+      if (modal.action === 'delete') {
+        await axios.delete(`/user/${id}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        setUsers(prevUsers => prevUsers.filter(u => u.id !== id));
+        setNotification(`${name} was permanently removed from FlowGuard.`);
+        closeModal();
+        return;
+      }
+
+      await axios.put(`/user/suspend/${id}`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       });
       
@@ -60,7 +98,7 @@ const Users = () => {
       
       closeModal();
     } catch (error) {
-      alert(`Failed to update access for ${name}.`);
+      alert(`Failed to ${modal.action === 'delete' ? 'remove' : 'update access for'} ${name}.`);
       console.error(error);
       closeModal();
     }
@@ -74,24 +112,32 @@ const Users = () => {
         {/* Security Modal Logic */}
         {modal.isOpen && (
           <div className="modal-overlay">
-            <div className="modal-content security-modal">
+            <div className={`modal-content security-modal ${modal.action === 'delete' ? 'delete-variant' : ''}`}>
               <div className="modal-header">
                 <span className="modal-icon">{modal.user.isActive ? '⚠️' : '🔓'}</span>
-                <h3>Security Confirmation</h3>
+                <h3>{modal.action === 'delete' ? 'Permanent Off-boarding' : 'Security Confirmation'}</h3>
               </div>
               <p>
-                Are you sure you want to <strong>{modal.user.isActive ? 'Suspend' : 'Reactivate'}</strong> access for <strong>{modal.user.name}</strong>?
+                {modal.action === 'delete'
+                  ? <>Permanently remove <strong>{modal.user.name}</strong> from FlowGuard? This removes their login access and biometric profile from the database.</>
+                  : <>Are you sure you want to <strong>{modal.user.isActive ? 'Suspend' : 'Reactivate'}</strong> access for <strong>{modal.user.name}</strong>?</>}
               </p>
               <div className="modal-actions">
                 <button className="cancel-btn" onClick={closeModal}>Cancel</button>
                 <button 
-                  className={`confirm-btn ${modal.user.isActive ? 'suspend-btn' : 'reactivate-btn'}`}
+                  className={`confirm-btn ${modal.action === 'delete' ? 'delete-btn' : modal.user.isActive ? 'suspend-btn' : 'reactivate-btn'}`}
                   onClick={handleConfirmAction}
                 >
-                  Confirm {modal.user.isActive ? 'Suspension' : 'Reactivation'}
+                  {modal.action === 'delete' ? 'Confirm Deletion' : `Confirm ${modal.user.isActive ? 'Suspension' : 'Reactivation'}`}
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {notification && (
+          <div className="users-toast">
+            {notification}
           </div>
         )}
 
@@ -102,6 +148,9 @@ const Users = () => {
               <h1>User Access Management</h1>
               <p>Security oversight for personnel roles and factory presence</p>
             </div>
+            <button className="self-enroll-btn" onClick={handleSelfReEnroll}>
+              Re-enroll My Face ID
+            </button>
           </header>
 
           <div className="table-wrapper">
@@ -135,12 +184,14 @@ const Users = () => {
                       return (
                         <tr key={u.id} className={u.isActive === false ? 'row-suspended' : ''}>
                           <td className="user-name-cell" data-label="Personnel">
-                            <div className="user-avatar-small">
-                              {u.name.charAt(0).toUpperCase()}
+                            <div className="user-identity">
+                              <div className="user-avatar-small">
+                                {u.name.charAt(0).toUpperCase()}
+                              </div>
+                              <span className="user-name-text">
+                                {u.name} {isSelf && <span className="self-tag">(You)</span>}
+                              </span>
                             </div>
-                            <span className="user-name-text">
-                              {u.name} {isSelf && <span className="self-tag">(You)</span>}
-                            </span>
                           </td>
                           <td data-label="System Role">
                             <span className={`role-badge role-${u.role.toLowerCase()}`}>
@@ -161,26 +212,41 @@ const Users = () => {
                             {new Date(u.createdAt).toLocaleDateString('en-SG')}
                           </td>
                           <td className="actions-cell" data-label="Actions">
-                            <button 
-                              className="action-btn edit-btn"
-                              onClick={() => navigate(`/user-logs/${u.id}`)}
-                            >
-                              View Logs
-                            </button>
-                            
-                            <button 
-                              className="action-btn revoke-btn"
-                              onClick={() => !isSelf && openModal(u)}
-                              disabled={isSelf}
-                              style={{ 
-                                color: isSelf ? '#475569' : (u.isActive === false ? '#10b981' : '#f87171'),
-                                cursor: isSelf ? 'not-allowed' : 'pointer',
-                                opacity: isSelf ? 0.5 : 1
-                              }}
-                              title={isSelf ? "Self-suspension restricted" : ""}
-                            >
-                              {u.isActive === false ? 'Reactivate' : 'Suspend'}
-                            </button>
+                            <div className="action-button-group" aria-label={`Actions for ${u.name}`}>
+                              <button 
+                                className="action-btn action-neutral"
+                                onClick={() => navigate(`/user-logs/${u.id}`)}
+                              >
+                                Logs
+                              </button>
+
+                              <button
+                                className={`action-btn action-bio ${isSelf ? 'disabled-action' : ''}`}
+                                onClick={() => !isSelf && handleReEnroll(u)}
+                                disabled={isSelf}
+                                title={isSelf ? "Use the page header to re-enroll your own Face ID" : `Re-enroll Face ID for ${u.name}`}
+                              >
+                                Face ID
+                              </button>
+                              
+                              <button 
+                                className={`action-btn ${u.isActive === false ? 'action-restore' : 'action-warning'} ${isSelf ? 'disabled-action' : ''}`}
+                                onClick={() => !isSelf && openModal(u, 'suspend')}
+                                disabled={isSelf}
+                                title={isSelf ? "Self-suspension restricted" : ""}
+                              >
+                                {u.isActive === false ? 'Reactivate' : 'Suspend'}
+                              </button>
+
+                              <button
+                                className={`action-btn action-danger ${isSelf ? 'disabled-action' : ''}`}
+                                onClick={() => !isSelf && openModal(u, 'delete')}
+                                disabled={isSelf}
+                                title={isSelf ? "Self-deletion restricted" : "Permanently delete user"}
+                              >
+                                Delete
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
