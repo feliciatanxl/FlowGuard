@@ -1,44 +1,65 @@
 const request = require("supertest");
 const express = require("express");
 
-jest.mock("../models/User", () => ({
-  findOne: jest.fn(),
+// Mock models BEFORE requiring the route
+const mockUser = {
   findByPk: jest.fn(),
+  findOne: jest.fn(),
   create: jest.fn(),
+  update: jest.fn(),
   destroy: jest.fn(),
+};
+
+jest.mock("../models", () => ({
+  User: mockUser,
+  Attendance: { findAll: jest.fn(), destroy: jest.fn() },
+  Invite: { findOne: jest.fn(), create: jest.fn() },
 }));
 
-const User = require("../models/User");
+jest.mock("axios", () => ({
+  post: jest.fn(() => Promise.resolve({ data: { vector: Array(512).fill(0.1) } })),
+}));
+
+// Stable secret for JWT
+process.env.APP_SECRET = "test-secret";
+
+const jwt = require("jsonwebtoken");
+const userRouter = require("../routes/user");
+
 const app = express();
 app.use(express.json());
-
-// Stub auth middleware
-jest.mock("jsonwebtoken", () => ({
-  verify: (token, secret, cb) => cb(null, { id: 1, role: "Facilities Manager" }),
-  sign: () => "fake-token",
-}));
-
-const userRouter = require("../routes/user");
 app.use("/user", userRouter);
+
+const fmPayload = { id: 99, role: "FM" };
+const fmToken = jwt.sign(fmPayload, process.env.APP_SECRET);
 
 describe("User routes", () => {
   beforeEach(() => jest.clearAllMocks());
 
   test("POST /user/enroll-face enrolls a face", async () => {
-    User.findByPk.mockResolvedValue({ id: 1, isEnrolled: false, save: jest.fn() });
-    const res = await request(app).post("/user/enroll-face").set("Authorization", "Bearer fake").send({ userId: 1, images: ["a", "b", "c"] });
-    expect([200, 201, 400]).toContain(res.status);
+    mockUser.findByPk.mockResolvedValue({ id: 99, role: "FM", isActive: true });
+    mockUser.update.mockResolvedValue([1]);
+    const res = await request(app)
+      .post("/user/enroll-face")
+      .set("Authorization", `Bearer ${fmToken}`)
+      .send({ images: { front: "a", left: "b", right: "c" } });
+    expect(res.status).toBe(200);
   });
 
-  test("POST /user/enroll-face re-enrolls an existing face", async () => {
-    User.findByPk.mockResolvedValue({ id: 1, isEnrolled: true, faceVector: [0.1], save: jest.fn() });
-    const res = await request(app).post("/user/enroll-face").set("Authorization", "Bearer fake").send({ userId: 1, images: ["a", "b", "c"] });
-    expect([200, 201, 400]).toContain(res.status);
+  test("POST /user/enroll-face returns 400 for missing images", async () => {
+    mockUser.findByPk.mockResolvedValue({ id: 99, role: "FM", isActive: true });
+    const res = await request(app)
+      .post("/user/enroll-face")
+      .set("Authorization", `Bearer ${fmToken}`)
+      .send({ images: { front: "a" } });
+    expect(res.status).toBe(400);
   });
 
   test("DELETE /user/:id removes a user", async () => {
-    User.findByPk.mockResolvedValue({ id: 1, destroy: jest.fn().mockResolvedValue(true) });
-    const res = await request(app).delete("/user/1").set("Authorization", "Bearer fake");
-    expect([200, 204, 404]).toContain(res.status);
+    mockUser.findByPk.mockResolvedValue({ id: 1, managerId: 99, destroy: jest.fn().mockResolvedValue(true) });
+    const res = await request(app)
+      .delete("/user/1")
+      .set("Authorization", `Bearer ${fmToken}`);
+    expect(res.status).toBe(200);
   });
 });
