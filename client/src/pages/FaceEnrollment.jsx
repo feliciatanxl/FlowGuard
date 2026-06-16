@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import '../css/Enrollment.css';
 
@@ -7,6 +7,7 @@ const FaceEnrollment = () => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [enrollmentMode, setEnrollmentMode] = useState('camera'); // 'camera' | 'upload'
   const [stage, setStage] = useState('front'); // 'front', 'left', 'right', 'ready'
@@ -16,6 +17,11 @@ const FaceEnrollment = () => {
 
   const token = localStorage.getItem("accessToken");
   const userName = localStorage.getItem("userName");
+  const targetUserId = searchParams.get("userId");
+  const targetUserName = searchParams.get("name");
+  const returnTo = searchParams.get("returnTo") || "/dashboard";
+  const isReEnrollment = Boolean(targetUserId);
+  const displayName = targetUserName || userName || "FlowGuard user";
 
   const allUploaded = photos.front && photos.left && photos.right;
 
@@ -90,9 +96,15 @@ const FaceEnrollment = () => {
 
   const handleFileUpload = (angle, file) => {
     if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setErrorMessage("Please upload an image file for facial enrollment.");
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (e) => {
       setPhotos(prev => ({ ...prev, [angle]: e.target.result }));
+      setErrorMessage(null);
     };
     reader.readAsDataURL(file);
   };
@@ -111,13 +123,20 @@ const FaceEnrollment = () => {
     try {
       // 🛑 THE FIX: Change to relative path so it uses the Vite Proxy
       await axios.post('/user/enroll-face', {
-        images: photos 
+        images: photos,
+        targetUserId: targetUserId ? Number(targetUserId) : undefined
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
       
       // Navigate to dashboard on success
-      navigate('/dashboard'); 
+      navigate(returnTo, {
+        state: {
+          notice: isReEnrollment
+            ? `Face ID re-enrolled for ${displayName}.`
+            : "Biometric enrollment successful."
+        }
+      }); 
     } catch (error) {
       console.error("Enrollment failed:", error);
       
@@ -147,8 +166,12 @@ const FaceEnrollment = () => {
       <div className="enrollment-card">
         <div className="enrollment-header">
           <span className="security-icon">🛡️</span>
-          <h2>Mandatory Biometric Setup</h2>
-          <p>Welcome, {userName}. We need 3 angles to build a robust factory access profile.</p>
+          <h2>{isReEnrollment ? 'Re-enroll Face ID' : 'Mandatory Biometric Setup'}</h2>
+          <p>
+            {isReEnrollment
+              ? `Updating biometric access for ${displayName}. Capture or upload 3 fresh angles.`
+              : `Welcome, ${displayName}. We need 3 angles to build a robust factory access profile.`}
+          </p>
         </div>
 
         {/* --- MODE TOGGLE --- */}
@@ -231,7 +254,7 @@ const FaceEnrollment = () => {
               <>
                 <button className="retake-btn" onClick={resetCapture} disabled={loading}>Start Over</button>
                 <button className="submit-btn" onClick={submitEnrollment} disabled={loading}>
-                  {loading ? "Vectoring..." : "Confirm & Unlock System"}
+                  {loading ? "Vectoring..." : isReEnrollment ? "Save New Face ID" : "Confirm & Unlock System"}
                 </button>
               </>
             )
@@ -239,7 +262,7 @@ const FaceEnrollment = () => {
             <>
               <button className="retake-btn" onClick={resetCapture} disabled={loading}>Clear All</button>
               <button className="submit-btn" onClick={submitEnrollment} disabled={!allUploaded || loading}>
-                {loading ? "Vectoring..." : "Confirm & Unlock System"}
+                {loading ? "Vectoring..." : isReEnrollment ? "Save New Face ID" : "Confirm & Unlock System"}
               </button>
             </>
           )}

@@ -39,7 +39,6 @@ function App() {
         <Route path="/tenant-management" element={<TenantManagement />} />
         <Route path="/user-logs/:id" element={<UserLogs />} />
         <Route path="/staff" element={<StaffManagement />} />
-        <Route path="/enrollment" element={<FaceEnrollment />} />
         <Route path="/attendance" element={<Attendance />} />
         <Route path="/contact" element={<Contact />} />
         <Route path="/login" element={<Login />} />
@@ -64,6 +63,12 @@ function App() {
         <Route path="/settings" element={
           <ProtectedRoute>
             <Settings />
+          </ProtectedRoute>
+        } />
+
+        <Route path="/enrollment" element={
+          <ProtectedRoute>
+            <FaceEnrollment />
           </ProtectedRoute>
         } />
 
