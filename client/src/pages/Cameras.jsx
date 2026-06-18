@@ -2,20 +2,20 @@ import React from 'react';
 import Sidebar from '../components/Sidebar';
 import '../css/Dashboard.css';
 
-const Cameras = () => {
-  // Mock data for your factory cameras
+export default function Cameras() {
   const cameraFeeds = [
-    { id: 'CAM-01', zone: 'Sector 1 - Loading Bay', status: 'Live', alert: false },
-    { id: 'CAM-02', zone: 'Sector 2 - Assembly Line', status: 'Live', alert: false },
-    { id: 'CAM-03', zone: 'Sector 3 - Chemical Storage', status: 'Warning', alert: true },
-    { id: 'CAM-04', zone: 'Sector 4 - Command Center', status: 'Offline', alert: false },
-    { id: 'CAM-05', zone: 'Sector 1 - Main Gate', status: 'Live', alert: false },
-    { id: 'CAM-06', zone: 'Sector 2 - Packaging', status: 'Live', alert: false },
+    { id: 'CAM-01', zone: 'Sector 1 - Loading Bay', status: 'Live', video: '/videos/loading.mp4', alert: false },
+    { id: 'CAM-02', zone: 'Sector 2 - Assembly Line', status: 'Live', video: '/videos/assembly.mp4', alert: false },
+    { id: 'CAM-03', zone: 'Sector 3 - Chemical Storage', status: 'Live', video: '/videos/chemical_storage.mp4', alert: true },
+    { id: 'CAM-04', zone: 'Sector 4 - Command Center', status: 'Live', video: '/videos/command.mp4', alert: false },
+    { id: 'CAM-05', zone: 'Sector 5 - Main Gate', status: 'Live', video: '/videos/entrance.mp4', alert: false },
+    { id: 'CAM-06', zone: 'Sector 6 - Packaging', status: 'Live', video: '/videos/packaging.mp4', alert: false },
   ];
 
   return (
     <div className="dashboard-layout">
       <Sidebar />
+
       <main className="dashboard-main">
         <header className="dashboard-header">
           <div className="header-titles">
@@ -29,17 +29,37 @@ const Cameras = () => {
           {cameraFeeds.map((cam) => (
             <div key={cam.id} className={`camera-card ${cam.alert ? 'camera-alert' : ''}`}>
               <div className="camera-feed-placeholder">
-                {/* This is where a real video stream component would go */}
                 {cam.status === 'Offline' ? (
                   <span className="feed-offline-text">NO SIGNAL</span>
+                ) : cam.video ? (
+                  <>
+                    <video
+                      src={cam.video}
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                      className="camera-video"
+                    />
+                    <span className="feed-live-icon">⏺ REC</span>
+                  </>
                 ) : (
                   <span className="feed-live-icon">⏺ REC</span>
                 )}
               </div>
+
               <div className="camera-info">
                 <div className="cam-title-row">
                   <h3>{cam.id}</h3>
-                  <span className={`status-dot ${cam.status === 'Live' ? 'dot-online' : cam.status === 'Warning' ? 'dot-warning' : 'dot-offline'}`}></span>
+                  <span
+                    className={`status-dot ${
+                      cam.status === 'Live'
+                        ? 'dot-online'
+                        : cam.status === 'Warning'
+                        ? 'dot-warning'
+                        : 'dot-offline'
+                    }`}
+                  ></span>
                 </div>
                 <p>{cam.zone}</p>
               </div>
@@ -49,6 +69,4 @@ const Cameras = () => {
       </main>
     </div>
   );
-};
-
-export default Cameras;
+}
