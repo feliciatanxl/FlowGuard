@@ -69,8 +69,8 @@ const Sidebar = () => {
             <NavLink to="/attendance" onClick={() => setIsOpen(false)}>Daily Attendance</NavLink>
           )}
 
-          {/* Logistics & bays — FM + Tenant */}
-          {(isFM || isTenant) && (
+          {/* Logistics & bays — FM + Tenant (book) + Staff (operational view) */}
+          {(isFM || isStaff || isTenant) && (
             <NavLink to="/logistics" onClick={() => setIsOpen(false)}>Logistics & Bays</NavLink>
           )}
 

@@ -93,8 +93,9 @@ function App() {
             <StaffManagement />
           </ProtectedRoute>
         } />
+        {/* Logistics: FM + Tenant can book; Staff gets operational view + status updates. */}
         <Route path="/logistics" element={
-          <ProtectedRoute allowedRoles={ACCESS.FM_TENANT}>
+          <ProtectedRoute allowedRoles={ACCESS.ANY}>
             <TenantLogistics />
           </ProtectedRoute>
         } />
