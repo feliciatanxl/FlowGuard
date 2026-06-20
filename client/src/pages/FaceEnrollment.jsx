@@ -31,8 +31,13 @@ const FaceEnrollment = () => {
   }, []);
 
   const startCamera = async () => {
+    // No camera API (insecure context / no webcam): steer the user to manual upload.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setErrorMessage("No webcam detected on this device. Use the “Upload Photos” option instead.");
+      return;
+    }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
+      const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 640 },
           height: { ideal: 480 },
@@ -45,7 +50,7 @@ const FaceEnrollment = () => {
       }
     } catch (err) {
       console.error("Camera access denied", err);
-      setErrorMessage("Camera access denied. Please enable permissions to continue.");
+      setErrorMessage("Camera access denied. Enable camera permissions, or use the “Upload Photos” option instead.");
     }
   };
 

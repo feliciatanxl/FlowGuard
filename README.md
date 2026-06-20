@@ -52,7 +52,7 @@ User accounts/authentication are a shared feature across the team.
 - **Backend:** Node.js + Express ⚙️
 - **AI Service:** Python + FastAPI 🧠
 - **Computer-Vision Models:** InsightFace (faces) + Ultralytics YOLO (objects/people) 👁️
-- **Database:** PostgreSQL (with `pgvector` for face embeddings) 🗄️
+- **Database:** PostgreSQL — face embeddings are stored as a native `FLOAT[]` array column (`faceVector`). The server attempts to enable the `pgvector` extension on startup and automatically falls back to `FLOAT[]` when it is unavailable, so no extension is required to run the project. 🗄️
 - **ORM:** Sequelize
 - **Validation:** Yup & Formik ✅
 

@@ -41,6 +41,10 @@ const GateScanner = () => {
   }, []);
 
   const startGateCamera = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      changeScanState("HARDWARE_ERR", "NO CAMERA DETECTED ON THIS TERMINAL");
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {

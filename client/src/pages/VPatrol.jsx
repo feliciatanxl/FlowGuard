@@ -75,8 +75,13 @@ const VPatrol = () => {
   }, []);
 
   const startCCTV = async () => {
+    // Guard: browser without camera API (insecure context / no webcam support)
+    if (!navigator.mediaDevices?.getUserMedia) {
+      changeScanState("HARDWARE_ERR");
+      return;
+    }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
+      const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 640 },
           height: { ideal: 480 },
@@ -91,8 +96,10 @@ const VPatrol = () => {
         };
       }
       changeScanState("SYSTEM_ACTIVE");
-    } catch (err) { 
-      changeScanState("HARDWARE_ERR"); 
+    } catch (err) {
+      // Permission denied, no device, or device busy — surface it instead of a black feed
+      console.error("CCTV camera unavailable:", err);
+      changeScanState("HARDWARE_ERR");
     }
   };
 
@@ -315,7 +322,28 @@ const VPatrol = () => {
             <div className={`cctv-container state-theme-${scanStatus.toLowerCase()}`} style={{ width: '100%', height: '100%' }}>
               <video ref={videoRef} autoPlay playsInline muted className="video-feed" />
               <canvas ref={canvasRef} style={{ display: 'none' }} />
-              
+
+              {scanStatus === "HARDWARE_ERR" && (
+                <div className="camera-error-overlay" style={{
+                  position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                  alignItems: 'center', justifyContent: 'center', textAlign: 'center',
+                  background: 'rgba(15,23,42,0.92)', color: '#e2e8f0', padding: '24px', zIndex: 5
+                }}>
+                  <div style={{ fontSize: 40 }}>📷🚫</div>
+                  <h3 style={{ margin: '10px 0 4px' }}>Camera unavailable</h3>
+                  <p style={{ color: '#94a3b8', maxWidth: 360 }}>
+                    Allow camera access in your browser, close other apps using the webcam, then
+                    reload. If this device has no camera, the live patrol feed can't run here.
+                  </p>
+                  <button
+                    onClick={startCCTV}
+                    style={{ marginTop: 12, padding: '8px 16px', borderRadius: 8, border: '1px solid #334155', background: '#1e293b', color: '#e2e8f0', cursor: 'pointer' }}
+                  >
+                    Retry camera
+                  </button>
+                </div>
+              )}
+
               {faceBox && (
                 <div 
                   className={`face-tracking-box state-${scanStatus.toLowerCase()}`}

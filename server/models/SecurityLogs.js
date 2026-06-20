@@ -7,11 +7,31 @@ module.exports = (sequelize, DataTypes) => {
     severity: { type: DataTypes.STRING, allowNull: false, defaultValue: 'safe' },
     icon: { type: DataTypes.STRING, allowNull: false },
     
-    // 🎯 NEW: Dedicated column to link to the Personnel Page
-    personnelName: { 
-      type: DataTypes.STRING, 
+    // 🎯 Dedicated column to link to the Personnel Page
+    personnelName: {
+      type: DataTypes.STRING,
       allowNull: true, // True because intruders won't have a registered name
       description: 'The exact name of the verified staff member'
+    },
+
+    // --- MANUAL FM REVIEW WORKFLOW ---
+    // FM staff triage suspicious/critical events through these fields.
+    reviewStatus: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      defaultValue: 'Pending Review' // Pending Review | False Positive | Escalated | Resolved
+    },
+    reviewNotes: {
+      type: DataTypes.TEXT,
+      allowNull: true // FM's manual resolution notes
+    },
+    reviewedBy: {
+      type: DataTypes.STRING,
+      allowNull: true // Name/email of the FM who actioned the log
+    },
+    reviewedAt: {
+      type: DataTypes.DATE,
+      allowNull: true
     }
   }, {
     tableName: 'security_logs',

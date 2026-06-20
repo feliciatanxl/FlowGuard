@@ -32,6 +32,11 @@ app.use('/api/security', securityRoutes);
 const attendanceRoutes = require('./routes/attendance');
 app.use('/api/attendance', attendanceRoutes);
 
+// Fallback handlers — MUST stay last, after every route is mounted.
+const { notFound, errorHandler } = require('./middlewares/errorHandlers');
+app.use(notFound);       // unknown route → 404 JSON
+app.use(errorHandler);   // anything thrown/forwarded → 500 JSON (no stack leak)
+
 // Sync DB and Start Server
 const db = require('./models');
 
