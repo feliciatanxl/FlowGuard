@@ -19,6 +19,7 @@ jest.mock("../models", () => ({
 
 jest.mock("axios", () => ({
   post: jest.fn(() => Promise.resolve({ data: { vector: Array(512).fill(0.1) } })),
+  get: jest.fn(() => Promise.resolve({ data: { message: "Staff list updated from database" } })),
 }));
 
 // Stable secret for JWT
@@ -37,14 +38,30 @@ const fmToken = jwt.sign(fmPayload, process.env.APP_SECRET);
 describe("User routes", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  test("POST /user/enroll-face enrolls a face", async () => {
+  test("POST /user/enroll-face enrolls a face and triggers AI cache refresh", async () => {
     mockUser.findByPk.mockResolvedValue({ id: 99, role: "FM", isActive: true });
     mockUser.update.mockResolvedValue([1]);
+    const axios = require("axios");
     const res = await request(app)
       .post("/user/enroll-face")
       .set("Authorization", `Bearer ${fmToken}`)
       .send({ images: { front: "a", left: "b", right: "c" } });
     expect(res.status).toBe(200);
+    expect(res.body.message).toMatch(/successful/i);
+    // refresh endpoint was hit on the FACE_AI_URL base
+    expect(axios.get).toHaveBeenCalledWith(expect.stringMatching(/\/refresh$/), expect.any(Object));
+  });
+
+  test("POST /user/enroll-face still succeeds (refresh pending) when AI refresh fails", async () => {
+    mockUser.findByPk.mockResolvedValue({ id: 99, role: "FM", isActive: true });
+    mockUser.update.mockResolvedValue([1]);
+    require("axios").get.mockRejectedValueOnce({ message: "connect ECONNREFUSED" });
+    const res = await request(app)
+      .post("/user/enroll-face")
+      .set("Authorization", `Bearer ${fmToken}`)
+      .send({ images: { front: "a", left: "b", right: "c" } });
+    expect(res.status).toBe(200);
+    expect(res.body.message).toMatch(/refresh pending/i);
   });
 
   test("POST /user/enroll-face returns 400 for missing images", async () => {

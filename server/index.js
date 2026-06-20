@@ -42,22 +42,11 @@ const db = require('./models');
 
 async function startServer() {
     try {
-        let pgvectorReady = false;
-        try {
-            await db.sequelize.query('CREATE EXTENSION IF NOT EXISTS vector');
-            pgvectorReady = true;
-        } catch (extErr) {
-            console.warn("WARNING: pgvector not available — migrating faceVector to FLOAT[].");
-            // The column may exist as 'vector' type; drop it so sync can recreate as FLOAT[]
-            try {
-                await db.sequelize.query(`
-                    ALTER TABLE "users"
-                    DROP COLUMN IF EXISTS "faceVector";
-                `);
-            } catch (dropErr) {
-                // Table may not exist yet — that's fine, sync will create it
-            }
-        }
+        // IMPORTANT: faceVector is stored as a PostgreSQL FLOAT[] (Sequelize ARRAY(FLOAT)),
+        // NOT pgvector. We intentionally do NOT create the pgvector extension or drop the
+        // "faceVector" column on startup. The previous drop-on-fallback logic wiped every
+        // enrolled face on each restart, so it has been removed. Sequelize sync (below)
+        // manages the column safely without data loss.
 
         const modelNames = Object.keys(db).filter(
             k => k !== 'sequelize' && k !== 'Sequelize'

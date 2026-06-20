@@ -390,8 +390,9 @@ router.post('/enroll-face', verifyToken, async (req, res) => {
 
         console.log(`Starting face enrollment for User ID: ${targetUser.id}`);
 
-        // 1. Send the images to the Python AI service (with a timeout so we never hang)
-        const faceAiUrl = process.env.FACE_AI_URL || 'http://127.0.0.1:8500';
+        // 1. Send the images to the Python face AI service (with a timeout so we never hang).
+        //    FACE_AI_URL is a BASE url (e.g. http://127.0.0.1:8501); endpoint paths are appended.
+        const faceAiUrl = process.env.FACE_AI_URL || 'http://127.0.0.1:8501';
         const pythonResponse = await axios.post(`${faceAiUrl}/api/encode-faces`, {
             front: images.front,
             left: images.left,
@@ -411,7 +412,17 @@ router.post('/enroll-face', verifyToken, async (req, res) => {
             { where: { id: targetUser.id } }
         );
 
-        res.status(200).json({ message: "Biometric enrollment successful" });
+        // 3. Ask the AI service to reload its in-memory known-face cache so the newly
+        //    enrolled face is recognised immediately on V-Patrol/Gate Scanner — no AI
+        //    restart needed. A refresh failure must NOT fail the enrolment (the cache
+        //    reloads on the next AI-service restart anyway).
+        try {
+            await axios.get(`${faceAiUrl}/refresh`, { timeout: 5000 });
+            return res.status(200).json({ message: "Biometric enrollment successful" });
+        } catch (refreshErr) {
+            console.warn("AI face-cache refresh failed (enrolment still saved):", refreshErr.message);
+            return res.status(200).json({ message: "Face enrolled, AI cache refresh pending." });
+        }
 
     } catch (error) {
         // Developer log only.

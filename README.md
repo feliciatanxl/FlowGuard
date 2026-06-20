@@ -114,16 +114,17 @@ cd client && npm run dev -- --host
 # Terminal 2 — Backend (Node/Express)
 cd server && node index.js
 
-# Terminal 3 — Facial-recognition AI (InsightFace) — MUST be port 8500
-cd ai-service && uvicorn main:app --host 0.0.0.0 --port 8500 --reload
-
-# Terminal 4 — Object-detection AI (YOLO)   ← confirm exact command + port
-python main.py
+# Terminal 3 — AI service (InsightFace faces + YOLO objects) — MUST be port 8501
+# This ONE service (ai-service/main.py) hosts both the face endpoints
+# (/api/encode-faces, /refresh, /user/recognize) and the YOLO endpoints (/api/yolo/*).
+cd ai-service && uvicorn main:app --host 0.0.0.0 --port 8501 --reload
 ```
 
-> ⚠️ **The face AI must run on port 8500.** The backend calls
-> `http://127.0.0.1:8500/api/encode-faces` directly, so starting it on the default
-> port (8000) silently breaks face enrolment. Swagger docs: `http://127.0.0.1:8500/docs`.
+> ⚠️ **The AI service must run on port 8501.** `FACE_AI_URL` and the frontend Vite
+> `/ai` proxy both target `http://127.0.0.1:8501`, so the backend reaches
+> `http://127.0.0.1:8501/api/encode-faces` and the browser reaches recognition/YOLO
+> through `/ai/...`. Running it on any other port silently breaks enrolment and live
+> recognition. Swagger docs: `http://127.0.0.1:8501/docs`.
 
 **Seed a demo login:** run `node seed.js` once inside `server/` to create the FM admin
 account → `admin@harrison.com` / `Admin123!`. Change the password after first login.

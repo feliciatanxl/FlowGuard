@@ -117,10 +117,15 @@ async def encode_faces(images: FaceImages):
         avg_vector = avg_vector / np.linalg.norm(avg_vector)
         
         return {"status": "success", "vector": avg_vector.tolist()}
-        
+
+    except HTTPException:
+        # Re-raise intentional client errors (e.g. 400 "No face detected") unchanged,
+        # so the broad handler below does not convert them into a 500.
+        raise
     except Exception as e:
+        # Unexpected failure — log the real error for developers, return a safe message.
         print(f"Encode Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to process facial images.")
 
 
 app.add_middleware(
@@ -763,4 +768,8 @@ async def yolo_people_count():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8500, reload=False)
+    # Port 8501 to match FACE_AI_URL and the frontend Vite "/ai" proxy.
+    # NOTE: this single service hosts BOTH the face-recognition endpoints
+    # (/api/encode-faces, /refresh, /user/recognize) and the YOLO endpoints
+    # (/api/yolo/*), so the whole "/ai" proxy resolves here on one port.
+    uvicorn.run("main:app", host="0.0.0.0", port=8501, reload=False)
