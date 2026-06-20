@@ -1,12 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const { User, Attendance, Invite } = require('../models');
+const { User, Attendance, Invite, SecurityLog } = require('../models');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const yup = require('yup');
 const axios = require('axios');
 const crypto = require('crypto');
-const { verifyToken } = require('../middlewares/auth');
+const { verifyToken, requireRole } = require('../middlewares/auth');
 require('dotenv').config();
 
 // --- MIDDLEWARE ---
@@ -174,7 +174,8 @@ router.put("/generate-code", authenticateToken, async (req, res) => {
 
         res.json({ companyCode: newCode });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err);
+        res.status(500).json({ error: "Internal server error." });
     }
 });
 
@@ -244,7 +245,8 @@ router.get("/my-code", authenticateToken, async (req, res) => {
         });
         res.json(user);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err);
+        res.status(500).json({ error: "Internal server error." });
     }
 });
 
@@ -256,7 +258,8 @@ router.get("/my-staff", authenticateToken, async (req, res) => {
         });
         res.json(myStaff);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err);
+        res.status(500).json({ error: "Internal server error." });
     }
 });
 
@@ -284,7 +287,8 @@ router.get("/", authenticateToken, async (req, res) => {
 
         res.json(userList);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err);
+        res.status(500).json({ error: "Internal server error." });
     }
 });
 
@@ -298,11 +302,12 @@ router.put("/suspend/:id", authenticateToken, async (req, res) => {
         await user.update({ isActive: !user.isActive });
         res.json({ message: `User status updated to ${user.isActive ? 'Active' : 'Suspended'}` });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err);
+        res.status(500).json({ error: "Internal server error." });
     }
 });
 
-router.get("/logs/:id", authenticateToken, async (req, res) => {
+router.get("/logs/:id", authenticateToken, requireRole('FM'), async (req, res) => {
     try {
         const logs = await Attendance.findAll({
             where: { userId: req.params.id },
@@ -311,7 +316,8 @@ router.get("/logs/:id", authenticateToken, async (req, res) => {
         });
         res.json(logs);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err);
+        res.status(500).json({ error: "Internal server error." });
     }
 });
 
@@ -331,11 +337,28 @@ router.delete("/:id", authenticateToken, async (req, res) => {
             return res.status(403).json({ message: "Unauthorized action." });
         }
 
+        // --- PDPA-COMPLIANT OFF-BOARDING (data minimisation) ---
+        // 1. Explicitly wipe the biometric vector before removing the row, so the
+        //    face embedding can never linger even if the delete is interrupted.
+        await staffMember.update({ faceVector: null, isEnrolled: false });
+
+        // 2. Hard-delete the user record + their attendance trail (cascade).
         await Attendance.destroy({ where: { userId: staffMember.id } });
+
+        // 3. Anonymise — not delete — the security/access logs that referenced this
+        //    person. We keep the events for the security audit trail, but strip the
+        //    PII (name) so no biometric-linked identity remains. SecurityLog links by
+        //    name (no FK), so we match on the stored personnelName.
+        await SecurityLog.update(
+            { personnelName: null },
+            { where: { personnelName: staffMember.name } }
+        );
+
         await staffMember.destroy();
-        res.json({ message: "Removed successfully." });
+        res.json({ message: "Removed successfully. Biometric data wiped and access logs anonymised." });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(err);
+        res.status(500).json({ error: "Internal server error." });
     }
 });
 
@@ -367,33 +390,61 @@ router.post('/enroll-face', verifyToken, async (req, res) => {
 
         console.log(`Starting face enrollment for User ID: ${targetUser.id}`);
 
-        // 1. Send the images to the Python AI service
-        const faceAiUrl = process.env.FACE_AI_URL || 'http://127.0.0.1:8500';
+        // 1. Send the images to the Python face AI service (with a timeout so we never hang).
+        //    FACE_AI_URL is a BASE url (e.g. http://127.0.0.1:8501); endpoint paths are appended.
+        const faceAiUrl = process.env.FACE_AI_URL || 'http://127.0.0.1:8501';
         const pythonResponse = await axios.post(`${faceAiUrl}/api/encode-faces`, {
             front: images.front,
             left: images.left,
             right: images.right
-        });
+        }, { timeout: 20000 });
 
-        const faceVector = pythonResponse.data.vector; // The 512-number array
+        const faceVector = pythonResponse.data?.vector; // The 512-number array
+
+        // Guard against an unexpected/empty AI response so we don't store junk.
+        if (!Array.isArray(faceVector) || faceVector.length === 0) {
+            return res.status(502).json({ error: "Unexpected response from facial recognition service." });
+        }
 
         // 2. Save to PostgreSQL using Sequelize
         await User.update(
-            {
-                faceVector: faceVector,
-                isEnrolled: true
-            },
-            {
-                where: { id: targetUser.id }
-            }
+            { faceVector, isEnrolled: true },
+            { where: { id: targetUser.id } }
         );
 
-        res.status(200).json({ message: "Biometric enrollment successful" });
+        // 3. Ask the AI service to reload its in-memory known-face cache so the newly
+        //    enrolled face is recognised immediately on V-Patrol/Gate Scanner — no AI
+        //    restart needed. A refresh failure must NOT fail the enrolment (the cache
+        //    reloads on the next AI-service restart anyway).
+        try {
+            await axios.get(`${faceAiUrl}/refresh`, { timeout: 5000 });
+            return res.status(200).json({ message: "Biometric enrollment successful" });
+        } catch (refreshErr) {
+            console.warn("AI face-cache refresh failed (enrolment still saved):", refreshErr.message);
+            return res.status(200).json({ message: "Face enrolled, AI cache refresh pending." });
+        }
 
     } catch (error) {
+        // Developer log only.
         console.error("Enrollment Error:", error.response ? error.response.data : error.message);
-        const pythonError = error.response?.data?.detail || "Failed to generate biometric vector.";
-        res.status(500).json({ error: pythonError });
+
+        // AI service offline / unreachable / timed out → 503 (clear, not a generic 500).
+        const isConnError = !error.response &&
+            ['ECONNREFUSED', 'ECONNABORTED', 'ETIMEDOUT', 'ENOTFOUND'].includes(error.code);
+        if (isConnError) {
+            return res.status(503).json({ error: "Facial recognition service is offline. Please try again shortly." });
+        }
+
+        // AI service replied with an error (e.g. 400 "No face detected") → forward its status.
+        if (error.response) {
+            const status = error.response.status === 400 ? 400 : 502;
+            return res.status(status).json({
+                error: error.response.data?.detail || "Failed to generate biometric vector."
+            });
+        }
+
+        // Anything else → safe generic 500.
+        res.status(500).json({ error: "Failed to generate biometric vector." });
     }
 });
 

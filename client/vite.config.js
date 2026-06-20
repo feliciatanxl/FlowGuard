@@ -19,7 +19,7 @@ export default defineConfig({
       },
       // 🎯 ADD THIS: Special secure proxy highway directly to Python
       '/ai': {
-        target: 'http://localhost:8500', 
+        target: 'http://localhost:8501', 
         changeOrigin: true,
         secure: false,
         rewrite: (path) => path.replace(/^\/ai/, '') // Strips '/ai' before hitting Python

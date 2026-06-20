@@ -97,9 +97,12 @@ const Attendance = () => {
             <button onClick={fetchAttendanceData} className="launch-terminal-btn" style={{ background: '#334155' }}>
               Refresh
             </button>
-            <button onClick={() => navigate('/gate-scanner')} className="launch-terminal-btn">
-              Launch Gate Terminal
-            </button>
+            {/* Gate terminal is an FM/Staff operational tool — hide from Tenants who cannot open it */}
+            {userRole === 'FM' && (
+              <button onClick={() => navigate('/gate-scanner')} className="launch-terminal-btn">
+                Launch Gate Terminal
+              </button>
+            )}
           </div>
         </header>
 

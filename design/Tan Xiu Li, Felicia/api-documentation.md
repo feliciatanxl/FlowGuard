@@ -42,19 +42,29 @@ Reloads enrolled embeddings from the DB. → `{ message }`
 ### POST `/attendance/scan`
 Records an IN/OUT attendance event from a recognised face.
 
-## Security Logs
+## Security Logs  🔒
+All `/security/*` routes now require a valid JWT (`router.use(verifyToken)`).
 
 ### POST `/security/logs`
-Create a security/access event. → `201 { log }`
+Create a security/access event (used by the AI gantry — automatic task). Safe events are
+stored as `reviewStatus: 'Resolved'`; non-safe events default to `'Pending Review'`.
+→ `201 { log }`
 
 ### GET `/security/logs`
-List events for the V-Patrol dashboard (timeline + alerts).
+List events for the V-Patrol dashboard / review queue.
+- Query: `?status=<Pending Review|False Positive|Escalated|Resolved>` and `?limit=<n≤200>`
+- `200` array of logs · `400` invalid status filter
 
 ### GET `/security/logs/personnel/:name`
 Events filtered by personnel name.
 
 ### GET `/security/logs/user/:id`
 Events for a specific user id.
+
+### PATCH `/security/logs/:id/review`  🔒 FM-only
+**Manual task** — an FM triages a suspicious log.
+- Body: `{ "reviewStatus": "Escalated", "reviewNotes": "..." }`
+- `200 { log }` · `400` invalid/missing status · `403` non-FM · `404` log not found
 
 ## Access & User Management  🔒
 
@@ -77,6 +87,8 @@ Toggle a user's active status (soft access revocation).
 Access history for a user.
 
 ### DELETE `/user/:id`
-Hard-delete a user + biometric data (PDPA off-boarding).
+PDPA off-boarding. Wipes `faceVector`, hard-deletes the user + attendance trail, and
+**anonymises** (nulls `personnelName` on) the user's security logs so the audit trail is
+kept but no biometric-linked identity remains.
 
 🔒 = requires a valid JWT.
