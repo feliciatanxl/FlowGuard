@@ -180,6 +180,79 @@ router.patch('/:id/cancel', verifyToken, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GATE SCAN — FM/Staff scan/verify a driver pass by booking_ref at the bay.
+//   body: { action: 'entry' | 'exit', observedPlate?: string }
+//   entry: Pending/Confirmed → Arrived (+ WhatsApp arrival)
+//   exit:  Arrived/Confirmed → Completed (+ WhatsApp completed + next-in-line)
+// Plate mismatch is flagged (warn) but does not block. WhatsApp is non-fatal.
+// ---------------------------------------------------------------------------
+router.patch('/:ref/gate-scan', verifyToken, requireRole('FM', 'Staff'), async (req, res) => {
+    try {
+        const { action, observedPlate } = req.body;
+        if (!['entry', 'exit'].includes(action)) {
+            return res.status(400).json({ error: "action must be 'entry' or 'exit'." });
+        }
+
+        const booking = await Booking.findOne({ where: { booking_ref: req.params.ref } });
+        if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+
+        // Optional plate verification (warn-only — never blocks the scan).
+        let plateMatched = null;
+        if (observedPlate && String(observedPlate).trim()) {
+            const norm = (s) => String(s || '').toUpperCase().replace(/\s+/g, '');
+            plateMatched = norm(observedPlate) === norm(booking.license_plate);
+        }
+
+        let whatsappStatus = null;
+        let nextInLine = null;
+
+        if (action === 'entry') {
+            if (booking.status === 'Cancelled' || booking.status === 'Completed') {
+                return res.status(409).json({ error: `Cannot mark arrival: booking is ${booking.status}.`, booking, plateMatched });
+            }
+            await booking.update({ status: 'Arrived', arrived_at: new Date() });
+            try {
+                whatsappStatus = await whatsapp.sendBookingArrived(booking);
+            } catch (waErr) {
+                console.error('WhatsApp notify failed (non-fatal):', waErr.message);
+            }
+        } else { // exit
+            if (booking.status === 'Cancelled') {
+                return res.status(409).json({ error: 'Cannot mark exit: booking is Cancelled.', booking, plateMatched });
+            }
+            if (booking.status === 'Completed') {
+                // Idempotent — already completed, do not re-notify / re-trigger next-in-line.
+                return res.status(200).json({
+                    message: 'Booking already completed.', booking, action,
+                    plateMatched, whatsappStatus: null, nextInLine: null, alreadyCompleted: true
+                });
+            }
+            await booking.update({ status: 'Completed', completed_at: new Date() });
+            try {
+                whatsappStatus = await whatsapp.sendBookingCompleted(booking);
+                const next = await Booking.findOne({
+                    where: { loading_bay: booking.loading_bay, status: { [Op.in]: ['Pending', 'Confirmed'] } },
+                    order: [['slot_start', 'ASC'], ['createdAt', 'ASC']]
+                });
+                if (next) {
+                    await whatsapp.sendNextInLine(next);
+                    nextInLine = next.booking_ref;
+                }
+            } catch (waErr) {
+                console.error('WhatsApp notify failed (non-fatal):', waErr.message);
+            }
+        }
+
+        return res.status(200).json({
+            message: `Gate ${action} recorded.`, booking, action, plateMatched, whatsappStatus, nextInLine
+        });
+    } catch (err) {
+        console.error('Gate scan error:', err);
+        return res.status(500).json({ error: 'Could not process gate scan.' });
+    }
+});
+
+// ---------------------------------------------------------------------------
 // PUBLIC — driver pass lookup by booking_ref. NO auth (driver has no login).
 // MUST stay last so it doesn't shadow '/all' or '/'.
 // ---------------------------------------------------------------------------

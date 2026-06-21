@@ -194,6 +194,119 @@ describe("Booking routes", () => {
   });
 });
 
+describe("Gate scan (entry/exit)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const bookingWith = (status, extra = {}) => ({
+    id: 1, ...validBody, booking_ref: "FG-AAA", status,
+    update: jest.fn().mockResolvedValue(true), ...extra,
+  });
+
+  test("FM marks entry → Arrived (200)", async () => {
+    const b = bookingWith("Confirmed");
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await request(app)
+      .patch("/api/bookings/FG-AAA/gate-scan")
+      .set("Authorization", `Bearer ${tokenFor("FM")}`)
+      .send({ action: "entry" });
+    expect(res.status).toBe(200);
+    expect(b.update).toHaveBeenCalledWith(expect.objectContaining({ status: "Arrived" }));
+  });
+
+  test("Staff marks entry → Arrived (200)", async () => {
+    const b = bookingWith("Pending");
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await request(app)
+      .patch("/api/bookings/FG-AAA/gate-scan")
+      .set("Authorization", `Bearer ${tokenFor("Staff")}`)
+      .send({ action: "entry" });
+    expect(res.status).toBe(200);
+    expect(b.update).toHaveBeenCalledWith(expect.objectContaining({ status: "Arrived" }));
+  });
+
+  test("Tenant cannot gate scan (403)", async () => {
+    const res = await request(app)
+      .patch("/api/bookings/FG-AAA/gate-scan")
+      .set("Authorization", `Bearer ${tokenFor("Tenant")}`)
+      .send({ action: "entry" });
+    expect(res.status).toBe(403);
+    expect(mockBooking.findOne).not.toHaveBeenCalled();
+  });
+
+  test("unauthenticated cannot gate scan (401)", async () => {
+    const res = await request(app).patch("/api/bookings/FG-AAA/gate-scan").send({ action: "entry" });
+    expect(res.status).toBe(401);
+  });
+
+  test("invalid booking ref → 404", async () => {
+    mockBooking.findOne.mockResolvedValueOnce(null);
+    const res = await request(app)
+      .patch("/api/bookings/FG-NONE/gate-scan")
+      .set("Authorization", `Bearer ${tokenFor("FM")}`)
+      .send({ action: "entry" });
+    expect(res.status).toBe(404);
+  });
+
+  test("entry on a Cancelled booking is rejected (409)", async () => {
+    mockBooking.findOne.mockResolvedValueOnce(bookingWith("Cancelled"));
+    const res = await request(app)
+      .patch("/api/bookings/FG-AAA/gate-scan")
+      .set("Authorization", `Bearer ${tokenFor("FM")}`)
+      .send({ action: "entry" });
+    expect(res.status).toBe(409);
+  });
+
+  test("exit → Completed and triggers next-in-line for same bay (200)", async () => {
+    const b = bookingWith("Arrived");
+    mockBooking.findOne
+      .mockResolvedValueOnce(b)                                       // lookup
+      .mockResolvedValueOnce({ id: 2, ...validBody, booking_ref: "FG-NEXT" }); // next-in-line
+    const res = await request(app)
+      .patch("/api/bookings/FG-AAA/gate-scan")
+      .set("Authorization", `Bearer ${tokenFor("Staff")}`)
+      .send({ action: "exit" });
+    expect(res.status).toBe(200);
+    expect(b.update).toHaveBeenCalledWith(expect.objectContaining({ status: "Completed" }));
+    expect(res.body.nextInLine).toBe("FG-NEXT");
+  });
+
+  test("exit on an already-Completed booking does not duplicate (200, no nextInLine)", async () => {
+    mockBooking.findOne.mockResolvedValueOnce(bookingWith("Completed"));
+    const res = await request(app)
+      .patch("/api/bookings/FG-AAA/gate-scan")
+      .set("Authorization", `Bearer ${tokenFor("FM")}`)
+      .send({ action: "exit" });
+    expect(res.status).toBe(200);
+    expect(res.body.alreadyCompleted).toBe(true);
+    expect(res.body.nextInLine).toBeNull();
+    expect(mockBooking.findOne).toHaveBeenCalledTimes(1); // no next-in-line lookup
+  });
+
+  test("plate mismatch is flagged but the scan still succeeds", async () => {
+    const b = bookingWith("Confirmed"); // license_plate = "GBG 1234M"
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await request(app)
+      .patch("/api/bookings/FG-AAA/gate-scan")
+      .set("Authorization", `Bearer ${tokenFor("FM")}`)
+      .send({ action: "entry", observedPlate: "XYZ 0000Z" });
+    expect(res.status).toBe(200);
+    expect(res.body.plateMatched).toBe(false);
+    expect(b.update).toHaveBeenCalledWith(expect.objectContaining({ status: "Arrived" }));
+  });
+
+  test("WhatsApp failure does not fail the gate scan (still 200)", async () => {
+    const b = bookingWith("Confirmed");
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const spy = jest.spyOn(whatsapp, "sendBookingArrived").mockRejectedValueOnce(new Error("boom"));
+    const res = await request(app)
+      .patch("/api/bookings/FG-AAA/gate-scan")
+      .set("Authorization", `Bearer ${tokenFor("FM")}`)
+      .send({ action: "entry" });
+    expect(res.status).toBe(200);
+    spy.mockRestore();
+  });
+});
+
 describe("WhatsApp service (disabled mode)", () => {
   test("is not configured without WHATSAPP_ENABLED=true", () => {
     expect(whatsapp.isConfigured()).toBe(false);

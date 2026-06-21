@@ -53,6 +53,15 @@ module.exports = (sequelize, DataTypes) => {
         notes: {
             type: DataTypes.TEXT,
             allowNull: true
+        },
+        // Gate-scan timestamps (nullable; set on entry/exit scans).
+        arrived_at: {
+            type: DataTypes.DATE,
+            allowNull: true
+        },
+        completed_at: {
+            type: DataTypes.DATE,
+            allowNull: true
         }
     }, {
         tableName: 'bookings',

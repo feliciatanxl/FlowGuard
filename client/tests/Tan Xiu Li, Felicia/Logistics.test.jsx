@@ -10,6 +10,7 @@ vi.mock("axios", () => ({
 }));
 
 import TenantLogistics from "../../src/pages/TenantLogistics";
+import axios from "axios";
 
 const renderPage = () => render(<MemoryRouter><TenantLogistics /></MemoryRouter>);
 
@@ -67,6 +68,34 @@ describe("Logistics page", () => {
     localStorage.setItem("userRole", "Tenant");
     renderPage();
     expect(screen.getByRole("button", { name: /New Booking/i })).toBeTruthy();
+  });
+
+  test("FM sees the Gate Scan control", () => {
+    renderPage();
+    expect(screen.getByRole("button", { name: /Gate Scan/i })).toBeTruthy();
+  });
+
+  test("Tenant does NOT see the Gate Scan control", () => {
+    localStorage.setItem("userRole", "Tenant");
+    renderPage();
+    expect(screen.queryByRole("button", { name: /Gate Scan/i })).toBeNull();
+  });
+
+  test("Gate Scan modal opens and submitting entry calls the gate-scan API", async () => {
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /Gate Scan/i }));
+    expect(await screen.findByText(/Loading Bay Gate Scan/i)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText(/Booking reference/i), { target: { value: "FG-AAA" } });
+    fireEvent.click(screen.getByRole("button", { name: /Mark Arrived/i }));
+
+    await waitFor(() =>
+      expect(axios.patch).toHaveBeenCalledWith(
+        "/api/bookings/FG-AAA/gate-scan",
+        expect.objectContaining({ action: "entry" }),
+        expect.any(Object)
+      )
+    );
   });
 
   test("renders the slot-date filter alongside the other filters", () => {

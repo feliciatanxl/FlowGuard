@@ -1,5 +1,5 @@
 import React from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, useLocation } from 'react-router-dom';
 import Home from './pages/home'; 
 import SystemHealth from './pages/SystemHealth';
 import Contact from './pages/Contact';
@@ -32,6 +32,10 @@ import { ACCESS } from './constants/roles';
 import './App.css';
 
 function App() {
+  const location = useLocation();
+  // Public driver pass is a standalone ticket view — no internal floating assistant.
+  const hideFloatingWidgets = location.pathname.startsWith('/driver-pass');
+
   return (
     <div className="App bg-[#0f172a] min-h-screen text-slate-200 selection:bg-blue-500/30">
       <ErrorBoundary>
@@ -39,7 +43,7 @@ function App() {
         {/* --- Public Routes --- */}
         <Route path="/" element={<Home />} />
         <Route path="/system-health" element={<SystemHealth />} />
-        <Route path="/driver-pass/:bookingId" element={<DriverPass />} />
+        <Route path="/driver-pass/:ref" element={<DriverPass />} />
         <Route path="/contact" element={<Contact />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
@@ -170,7 +174,7 @@ function App() {
       </Routes>
       </ErrorBoundary>
 
-      <AIChatPopup />
+      {!hideFloatingWidgets && <AIChatPopup />}
     </div>
   );
 }
