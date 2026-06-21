@@ -52,6 +52,23 @@ describe("Logistics page", () => {
     expect(screen.queryByText(/Schedule New Delivery/i)).toBeNull();
   });
 
+  test("Staff sees status controls but NOT + New Booking", async () => {
+    localStorage.setItem("userRole", "Staff");
+    mockGet.mockResolvedValueOnce({
+      data: [{ id: 1, booking_ref: "FG-AAA", license_plate: "P1", transport_company: "C1", driver_name: "D1", loading_bay: "Bay A", slot_start: "2026-06-21T09:00", status: "Pending" }],
+    });
+    renderPage();
+    await screen.findByText("FG-AAA");
+    expect(screen.getByRole("button", { name: /Mark Confirmed/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /New Booking/i })).toBeNull();
+  });
+
+  test("Tenant sees + New Booking", () => {
+    localStorage.setItem("userRole", "Tenant");
+    renderPage();
+    expect(screen.getByRole("button", { name: /New Booking/i })).toBeTruthy();
+  });
+
   test("renders the slot-date filter alongside the other filters", () => {
     renderPage();
     expect(screen.getByLabelText(/Filter by slot date/i)).toBeTruthy();

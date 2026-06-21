@@ -77,8 +77,8 @@ const TenantLogistics = () => {
     setSubmitting(true);
     setError('');
     try {
-      await axios.post('/api/bookings/create', form, authHeader);
-      setNotice('Booking created (status: Pending).');
+      const res = await axios.post('/api/bookings/create', form, authHeader);
+      setNotice(`Booking created (status: Pending).${describeWhatsapp(res.data?.whatsapp)}`);
       setForm(emptyForm);
       setIsFormOpen(false);
       fetchBookings();

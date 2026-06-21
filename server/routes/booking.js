@@ -65,7 +65,15 @@ router.post('/create', verifyToken, requireRole('FM', 'Tenant'), async (req, res
             status: 'Pending'
         });
 
-        res.status(201).json({ message: 'Booking created.', booking });
+        // Confirmation to the driver — non-fatal (must never fail the booking).
+        let whatsappResult = null;
+        try {
+            whatsappResult = await whatsapp.sendBookingCreated(booking);
+        } catch (waErr) {
+            console.error('WhatsApp notify failed (non-fatal):', waErr.message);
+        }
+
+        res.status(201).json({ message: 'Booking created.', booking, whatsapp: whatsappResult });
     } catch (err) {
         console.error('Booking create error:', err);
         res.status(500).json({ error: 'Internal server error while creating booking.' });
@@ -117,18 +125,28 @@ router.patch('/:id/status', verifyToken, requireRole('FM', 'Staff'), async (req,
         let whatsappResult = null;
         let nextInLine = null;
 
-        if (status === 'Confirmed') {
-            whatsappResult = await whatsapp.sendBookingConfirmed(booking);
-        } else if (status === 'Completed') {
-            // Vehicle left the bay → alert the next waiting booking for the same bay.
-            const next = await Booking.findOne({
-                where: { loading_bay: booking.loading_bay, status: { [Op.in]: ['Pending', 'Confirmed'] } },
-                order: [['slot_start', 'ASC'], ['createdAt', 'ASC']]
-            });
-            if (next) {
-                whatsappResult = await whatsapp.sendNextInLine(next);
-                nextInLine = next.booking_ref;
+        // All WhatsApp sends are non-fatal — a failure must never fail the status update.
+        try {
+            if (status === 'Confirmed') {
+                whatsappResult = await whatsapp.sendBookingConfirmed(booking);
+            } else if (status === 'Arrived') {
+                whatsappResult = await whatsapp.sendBookingArrived(booking);
+            } else if (status === 'Cancelled') {
+                whatsappResult = await whatsapp.sendBookingCancelled(booking);
+            } else if (status === 'Completed') {
+                // Notify the leaving driver, then alert the next waiting booking for the same bay.
+                whatsappResult = await whatsapp.sendBookingCompleted(booking);
+                const next = await Booking.findOne({
+                    where: { loading_bay: booking.loading_bay, status: { [Op.in]: ['Pending', 'Confirmed'] } },
+                    order: [['slot_start', 'ASC'], ['createdAt', 'ASC']]
+                });
+                if (next) {
+                    await whatsapp.sendNextInLine(next);
+                    nextInLine = next.booking_ref;
+                }
             }
+        } catch (waErr) {
+            console.error('WhatsApp notify failed (non-fatal):', waErr.message);
         }
 
         res.status(200).json({ message: `Booking ${status}.`, booking, whatsapp: whatsappResult, nextInLine });

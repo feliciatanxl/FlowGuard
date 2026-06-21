@@ -53,6 +53,35 @@ describe("Booking routes", () => {
     expect(mockBooking.create).toHaveBeenCalledWith(expect.objectContaining({ status: "Pending" }));
   });
 
+  test("POST /create triggers a (simulated) WhatsApp confirmation", async () => {
+    mockBooking.create.mockResolvedValue({ id: 1, ...validBody, booking_ref: "FG-AAA", status: "Pending" });
+    const res = await request(app)
+      .post("/api/bookings/create")
+      .set("Authorization", `Bearer ${tokenFor("FM")}`)
+      .send(validBody);
+    expect(res.status).toBe(201);
+    expect(res.body.whatsapp).toEqual(expect.objectContaining({ simulated: true, success: true }));
+  });
+
+  test("POST /create is forbidden for Staff (403)", async () => {
+    const res = await request(app)
+      .post("/api/bookings/create")
+      .set("Authorization", `Bearer ${tokenFor("Staff")}`)
+      .send(validBody);
+    expect(res.status).toBe(403);
+    expect(mockBooking.create).not.toHaveBeenCalled();
+  });
+
+  test("POST /create lets a Tenant create their own booking (tenantId set)", async () => {
+    mockBooking.create.mockResolvedValue({ id: 2, ...validBody, booking_ref: "FG-TEN", status: "Pending" });
+    const res = await request(app)
+      .post("/api/bookings/create")
+      .set("Authorization", `Bearer ${tokenFor("Tenant")}`)
+      .send(validBody);
+    expect(res.status).toBe(201);
+    expect(mockBooking.create).toHaveBeenCalledWith(expect.objectContaining({ tenantId: 7 }));
+  });
+
   test("GET / requires authentication (401)", async () => {
     const res = await request(app).get("/api/bookings/");
     expect(res.status).toBe(401);
@@ -93,6 +122,40 @@ describe("Booking routes", () => {
       .send({ status: "Completed" });
     expect(res.status).toBe(200);
     expect(res.body.nextInLine).toBe("FG-NEXT");
+  });
+
+  test("PATCH /:id/status to Arrived notifies the driver (200)", async () => {
+    const update = jest.fn().mockResolvedValue(true);
+    mockBooking.findByPk.mockResolvedValue({ id: 1, ...validBody, booking_ref: "FG-AAA", update });
+    const res = await request(app)
+      .patch("/api/bookings/1/status")
+      .set("Authorization", `Bearer ${tokenFor("Staff")}`)
+      .send({ status: "Arrived" });
+    expect(res.status).toBe(200);
+    expect(res.body.whatsapp).toEqual(expect.objectContaining({ simulated: true }));
+  });
+
+  test("PATCH /:id/status to Cancelled notifies the driver (200)", async () => {
+    const update = jest.fn().mockResolvedValue(true);
+    mockBooking.findByPk.mockResolvedValue({ id: 1, ...validBody, booking_ref: "FG-AAA", update });
+    const res = await request(app)
+      .patch("/api/bookings/1/status")
+      .set("Authorization", `Bearer ${tokenFor("FM")}`)
+      .send({ status: "Cancelled" });
+    expect(res.status).toBe(200);
+    expect(update).toHaveBeenCalledWith({ status: "Cancelled" });
+  });
+
+  test("WhatsApp failure does NOT fail the status update (still 200)", async () => {
+    const update = jest.fn().mockResolvedValue(true);
+    mockBooking.findByPk.mockResolvedValue({ id: 1, ...validBody, booking_ref: "FG-AAA", update });
+    const spy = jest.spyOn(whatsapp, "sendBookingConfirmed").mockRejectedValueOnce(new Error("boom"));
+    const res = await request(app)
+      .patch("/api/bookings/1/status")
+      .set("Authorization", `Bearer ${tokenFor("FM")}`)
+      .send({ status: "Confirmed" });
+    expect(res.status).toBe(200);
+    spy.mockRestore();
   });
 
   test("PATCH /:id/status is forbidden for Tenant (403)", async () => {
