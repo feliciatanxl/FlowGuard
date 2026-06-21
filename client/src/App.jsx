@@ -121,8 +121,9 @@ function App() {
             <UserLogs />
           </ProtectedRoute>
         } />
+        {/* Settings: any authenticated user (content inside is role-gated) */}
         <Route path="/settings" element={
-          <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
+          <ProtectedRoute>
             <Settings />
           </ProtectedRoute>
         } />

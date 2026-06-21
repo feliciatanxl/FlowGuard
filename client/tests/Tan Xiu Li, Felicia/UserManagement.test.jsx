@@ -34,6 +34,25 @@ describe("User Management — Add Tenant (FM)", () => {
     expect(screen.getByRole("button", { name: /Add Tenant/i })).toBeTruthy();
   });
 
+  test("User Management does NOT show Re-enroll My Face ID (moved to Settings)", () => {
+    localStorage.setItem("userRole", "FM");
+    renderUsers();
+    expect(screen.queryByText(/Re-enroll My Face ID/i)).toBeNull();
+  });
+
+  test("a user row keeps Logs/Suspend/Delete but no Face ID action", async () => {
+    localStorage.setItem("userRole", "FM");
+    mockGet.mockResolvedValueOnce({
+      data: [{ id: 5, name: "Jane Tan", email: "jane@x.com", role: "Tenant", isActive: true, createdAt: new Date().toISOString(), locationStatus: "Off-Site" }],
+    });
+    renderUsers();
+    await screen.findByText("Jane Tan");
+    expect(screen.getByRole("button", { name: /^Logs$/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Suspend/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Delete/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Face ID$/i })).toBeNull();
+  });
+
   test("non-FM does not see the + Add Tenant button", () => {
     localStorage.setItem("userRole", "Tenant");
     renderUsers();

@@ -51,4 +51,28 @@ describe("Logistics page", () => {
     expect(screen.queryByRole("button", { name: /New Booking/i })).toBeNull();
     expect(screen.queryByText(/Schedule New Delivery/i)).toBeNull();
   });
+
+  test("renders the slot-date filter alongside the other filters", () => {
+    renderPage();
+    expect(screen.getByLabelText(/Filter by slot date/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Filter by status/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Filter by bay/i)).toBeTruthy();
+  });
+
+  test("date filter narrows the table to bookings on that slot date", async () => {
+    mockGet.mockResolvedValueOnce({
+      data: [
+        { id: 1, booking_ref: "FG-AAA", license_plate: "P1", transport_company: "C1", driver_name: "D1", loading_bay: "Bay A", slot_start: "2026-06-21T09:00", status: "Pending" },
+        { id: 2, booking_ref: "FG-BBB", license_plate: "P2", transport_company: "C2", driver_name: "D2", loading_bay: "Bay B", slot_start: "2026-06-22T09:00", status: "Pending" },
+      ],
+    });
+    renderPage();
+    expect(await screen.findByText("FG-AAA")).toBeTruthy();
+    expect(screen.getByText("FG-BBB")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText(/Filter by slot date/i), { target: { value: "2026-06-21" } });
+
+    expect(screen.getByText("FG-AAA")).toBeTruthy();
+    expect(screen.queryByText("FG-BBB")).toBeNull();
+  });
 });

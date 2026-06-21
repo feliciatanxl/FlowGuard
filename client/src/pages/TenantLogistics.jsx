@@ -29,6 +29,7 @@ const TenantLogistics = () => {
   const [searchText, setSearchText] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterBay, setFilterBay] = useState('All');
+  const [filterDate, setFilterDate] = useState(''); // YYYY-MM-DD; empty = all dates
 
   const token = localStorage.getItem('accessToken');
   const role = localStorage.getItem('userRole');
@@ -123,6 +124,15 @@ const TenantLogistics = () => {
     bayB: bookings.filter(b => b.loading_bay === 'Bay B' && !CLOSED.includes(b.status)).length,
   };
 
+  // Local YYYY-MM-DD of a booking's slot start (matches the date input + displayed Slot).
+  const slotDateKey = (b) => {
+    if (!b.slot_start) return '';
+    const d = new Date(b.slot_start);
+    if (isNaN(d.getTime())) return String(b.slot_start).slice(0, 10);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+
   // --- Frontend filtering ---
   const q = searchText.trim().toLowerCase();
   const filtered = bookings.filter((b) => {
@@ -130,7 +140,8 @@ const TenantLogistics = () => {
       .some(v => String(v || '').toLowerCase().includes(q));
     const matchesStatus = filterStatus === 'All' || b.status === filterStatus;
     const matchesBay = filterBay === 'All' || b.loading_bay === filterBay;
-    return matchesQ && matchesStatus && matchesBay;
+    const matchesDate = !filterDate || slotDateKey(b) === filterDate;
+    return matchesQ && matchesStatus && matchesBay && matchesDate;
   });
 
   return (
@@ -192,12 +203,22 @@ const TenantLogistics = () => {
             <option value="All">All bays</option>
             {BAYS.map(b => <option key={b} value={b}>{b}</option>)}
           </select>
+          <input
+            type="date"
+            className="logistics-filter logistics-date"
+            value={filterDate}
+            onChange={(e) => setFilterDate(e.target.value)}
+            aria-label="Filter by slot date"
+          />
+          {filterDate && (
+            <button type="button" className="edit-btn" onClick={() => setFilterDate('')} aria-label="Clear date filter">
+              Clear date
+            </button>
+          )}
         </div>
 
-        {/* Booking list */}
-        <div className="booking-card active-bookings">
-          <h2>{role === 'Tenant' ? 'My Bookings' : "Today's Bay Queue"}</h2>
-
+        {/* Booking list — plain table styled like Workforce Attendance (no bulky card/heading) */}
+        <div className="active-bookings">
           {loading ? (
             <p style={{ padding: '24px', color: '#94a3b8' }}>Loading bookings...</p>
           ) : bookings.length === 0 ? (

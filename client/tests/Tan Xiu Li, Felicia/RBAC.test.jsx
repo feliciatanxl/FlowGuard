@@ -84,12 +84,12 @@ describe("Sidebar visibility by role", () => {
     expect(screen.queryByText("User Management")).toBeNull();
     expect(screen.queryByText("Security Review")).toBeNull();
     expect(screen.queryByText("Tenant Onboarding")).toBeNull();
-    expect(screen.queryByText("Settings")).toBeNull();
     expect(screen.queryByText("V-Patrol")).toBeNull();
     expect(screen.queryByText("Cameras")).toBeNull();
-    // ...but DOES see its own areas
+    // ...but DOES see its own areas + Settings (visible to all authenticated roles)
     expect(screen.getByText("Daily Attendance")).toBeTruthy();
     expect(screen.getByText("My Staff")).toBeTruthy();
+    expect(screen.getByText("Settings")).toBeTruthy();
   });
 
   test("Staff sees monitoring links but NOT admin links", () => {
@@ -98,8 +98,9 @@ describe("Sidebar visibility by role", () => {
     expect(screen.getByText("V-Patrol")).toBeTruthy();
     expect(screen.getByText("Gate Scanner")).toBeTruthy();
     expect(screen.queryByText("User Management")).toBeNull();
-    expect(screen.queryByText("Settings")).toBeNull();
     expect(screen.queryByText("My Staff")).toBeNull();
+    // Settings is visible to all authenticated roles
+    expect(screen.getByText("Settings")).toBeTruthy();
   });
 
   test("FM sees the full admin menu", () => {

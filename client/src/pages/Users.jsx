@@ -82,15 +82,6 @@ const Users = () => {
     setModal({ isOpen: false, user: null, action: null });
   };
 
-  const handleReEnroll = (user) => {
-    const params = new URLSearchParams({
-      userId: user.id,
-      name: user.name,
-      returnTo: '/users'
-    });
-    navigate(`/enrollment?${params.toString()}`);
-  };
-
   const handleConfirmAction = async () => {
     const { id, isActive, name } = modal.user;
 
@@ -272,15 +263,6 @@ const Users = () => {
                               </button>
 
                               <button
-                                className={`action-btn action-bio ${isSelf ? 'disabled-action' : ''}`}
-                                onClick={() => !isSelf && handleReEnroll(u)}
-                                disabled={isSelf}
-                                title={isSelf ? "Use the page header to re-enroll your own Face ID" : `Re-enroll Face ID for ${u.name}`}
-                              >
-                                Face ID
-                              </button>
-                              
-                              <button 
                                 className={`action-btn ${u.isActive === false ? 'action-restore' : 'action-warning'} ${isSelf ? 'disabled-action' : ''}`}
                                 onClick={() => !isSelf && openModal(u, 'suspend')}
                                 disabled={isSelf}

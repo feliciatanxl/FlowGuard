@@ -85,9 +85,11 @@ const Sidebar = () => {
               <NavLink to="/users" onClick={() => setIsOpen(false)}>User Management</NavLink>
               <NavLink to="/security-review" onClick={() => setIsOpen(false)}>Security Review</NavLink>
               <NavLink to="/tenant-management" onClick={() => setIsOpen(false)}>Tenant Onboarding</NavLink>
-              <NavLink to="/settings" onClick={() => setIsOpen(false)}>Settings</NavLink>
             </>
           )}
+
+          {/* Settings — all authenticated roles (content inside is role-gated) */}
+          <NavLink to="/settings" onClick={() => setIsOpen(false)}>Settings</NavLink>
         </nav>
 
         <div className="sidebar-bottom">
