@@ -1,6 +1,6 @@
 // Frontend tests — Smart Logistics page renders, with loading → empty state.
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { vi, describe, test, expect, beforeEach } from "vitest";
 
@@ -26,9 +26,17 @@ describe("Logistics page", () => {
     expect(screen.getByText(/Loading Bay Logistics/i)).toBeTruthy();
   });
 
-  test("shows the create-booking form for FM", () => {
+  test("shows the + New Booking button for FM, with the form hidden by default", () => {
     renderPage();
-    expect(screen.getByText(/Schedule New Delivery/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /New Booking/i })).toBeTruthy();
+    // The form lives in a modal and should NOT be on screen until opened.
+    expect(screen.queryByText(/Schedule New Delivery/i)).toBeNull();
+  });
+
+  test("opens the booking form modal when + New Booking is clicked", async () => {
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /New Booking/i }));
+    expect(await screen.findByText(/Schedule New Delivery/i)).toBeTruthy();
   });
 
   test("calls the bookings API and shows the empty state when there are none", async () => {
@@ -37,9 +45,10 @@ describe("Logistics page", () => {
     expect(await screen.findByText(/No bookings scheduled yet/i)).toBeTruthy();
   });
 
-  test("hides the create form from Staff (operational view only)", () => {
+  test("hides + New Booking from Staff (operational view only)", () => {
     localStorage.setItem("userRole", "Staff");
     renderPage();
+    expect(screen.queryByRole("button", { name: /New Booking/i })).toBeNull();
     expect(screen.queryByText(/Schedule New Delivery/i)).toBeNull();
   });
 });

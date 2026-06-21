@@ -77,7 +77,8 @@ const TenantManagement = () => {
 
             {/* --- SUB ROW: Secondary info text --- */}
             <p style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '25px' }}>
-                Each code is one-time use and expires in 48 hours.
+                Each code is one-time use and expires in 48 hours. New unit owners use this
+                invite code for secure self-registration — accounts are not created manually.
             </p>
 
             {/* --- ACTION ROW: Code Display and Button --- */}

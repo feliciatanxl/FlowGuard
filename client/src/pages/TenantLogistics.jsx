@@ -6,7 +6,9 @@ import '../css/Management.css';
 import '../css/Booking.css';
 
 const BAYS = ['Bay A', 'Bay B'];
+const STATUSES = ['Pending', 'Confirmed', 'Arrived', 'Completed', 'Cancelled'];
 const STATUS_FLOW = { Pending: 'Confirmed', Confirmed: 'Arrived', Arrived: 'Completed' };
+const CLOSED = ['Completed', 'Cancelled'];
 
 const emptyForm = {
   transport_company: '', license_plate: '', driver_phone: '',
@@ -20,6 +22,13 @@ const TenantLogistics = () => {
   const [notice, setNotice] = useState('');
   const [form, setForm] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
+
+  // Booking form is hidden by default and opens in a modal (keeps the list roomy).
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  // Frontend-only filtering (backend has no booking filter endpoint).
+  const [searchText, setSearchText] = useState('');
+  const [filterStatus, setFilterStatus] = useState('All');
+  const [filterBay, setFilterBay] = useState('All');
 
   const token = localStorage.getItem('accessToken');
   const role = localStorage.getItem('userRole');
@@ -53,6 +62,9 @@ const TenantLogistics = () => {
 
   const onField = (e) => setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
 
+  const openForm = () => { setError(''); setForm(emptyForm); setIsFormOpen(true); };
+  const closeForm = () => setIsFormOpen(false);
+
   const describeWhatsapp = (wa) => {
     if (!wa) return '';
     if (wa.simulated) return ' (WhatsApp simulated — disabled)';
@@ -67,6 +79,7 @@ const TenantLogistics = () => {
       await axios.post('/api/bookings/create', form, authHeader);
       setNotice('Booking created (status: Pending).');
       setForm(emptyForm);
+      setIsFormOpen(false);
       fetchBookings();
     } catch (err) {
       const msg = err.response?.data?.error || 'Failed to create booking.';
@@ -102,6 +115,24 @@ const TenantLogistics = () => {
     catch { return b.slot_start; }
   };
 
+  // --- Summary stats (from the full list) ---
+  const stats = {
+    total: bookings.length,
+    pending: bookings.filter(b => b.status === 'Pending').length,
+    bayA: bookings.filter(b => b.loading_bay === 'Bay A' && !CLOSED.includes(b.status)).length,
+    bayB: bookings.filter(b => b.loading_bay === 'Bay B' && !CLOSED.includes(b.status)).length,
+  };
+
+  // --- Frontend filtering ---
+  const q = searchText.trim().toLowerCase();
+  const filtered = bookings.filter((b) => {
+    const matchesQ = !q || [b.booking_ref, b.license_plate, b.transport_company, b.driver_name]
+      .some(v => String(v || '').toLowerCase().includes(q));
+    const matchesStatus = filterStatus === 'All' || b.status === filterStatus;
+    const matchesBay = filterBay === 'All' || b.loading_bay === filterBay;
+    return matchesQ && matchesStatus && matchesBay;
+  });
+
   return (
     <div className="dashboard-layout">
       <Sidebar />
@@ -111,16 +142,124 @@ const TenantLogistics = () => {
             <h1>Loading Bay Logistics</h1>
             <p>Smart queue management for the {BAYS.length} loading bays — book slots and avoid congestion</p>
           </div>
-          <button className="edit-btn" onClick={fetchBookings}>Refresh</button>
+          <div className="header-actions">
+            <button className="edit-btn" onClick={fetchBookings}>Refresh</button>
+            {canCreate && (
+              <button className="new-booking-btn" onClick={openForm}>+ New Booking</button>
+            )}
+          </div>
         </header>
 
         {notice && <div className="toast-notification">{notice}</div>}
-        {error && <div className="error-banner" style={{ margin: '0 0 16px' }}>⚠️ {error}</div>}
+        {error && !isFormOpen && <div className="error-banner" style={{ margin: '0 0 16px' }}>⚠️ {error}</div>}
 
-        <div className="booking-grid">
-          {canCreate && (
-            <div className="booking-card form-section">
-              <h2>Schedule New Delivery</h2>
+        {/* Summary cards */}
+        <div className="logistics-stats">
+          <div className="logistics-stat-card">
+            <div className="stat-value">{stats.total}</div>
+            <div className="stat-label">Today's Bookings</div>
+          </div>
+          <div className="logistics-stat-card">
+            <div className="stat-value">{stats.pending}</div>
+            <div className="stat-label">Pending</div>
+          </div>
+          <div className="logistics-stat-card">
+            <div className="stat-value">{stats.bayA}</div>
+            <div className="stat-label">Bay A Active</div>
+          </div>
+          <div className="logistics-stat-card">
+            <div className="stat-value">{stats.bayB}</div>
+            <div className="stat-label">Bay B Active</div>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="logistics-toolbar">
+          <div className="logistics-search">
+            <input
+              type="text"
+              placeholder="Search ref / plate / company / driver..."
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              aria-label="Search bookings"
+            />
+          </div>
+          <select className="logistics-filter" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} aria-label="Filter by status">
+            <option value="All">All statuses</option>
+            {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select className="logistics-filter" value={filterBay} onChange={(e) => setFilterBay(e.target.value)} aria-label="Filter by bay">
+            <option value="All">All bays</option>
+            {BAYS.map(b => <option key={b} value={b}>{b}</option>)}
+          </select>
+        </div>
+
+        {/* Booking list */}
+        <div className="booking-card active-bookings">
+          <h2>{role === 'Tenant' ? 'My Bookings' : "Today's Bay Queue"}</h2>
+
+          {loading ? (
+            <p style={{ padding: '24px', color: '#94a3b8' }}>Loading bookings...</p>
+          ) : bookings.length === 0 ? (
+            <p style={{ padding: '24px', color: '#94a3b8' }}>No bookings scheduled yet.</p>
+          ) : filtered.length === 0 ? (
+            <p style={{ padding: '24px', color: '#94a3b8' }}>No bookings match your filters.</p>
+          ) : (
+            <div className="table-container">
+              <table className="management-table">
+                <thead>
+                  <tr>
+                    <th>Ref</th><th>Plate</th><th>Company</th><th>Driver</th><th>Bay</th>
+                    <th>Slot</th><th>Status</th><th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((b) => {
+                    const nextStatus = STATUS_FLOW[b.status];
+                    const isClosed = CLOSED.includes(b.status);
+                    return (
+                      <tr key={b.id}>
+                        <td data-label="Ref" style={{ fontFamily: 'monospace' }}>{b.booking_ref}</td>
+                        <td data-label="Plate">{b.license_plate}</td>
+                        <td data-label="Company">{b.transport_company}</td>
+                        <td data-label="Driver">{b.driver_name || '—'}</td>
+                        <td data-label="Bay">{b.loading_bay}</td>
+                        <td data-label="Slot">{fmtSlot(b)}</td>
+                        <td data-label="Status"><span className={`status-badge ${String(b.status).toLowerCase()}`}>{b.status}</span></td>
+                        <td data-label="Actions">
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {canManage && nextStatus && (
+                              <button className="edit-btn" onClick={() => updateStatus(b.id, nextStatus)}>
+                                Mark {nextStatus}
+                              </button>
+                            )}
+                            {!isClosed && (role === 'FM' || role === 'Tenant') && (
+                              <button className="edit-btn" style={{ background: '#7f1d1d' }} onClick={() => cancelBooking(b.id)}>
+                                Cancel
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Create-booking modal (opens via "+ New Booking") */}
+        {isFormOpen && canCreate && (
+          <div className="modal-overlay" onClick={closeForm}>
+            <div className="modal-content booking-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="booking-modal-head">
+                <h2>Schedule New Delivery</h2>
+                <button className="modal-x" onClick={closeForm} aria-label="Close">✕</button>
+              </div>
+
+              {error && <div className="error-banner" style={{ margin: '0 0 14px' }}>⚠️ {error}</div>}
+
               <form onSubmit={createBooking} className="dark-form">
                 <div className="form-group">
                   <label>Transport Company *</label>
@@ -157,64 +296,16 @@ const TenantLogistics = () => {
                   <label>Notes</label>
                   <input name="notes" value={form.notes} onChange={onField} placeholder="Optional" />
                 </div>
-                <button type="submit" className="submit-booking-btn" disabled={submitting}>
-                  {submitting ? 'Creating...' : 'Create Booking'}
-                </button>
+                <div className="booking-modal-actions">
+                  <button type="button" className="cancel-btn" onClick={closeForm}>Cancel</button>
+                  <button type="submit" className="submit-booking-btn" disabled={submitting}>
+                    {submitting ? 'Creating...' : 'Create Booking'}
+                  </button>
+                </div>
               </form>
             </div>
-          )}
-
-          <div className="booking-card active-bookings" style={{ flex: 1 }}>
-            <h2>{role === 'Tenant' ? 'My Bookings' : "Today's Bay Queue"}</h2>
-
-            {loading ? (
-              <p style={{ padding: '24px', color: '#94a3b8' }}>Loading bookings...</p>
-            ) : bookings.length === 0 ? (
-              <p style={{ padding: '24px', color: '#94a3b8' }}>No bookings scheduled yet.</p>
-            ) : (
-              <div className="table-container">
-                <table className="management-table">
-                  <thead>
-                    <tr>
-                      <th>Ref</th><th>Plate</th><th>Company</th><th>Bay</th>
-                      <th>Slot</th><th>Status</th><th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {bookings.map((b) => {
-                      const nextStatus = STATUS_FLOW[b.status];
-                      const isClosed = b.status === 'Completed' || b.status === 'Cancelled';
-                      return (
-                        <tr key={b.id}>
-                          <td style={{ fontFamily: 'monospace' }}>{b.booking_ref}</td>
-                          <td>{b.license_plate}</td>
-                          <td>{b.transport_company}</td>
-                          <td>{b.loading_bay}</td>
-                          <td>{fmtSlot(b)}</td>
-                          <td><span className={`status-badge ${String(b.status).toLowerCase()}`}>{b.status}</span></td>
-                          <td>
-                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                              {canManage && nextStatus && (
-                                <button className="edit-btn" onClick={() => updateStatus(b.id, nextStatus)}>
-                                  Mark {nextStatus}
-                                </button>
-                              )}
-                              {!isClosed && (role === 'FM' || role === 'Tenant') && (
-                                <button className="edit-btn" style={{ background: '#7f1d1d' }} onClick={() => cancelBooking(b.id)}>
-                                  Cancel
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </div>
-        </div>
+        )}
       </main>
     </div>
   );
