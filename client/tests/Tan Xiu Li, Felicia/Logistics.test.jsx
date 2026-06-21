@@ -46,22 +46,22 @@ describe("Logistics page", () => {
     expect(await screen.findByText(/No bookings scheduled yet/i)).toBeTruthy();
   });
 
-  test("hides + New Booking from Staff (operational view only)", () => {
+  test("Staff SEES + New Booking (can book for their unit)", () => {
     localStorage.setItem("userRole", "Staff");
     renderPage();
-    expect(screen.queryByRole("button", { name: /New Booking/i })).toBeNull();
-    expect(screen.queryByText(/Schedule New Delivery/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /New Booking/i })).toBeTruthy();
   });
 
-  test("Staff sees status controls but NOT + New Booking", async () => {
+  test("Staff does NOT see facility status controls (Mark Arrived/Completed) or Gate Scan", async () => {
     localStorage.setItem("userRole", "Staff");
     mockGet.mockResolvedValueOnce({
       data: [{ id: 1, booking_ref: "FG-AAA", license_plate: "P1", transport_company: "C1", driver_name: "D1", loading_bay: "Bay A", slot_start: "2026-06-21T09:00", status: "Pending" }],
     });
     renderPage();
     await screen.findByText("FG-AAA");
-    expect(screen.getByRole("button", { name: /Mark Confirmed/i })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /New Booking/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Mark Confirmed/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Mark Arrived/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Gate Scan/i })).toBeNull();
   });
 
   test("Tenant sees + New Booking", () => {

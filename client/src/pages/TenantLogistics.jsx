@@ -42,9 +42,9 @@ const TenantLogistics = () => {
   const role = localStorage.getItem('userRole');
   const authHeader = { headers: { Authorization: `Bearer ${token}` } };
 
-  const canManage = role === 'FM' || role === 'Staff';   // status updates
-  const canGateScan = role === 'FM';                     // gate entry/exit — FM only
-  const canCreate = role === 'FM' || role === 'Tenant';  // create bookings
+  const canManage = role === 'FM';                                    // status updates (facility-level) — FM only
+  const canGateScan = role === 'FM';                                  // gate entry/exit — FM only
+  const canCreate = role === 'FM' || role === 'Tenant' || role === 'Staff'; // create bookings (Staff books for their unit)
 
   const fetchBookings = async () => {
     setLoading(true);

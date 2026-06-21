@@ -9,8 +9,9 @@ const mockBooking = {
   findByPk: jest.fn(),
   findOne: jest.fn(),
 };
+const mockUser = { findByPk: jest.fn() };
 
-jest.mock("../../models", () => ({ Booking: mockBooking }));
+jest.mock("../../models", () => ({ Booking: mockBooking, User: mockUser }));
 
 // Ensure WhatsApp runs in disabled/simulated mode (no real sends, no crash).
 delete process.env.WHATSAPP_ENABLED;
@@ -63,13 +64,18 @@ describe("Booking routes", () => {
     expect(res.body.whatsapp).toEqual(expect.objectContaining({ simulated: true, success: true }));
   });
 
-  test("POST /create is forbidden for Staff (403)", async () => {
+  test("Staff CAN create a booking, linked to their tenant/unit (managerId)", async () => {
+    // Staff token id = 7; their managerId (tenant) = 50
+    mockUser.findByPk.mockResolvedValue({ managerId: 50 });
+    mockBooking.create.mockResolvedValue({ id: 3, ...validBody, booking_ref: "FG-STF", status: "Pending" });
     const res = await request(app)
       .post("/api/bookings/create")
       .set("Authorization", `Bearer ${tokenFor("Staff")}`)
       .send(validBody);
-    expect(res.status).toBe(403);
-    expect(mockBooking.create).not.toHaveBeenCalled();
+    expect(res.status).toBe(201);
+    expect(mockBooking.create).toHaveBeenCalledWith(expect.objectContaining({ tenantId: 50, status: "Pending" }));
+    // WhatsApp still fires on a Staff-created booking
+    expect(res.body.whatsapp).toEqual(expect.objectContaining({ simulated: true, success: true }));
   });
 
   test("POST /create lets a Tenant create their own booking (tenantId set)", async () => {
@@ -100,16 +106,25 @@ describe("Booking routes", () => {
     expect(mockBooking.findAll).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: 7 } }));
   });
 
-  test("PATCH /:id/status by Staff updates status + simulates WhatsApp (200)", async () => {
+  test("PATCH /:id/status by FM updates status + simulates WhatsApp (200)", async () => {
     const update = jest.fn().mockResolvedValue(true);
     mockBooking.findByPk.mockResolvedValue({ id: 1, ...validBody, booking_ref: "FG-AAA", update });
     const res = await request(app)
       .patch("/api/bookings/1/status")
-      .set("Authorization", `Bearer ${tokenFor("Staff")}`)
+      .set("Authorization", `Bearer ${tokenFor("FM")}`)
       .send({ status: "Confirmed" });
     expect(res.status).toBe(200);
     expect(update).toHaveBeenCalledWith({ status: "Confirmed" });
     expect(res.body.whatsapp).toEqual(expect.objectContaining({ simulated: true, success: true }));
+  });
+
+  test("PATCH /:id/status is forbidden for Staff (facility-level — FM only) (403)", async () => {
+    const res = await request(app)
+      .patch("/api/bookings/1/status")
+      .set("Authorization", `Bearer ${tokenFor("Staff")}`)
+      .send({ status: "Confirmed" });
+    expect(res.status).toBe(403);
+    expect(mockBooking.findByPk).not.toHaveBeenCalled();
   });
 
   test("PATCH /:id/status to Completed fires a next-in-line alert", async () => {
@@ -124,12 +139,12 @@ describe("Booking routes", () => {
     expect(res.body.nextInLine).toBe("FG-NEXT");
   });
 
-  test("PATCH /:id/status to Arrived notifies the driver (200)", async () => {
+  test("PATCH /:id/status to Arrived notifies the driver (FM, 200)", async () => {
     const update = jest.fn().mockResolvedValue(true);
     mockBooking.findByPk.mockResolvedValue({ id: 1, ...validBody, booking_ref: "FG-AAA", update });
     const res = await request(app)
       .patch("/api/bookings/1/status")
-      .set("Authorization", `Bearer ${tokenFor("Staff")}`)
+      .set("Authorization", `Bearer ${tokenFor("FM")}`)
       .send({ status: "Arrived" });
     expect(res.status).toBe(200);
     expect(res.body.whatsapp).toEqual(expect.objectContaining({ simulated: true }));

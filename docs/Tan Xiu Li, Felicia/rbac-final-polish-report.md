@@ -151,3 +151,44 @@ workforce-wide visibility.
 
 **Tests/build:** `cd server && npm test` → 7 suites, **78 passed** ✅ ·
 `cd client && npm test -- --run` → 11 files, **70 passed** ✅ · `npm run build` → built ✅.
+
+---
+
+## Follow-up: Staff can create bookings, but not control the gate (2026-06-21)
+
+**Staff can assist their tenant by creating delivery/loading bay bookings, while only FM can perform
+gate scan entry/exit.**
+
+**Final Logistics RBAC**
+| Action | FM | Tenant | Staff |
+|--------|:--:|:--:|:--:|
+| View bookings | all | own unit | own unit |
+| Create booking | ✅ | ✅ (own) | ✅ (for their unit) |
+| Cancel booking | ✅ | ✅ (own) | ❌ (no per-creator field — Phase 2) |
+| Mark Arrived / Completed (status) | ✅ | ❌ | ❌ |
+| Gate Scan (entry/exit) | ✅ | ❌ | ❌ |
+| Next-in-line flow | ✅ | — | — |
+
+**What changed**
+- `POST /api/bookings/create` now allows **FM, Tenant, Staff**. A Staff-created booking is linked to
+  their tenant/unit via `resolveTenantId()` — **Staff → their `managerId`** (the tenant they work for),
+  Tenant → self, FM → optional `body.tenantId`. WhatsApp confirmation still fires; Driver Pass QR/link
+  unchanged.
+- Booking list `GET /` is now scoped: FM all; Tenant own (`tenantId = self`); **Staff own unit**
+  (`tenantId = managerId`, `-1` sentinel if no manager → matches nothing). `/all` alias tightened to **FM-only**.
+- `PATCH /:id/status` (Mark Confirmed/Arrived/Completed) is now **FM-only** (was FM+Staff) — facility-level.
+- Gate scan stays **FM-only**.
+- Frontend (`TenantLogistics.jsx`): `canCreate` now includes Staff (+ New Booking shown); `canManage`
+  (status buttons) is FM-only; `canGateScan` FM-only. Staff sees the list + New Booking, but no status
+  buttons and no Gate Scan.
+
+**Note on Staff cancel:** the model tracks ownership at the **unit** level (`tenantId`), not per
+individual creator, so per-Staff "cancel own created" isn't cleanly supported — deferred to Phase 2.
+
+**Files:** `server/routes/booking.js`, `client/src/pages/TenantLogistics.jsx`,
+`server/tests/Tan Xiu Li, Felicia/logistics.test.js`, `client/tests/Tan Xiu Li, Felicia/Logistics.test.jsx`.
+(`Booking.js` model unchanged — `tenantId` already exists; `App.jsx`/`Sidebar.jsx` unchanged — `/logistics`
+is already all-roles.)
+
+**Tests/build:** `cd server && npm test` → 7 suites, **79 passed** ✅ ·
+`cd client && npm test -- --run` → 11 files, **70 passed** ✅ · `npm run build` → built ✅.

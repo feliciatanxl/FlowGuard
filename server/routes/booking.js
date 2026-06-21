@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { Op } = require('sequelize');
-const { Booking } = require('../models');
+const { Booking, User } = require('../models');
 const { verifyToken, requireRole } = require('../middlewares/auth');
 const whatsapp = require('../services/whatsappService');
 
@@ -12,10 +12,23 @@ function genRef() {
     return `FG-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 }
 
+// Resolve which tenant/unit a booking belongs to, based on who is creating it:
+//   Tenant → their own id; Staff → their managerId (the tenant they work for); FM → optional body.tenantId.
+// Returns null if it cannot be determined (FM with no tenantId, or Staff with no manager).
+async function resolveTenantId(user, bodyTenantId) {
+    if (user.role === 'Tenant') return user.id;
+    if (user.role === 'Staff') {
+        const staff = await User.findByPk(user.id, { attributes: ['managerId'] });
+        return staff?.managerId ?? null;
+    }
+    return bodyTenantId || null; // FM
+}
+
 // ---------------------------------------------------------------------------
-// CREATE — FM or Tenant create a loading-bay booking request.  (400 on bad input)
+// CREATE — FM, Tenant, or Staff create a loading-bay booking request. (400 on bad input)
+// Staff may book on behalf of their tenant/unit (booking is linked to their managerId).
 // ---------------------------------------------------------------------------
-router.post('/create', verifyToken, requireRole('FM', 'Tenant'), async (req, res) => {
+router.post('/create', verifyToken, requireRole('FM', 'Tenant', 'Staff'), async (req, res) => {
     try {
         const {
             transport_company, license_plate, driver_phone, loading_bay,
@@ -49,6 +62,10 @@ router.post('/create', verifyToken, requireRole('FM', 'Tenant'), async (req, res
             }
         }
 
+        // Link the booking to a tenant/unit so the right people can see it
+        // (Tenant → self, Staff → their managerId, FM → optional body.tenantId).
+        const tenantId = await resolveTenantId(req.user, req.body.tenantId);
+
         const booking = await Booking.create({
             booking_ref: genRef(),
             transport_company,
@@ -60,8 +77,7 @@ router.post('/create', verifyToken, requireRole('FM', 'Tenant'), async (req, res
             slot_end: slot_end || null,
             notes: notes || null,
             tenant_name: tenant_name || null,
-            // Tenants own their bookings (enables tenant-only read/cancel).
-            tenantId: req.user.role === 'Tenant' ? req.user.id : (req.body.tenantId || null),
+            tenantId,
             status: 'Pending'
         });
 
@@ -81,12 +97,19 @@ router.post('/create', verifyToken, requireRole('FM', 'Tenant'), async (req, res
 });
 
 // ---------------------------------------------------------------------------
-// READ (list) — any authenticated user. FM/Staff see all; Tenant sees own only.
+// READ (list) — FM sees all; Tenant sees own unit; Staff sees their unit's bookings.
 // ---------------------------------------------------------------------------
 router.get('/', verifyToken, async (req, res) => {
     try {
         const where = {};
-        if (req.user.role === 'Tenant') where.tenantId = req.user.id;
+        if (req.user.role === 'Tenant') {
+            where.tenantId = req.user.id;
+        } else if (req.user.role === 'Staff') {
+            // Staff only see bookings for the tenant/unit they belong to.
+            const tenantId = await resolveTenantId(req.user, null);
+            where.tenantId = tenantId ?? -1; // -1 → matches nothing if no manager set
+        }
+        // FM → no filter (all bookings)
         const bookings = await Booking.findAll({ where, order: [['createdAt', 'DESC']], limit: 100 });
         res.status(200).json(bookings);
     } catch (err) {
@@ -95,8 +118,8 @@ router.get('/', verifyToken, async (req, res) => {
     }
 });
 
-// READ (all) — FM/Staff compat alias. Declared BEFORE '/:ref'.
-router.get('/all', verifyToken, requireRole('FM', 'Staff'), async (req, res) => {
+// READ (all) — FM-only compat alias (unscoped). Declared BEFORE '/:ref'.
+router.get('/all', verifyToken, requireRole('FM'), async (req, res) => {
     try {
         const bookings = await Booking.findAll({ order: [['createdAt', 'DESC']], limit: 100 });
         res.status(200).json(bookings);
@@ -107,10 +130,10 @@ router.get('/all', verifyToken, requireRole('FM', 'Staff'), async (req, res) => 
 });
 
 // ---------------------------------------------------------------------------
-// UPDATE status — FM/Staff (Pending → Confirmed → Arrived → Completed).
+// UPDATE status — FM only (facility-level: Pending → Confirmed → Arrived → Completed).
 // Confirmed → WhatsApp slot confirmation. Completed → auto next-in-line alert.
 // ---------------------------------------------------------------------------
-router.patch('/:id/status', verifyToken, requireRole('FM', 'Staff'), async (req, res) => {
+router.patch('/:id/status', verifyToken, requireRole('FM'), async (req, res) => {
     try {
         const { status } = req.body;
         if (!STATUSES.includes(status)) {
