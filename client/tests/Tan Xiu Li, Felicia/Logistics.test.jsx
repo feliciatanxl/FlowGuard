@@ -81,6 +81,12 @@ describe("Logistics page", () => {
     expect(screen.queryByRole("button", { name: /Gate Scan/i })).toBeNull();
   });
 
+  test("Staff does NOT see the Gate Scan control (FM only)", () => {
+    localStorage.setItem("userRole", "Staff");
+    renderPage();
+    expect(screen.queryByRole("button", { name: /Gate Scan/i })).toBeNull();
+  });
+
   test("Gate Scan modal opens and submitting entry calls the gate-scan API", async () => {
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: /Gate Scan/i }));

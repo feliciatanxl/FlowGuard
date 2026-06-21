@@ -180,13 +180,13 @@ router.patch('/:id/cancel', verifyToken, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GATE SCAN — FM/Staff scan/verify a driver pass by booking_ref at the bay.
+// GATE SCAN — FM only: scan/verify a driver pass by booking_ref at the bay.
 //   body: { action: 'entry' | 'exit', observedPlate?: string }
 //   entry: Pending/Confirmed → Arrived (+ WhatsApp arrival)
 //   exit:  Arrived/Confirmed → Completed (+ WhatsApp completed + next-in-line)
 // Plate mismatch is flagged (warn) but does not block. WhatsApp is non-fatal.
 // ---------------------------------------------------------------------------
-router.patch('/:ref/gate-scan', verifyToken, requireRole('FM', 'Staff'), async (req, res) => {
+router.patch('/:ref/gate-scan', verifyToken, requireRole('FM'), async (req, res) => {
     try {
         const { action, observedPlate } = req.body;
         if (!['entry', 'exit'].includes(action)) {

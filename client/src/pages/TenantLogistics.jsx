@@ -43,6 +43,7 @@ const TenantLogistics = () => {
   const authHeader = { headers: { Authorization: `Bearer ${token}` } };
 
   const canManage = role === 'FM' || role === 'Staff';   // status updates
+  const canGateScan = role === 'FM';                     // gate entry/exit — FM only
   const canCreate = role === 'FM' || role === 'Tenant';  // create bookings
 
   const fetchBookings = async () => {
@@ -191,7 +192,7 @@ const TenantLogistics = () => {
           </div>
           <div className="header-actions">
             <button className="edit-btn" onClick={fetchBookings}>Refresh</button>
-            {canManage && (
+            {canGateScan && (
               <button className="edit-btn" onClick={openGate}>Gate Scan</button>
             )}
             {canCreate && (
@@ -368,7 +369,7 @@ const TenantLogistics = () => {
         )}
 
         {/* Gate Scan modal (FM/Staff) — verify a driver pass at the loading bay */}
-        {gateOpen && canManage && (
+        {gateOpen && canGateScan && (
           <div className="modal-overlay" onClick={closeGate}>
             <div className="modal-content booking-modal" onClick={(e) => e.stopPropagation()}>
               <div className="booking-modal-head">

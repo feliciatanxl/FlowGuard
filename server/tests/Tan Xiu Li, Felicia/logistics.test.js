@@ -213,15 +213,13 @@ describe("Gate scan (entry/exit)", () => {
     expect(b.update).toHaveBeenCalledWith(expect.objectContaining({ status: "Arrived" }));
   });
 
-  test("Staff marks entry → Arrived (200)", async () => {
-    const b = bookingWith("Pending");
-    mockBooking.findOne.mockResolvedValueOnce(b);
+  test("Staff CANNOT gate scan — FM only now (403)", async () => {
     const res = await request(app)
       .patch("/api/bookings/FG-AAA/gate-scan")
       .set("Authorization", `Bearer ${tokenFor("Staff")}`)
       .send({ action: "entry" });
-    expect(res.status).toBe(200);
-    expect(b.update).toHaveBeenCalledWith(expect.objectContaining({ status: "Arrived" }));
+    expect(res.status).toBe(403);
+    expect(mockBooking.findOne).not.toHaveBeenCalled();
   });
 
   test("Tenant cannot gate scan (403)", async () => {
@@ -263,7 +261,7 @@ describe("Gate scan (entry/exit)", () => {
       .mockResolvedValueOnce({ id: 2, ...validBody, booking_ref: "FG-NEXT" }); // next-in-line
     const res = await request(app)
       .patch("/api/bookings/FG-AAA/gate-scan")
-      .set("Authorization", `Bearer ${tokenFor("Staff")}`)
+      .set("Authorization", `Bearer ${tokenFor("FM")}`)
       .send({ action: "exit" });
     expect(res.status).toBe(200);
     expect(b.update).toHaveBeenCalledWith(expect.objectContaining({ status: "Completed" }));

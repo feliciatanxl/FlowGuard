@@ -64,34 +64,36 @@ function App() {
           </ProtectedRoute>
         } />
 
-        {/* --- Live monitoring / operations (FM + Security Staff) --- */}
+        {/* --- Live monitoring / AI & security — FM only --- */}
         <Route path="/cameras" element={
-          <ProtectedRoute allowedRoles={ACCESS.FM_STAFF}>
+          <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
             <Cameras />
           </ProtectedRoute>
         } />
         <Route path="/object-detection" element={
-          <ProtectedRoute allowedRoles={ACCESS.FM_STAFF}>
+          <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
             <ObjectDetection />
           </ProtectedRoute>
         } />
         <Route path="/vpatrol" element={
-          <ProtectedRoute allowedRoles={ACCESS.FM_STAFF}>
+          <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
             <VPatrol />
           </ProtectedRoute>
         } />
         <Route path="/gate-scanner" element={
-          <ProtectedRoute allowedRoles={ACCESS.FM_STAFF}>
+          <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
             <GateScanner />
           </ProtectedRoute>
         } />
 
-        {/* --- FM + Tenant (attendance, own staff, own logistics) --- */}
+        {/* Attendance: FM (all) + Tenant (own staff) + Staff (own records — scoped server-side) */}
         <Route path="/attendance" element={
-          <ProtectedRoute allowedRoles={ACCESS.FM_TENANT}>
+          <ProtectedRoute allowedRoles={ACCESS.ANY}>
             <Attendance />
           </ProtectedRoute>
         } />
+
+        {/* --- FM + Tenant (own staff, own logistics) --- */}
         <Route path="/staff" element={
           <ProtectedRoute allowedRoles={ACCESS.FM_TENANT}>
             <StaffManagement />
@@ -120,8 +122,9 @@ function App() {
             <TenantManagement />
           </ProtectedRoute>
         } />
+        {/* FM (any staff) + Tenant (own staff only — enforced server-side) */}
         <Route path="/user-logs/:id" element={
-          <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
+          <ProtectedRoute allowedRoles={ACCESS.FM_TENANT}>
             <UserLogs />
           </ProtectedRoute>
         } />

@@ -40,6 +40,13 @@ describe("User Management — Add Tenant (FM)", () => {
     expect(screen.queryByText(/Re-enroll My Face ID/i)).toBeNull();
   });
 
+  test("FM does NOT see an 'Add FM' control (FM accounts are seed/setup only)", () => {
+    localStorage.setItem("userRole", "FM");
+    renderUsers();
+    expect(screen.queryByRole("button", { name: /Add FM/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /Add Tenant/i })).toBeTruthy();
+  });
+
   test("a user row keeps Logs/Suspend/Delete but no Face ID action", async () => {
     localStorage.setItem("userRole", "FM");
     mockGet.mockResolvedValueOnce({

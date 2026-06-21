@@ -54,8 +54,8 @@ const Sidebar = () => {
           {/* Everyone with a session */}
           <NavLink to="/dashboard" onClick={() => setIsOpen(false)}>Dashboard</NavLink>
 
-          {/* Live monitoring / operations — FM + Security Staff only */}
-          {(isFM || isStaff) && (
+          {/* Live monitoring / AI & security — FM only (Staff are factory workers) */}
+          {isFM && (
             <>
               <NavLink to="/cameras" onClick={() => setIsOpen(false)}>Cameras</NavLink>
               <NavLink to="/vpatrol" onClick={() => setIsOpen(false)}>V-Patrol</NavLink>
@@ -64,8 +64,8 @@ const Sidebar = () => {
             </>
           )}
 
-          {/* Workforce attendance — FM + Tenant */}
-          {(isFM || isTenant) && (
+          {/* Workforce attendance — FM + Tenant + Staff (Staff see their own records) */}
+          {(isFM || isTenant || isStaff) && (
             <NavLink to="/attendance" onClick={() => setIsOpen(false)}>Daily Attendance</NavLink>
           )}
 
