@@ -2,11 +2,12 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import LogoIcon from './LogoIcon';
+import { ROLES, roleLabel } from '../constants/roles';
 
 const Sidebar = () => {
   const navigate = useNavigate();
-  const [user, setUser] = useState({ name: 'Guest', role: 'Tenant' });
-  const [isOpen, setIsOpen] = useState(false); 
+  const [user, setUser] = useState({ name: 'Guest', role: ROLES.TENANT });
+  const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
     const storedName = localStorage.getItem("userName");
@@ -15,6 +16,12 @@ const Sidebar = () => {
       setUser({ name: storedName, role: storedRole });
     }
   }, []);
+
+  // Visibility helpers — keep these in lock-step with the route wrappers in App.jsx
+  // so a user never sees a link that would only bounce them to the 403 page.
+  const isFM = user.role === ROLES.FM;
+  const isStaff = user.role === ROLES.STAFF;
+  const isTenant = user.role === ROLES.TENANT;
 
   const handleLogout = () => {
     localStorage.clear();
@@ -44,30 +51,43 @@ const Sidebar = () => {
         </div>
         
         <nav className="sidebar-nav">
+          {/* Everyone with a session */}
           <NavLink to="/dashboard" onClick={() => setIsOpen(false)}>Dashboard</NavLink>
-          <NavLink to="/cameras" onClick={() => setIsOpen(false)}>Cameras</NavLink>
-          <NavLink to="/vpatrol" onClick={() => setIsOpen(false)}>V-Patrol</NavLink>
-          <NavLink to="/object-detection" onClick={() => setIsOpen(false)}>Object Detection</NavLink>
-          
-          {/* 🎯 NEW: Dynamic Workforce Attendance Tab (Hidden from raw staff accounts) */}
-          {(user.role === 'FM' || user.role === 'Tenant') && (
-            <NavLink to="/attendance" onClick={() => setIsOpen(false)}>Daily Attendance</NavLink>
-          )}
 
-          <NavLink to="/logistics" onClick={() => setIsOpen(false)}>Logistics & Bays</NavLink>
-
-          {user.role === 'Tenant' && (
-            <NavLink to="/staff" onClick={() => setIsOpen(false)}>My Staff</NavLink>
-          )}
-
-          {user.role === 'FM' && (
+          {/* Live monitoring / operations — FM + Security Staff only */}
+          {(isFM || isStaff) && (
             <>
-              <NavLink to="/users" onClick={() => setIsOpen(false)}>User Management</NavLink>
-              <NavLink to="/tenant-management" onClick={() => setIsOpen(false)}>Tenant Onboarding</NavLink>
+              <NavLink to="/cameras" onClick={() => setIsOpen(false)}>Cameras</NavLink>
+              <NavLink to="/vpatrol" onClick={() => setIsOpen(false)}>V-Patrol</NavLink>
+              <NavLink to="/object-detection" onClick={() => setIsOpen(false)}>Object Detection</NavLink>
+              <NavLink to="/gate-scanner" onClick={() => setIsOpen(false)}>Gate Scanner</NavLink>
             </>
           )}
 
-          <NavLink to="/settings" onClick={() => setIsOpen(false)}>Settings</NavLink>
+          {/* Workforce attendance — FM + Tenant */}
+          {(isFM || isTenant) && (
+            <NavLink to="/attendance" onClick={() => setIsOpen(false)}>Daily Attendance</NavLink>
+          )}
+
+          {/* Logistics & bays — FM + Tenant */}
+          {(isFM || isTenant) && (
+            <NavLink to="/logistics" onClick={() => setIsOpen(false)}>Logistics & Bays</NavLink>
+          )}
+
+          {/* Tenant's own staff */}
+          {isTenant && (
+            <NavLink to="/staff" onClick={() => setIsOpen(false)}>My Staff</NavLink>
+          )}
+
+          {/* FM-only administration */}
+          {isFM && (
+            <>
+              <NavLink to="/users" onClick={() => setIsOpen(false)}>User Management</NavLink>
+              <NavLink to="/security-review" onClick={() => setIsOpen(false)}>Security Review</NavLink>
+              <NavLink to="/tenant-management" onClick={() => setIsOpen(false)}>Tenant Onboarding</NavLink>
+              <NavLink to="/settings" onClick={() => setIsOpen(false)}>Settings</NavLink>
+            </>
+          )}
         </nav>
 
         <div className="sidebar-bottom">
@@ -76,7 +96,7 @@ const Sidebar = () => {
             <div className="user-meta">
               <span className="user-name">{user.name}</span>
               <span className="user-role-tag">
-                {user.role === 'FM' ? 'Manager' : user.role === 'Tenant' ? 'Tenant' : 'Staff'}
+                {roleLabel(user.role)}
               </span>
             </div>
           </div>

@@ -6,8 +6,10 @@ import '../css/Login.css';
 
 const SystemError = ({ code, title, message, returnPath = "/", returnText = "Return to Safety" }) => {
   
-  // Determine which CSS class to apply based on the error code
-  const isCritical = code >= 500 || code === 403;
+  // Determine which CSS class to apply based on the error code.
+  // `code` arrives as a string ("403"), so coerce before comparing.
+  const numericCode = Number(code);
+  const isCritical = numericCode >= 500 || numericCode === 403;
   const severityClass = isCritical ? 'error-critical' : 'error-warning';
 
   return (

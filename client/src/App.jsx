@@ -12,8 +12,9 @@ import SystemError from "./pages/SystemError";
 import AIInnovation from './pages/AIInnovation';
 import Settings from './pages/Settings';
 import Users from './pages/Users';
-import AIChatPopup from './components/AIChatPopup'; 
+import AIChatPopup from './components/AIChatPopup';
 import ProtectedRoute from './components/ProtectedRoute';
+import ErrorBoundary from './components/ErrorBoundary';
 import VPatrol from './pages/VPatrol';
 import Cameras from './pages/Cameras';
 import DriverPass from './pages/DriverPass';
@@ -26,52 +27,102 @@ import FaceEnrollment from './pages/FaceEnrollment';
 import Attendance from './pages/Attendance';
 import GateScanner from './pages/GateScanner';
 import ObjectDetection from './pages/ObjectDetection';
+import SecurityReview from './pages/SecurityReview';
+import { ACCESS } from './constants/roles';
 import './App.css';
 
 function App() {
   return (
     <div className="App bg-[#0f172a] min-h-screen text-slate-200 selection:bg-blue-500/30">
+      <ErrorBoundary>
       <Routes>
         {/* --- Public Routes --- */}
         <Route path="/" element={<Home />} />
         <Route path="/system-health" element={<SystemHealth />} />
         <Route path="/driver-pass/:bookingId" element={<DriverPass />} />
-        <Route path="/tenant-management" element={<TenantManagement />} />
-        <Route path="/user-logs/:id" element={<UserLogs />} />
-        <Route path="/staff" element={<StaffManagement />} />
-        <Route path="/enrollment" element={<FaceEnrollment />} />
-        <Route path="/attendance" element={<Attendance />} />
         <Route path="/contact" element={<Contact />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/gate-scanner" element={<GateScanner />} />
         <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotKey />} />
-        <Route path="/logistics" element={<TenantLogistics />} />
         <Route path="/innovation" element={<AIInnovation />} />
         <Route path="/driver-portal" element={<DriverPortal />} />
-        <Route path="/vpatrol" element={<VPatrol />} />
-        <Route path="/cameras" element={<Cameras />} />
-        <Route path="/object-detection" element={<ObjectDetection />} />
 
-        {/* --- Protected Dashboard Routes --- */}
-        {/* These require a valid Access Key (Token) to view */}
+        {/* --- Authenticated (any role) --- */}
+        {/* Dashboard adapts its content by role; everyone enrols their own face. */}
         <Route path="/dashboard" element={
           <ProtectedRoute>
             <Dashboard />
           </ProtectedRoute>
         } />
-        
-        <Route path="/settings" element={
+        <Route path="/enrollment" element={
           <ProtectedRoute>
-            <Settings />
+            <FaceEnrollment />
           </ProtectedRoute>
         } />
 
-        {/* --- Admin Only Routes --- */}
-        {/* Only users with the 'FM' (Facilities Manager) role can enter this sector */}
+        {/* --- Live monitoring / operations (FM + Security Staff) --- */}
+        <Route path="/cameras" element={
+          <ProtectedRoute allowedRoles={ACCESS.FM_STAFF}>
+            <Cameras />
+          </ProtectedRoute>
+        } />
+        <Route path="/object-detection" element={
+          <ProtectedRoute allowedRoles={ACCESS.FM_STAFF}>
+            <ObjectDetection />
+          </ProtectedRoute>
+        } />
+        <Route path="/vpatrol" element={
+          <ProtectedRoute allowedRoles={ACCESS.FM_STAFF}>
+            <VPatrol />
+          </ProtectedRoute>
+        } />
+        <Route path="/gate-scanner" element={
+          <ProtectedRoute allowedRoles={ACCESS.FM_STAFF}>
+            <GateScanner />
+          </ProtectedRoute>
+        } />
+
+        {/* --- FM + Tenant (attendance, own staff, own logistics) --- */}
+        <Route path="/attendance" element={
+          <ProtectedRoute allowedRoles={ACCESS.FM_TENANT}>
+            <Attendance />
+          </ProtectedRoute>
+        } />
+        <Route path="/staff" element={
+          <ProtectedRoute allowedRoles={ACCESS.FM_TENANT}>
+            <StaffManagement />
+          </ProtectedRoute>
+        } />
+        <Route path="/logistics" element={
+          <ProtectedRoute allowedRoles={ACCESS.FM_TENANT}>
+            <TenantLogistics />
+          </ProtectedRoute>
+        } />
+
+        {/* --- FM only (administration, security review, system settings) --- */}
         <Route path="/users" element={
-          <ProtectedRoute requiredRole="FM">
+          <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
             <Users />
+          </ProtectedRoute>
+        } />
+        <Route path="/security-review" element={
+          <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
+            <SecurityReview />
+          </ProtectedRoute>
+        } />
+        <Route path="/tenant-management" element={
+          <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
+            <TenantManagement />
+          </ProtectedRoute>
+        } />
+        <Route path="/user-logs/:id" element={
+          <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
+            <UserLogs />
+          </ProtectedRoute>
+        } />
+        <Route path="/settings" element={
+          <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
+            <Settings />
           </ProtectedRoute>
         } />
         
@@ -115,6 +166,7 @@ function App() {
         
         <Route path="*" element={<NotFound />} />
       </Routes>
+      </ErrorBoundary>
 
       <AIChatPopup />
     </div>

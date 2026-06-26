@@ -27,4 +27,21 @@ const verifyToken = (req, res, next) => {
     }
 };
 
-module.exports = { verifyToken };
+// Canonical role values — must match the Sequelize ENUM in models/User.js.
+const ROLES = Object.freeze({ FM: 'FM', STAFF: 'Staff', TENANT: 'Tenant' });
+
+// Role-gate middleware. Use AFTER verifyToken (needs req.user populated).
+//   router.get('/admin', verifyToken, requireRole('FM'), handler)
+//   router.get('/ops',   verifyToken, requireRole('FM', 'Staff'), handler)
+// 401 = no/invalid token (handled by verifyToken); 403 = valid token, wrong role.
+const requireRole = (...allowedRoles) => (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ message: "Authentication required." });
+    }
+    if (!allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ message: "Insufficient permissions for this resource." });
+    }
+    next();
+};
+
+module.exports = { verifyToken, requireRole, ROLES };

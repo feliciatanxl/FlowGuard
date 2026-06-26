@@ -32,27 +32,21 @@ app.use('/api/security', securityRoutes);
 const attendanceRoutes = require('./routes/attendance');
 app.use('/api/attendance', attendanceRoutes);
 
+// Fallback handlers — MUST stay last, after every route is mounted.
+const { notFound, errorHandler } = require('./middlewares/errorHandlers');
+app.use(notFound);       // unknown route → 404 JSON
+app.use(errorHandler);   // anything thrown/forwarded → 500 JSON (no stack leak)
+
 // Sync DB and Start Server
 const db = require('./models');
 
 async function startServer() {
     try {
-        let pgvectorReady = false;
-        try {
-            await db.sequelize.query('CREATE EXTENSION IF NOT EXISTS vector');
-            pgvectorReady = true;
-        } catch (extErr) {
-            console.warn("WARNING: pgvector not available — migrating faceVector to FLOAT[].");
-            // The column may exist as 'vector' type; drop it so sync can recreate as FLOAT[]
-            try {
-                await db.sequelize.query(`
-                    ALTER TABLE "users"
-                    DROP COLUMN IF EXISTS "faceVector";
-                `);
-            } catch (dropErr) {
-                // Table may not exist yet — that's fine, sync will create it
-            }
-        }
+        // IMPORTANT: faceVector is stored as a PostgreSQL FLOAT[] (Sequelize ARRAY(FLOAT)),
+        // NOT pgvector. We intentionally do NOT create the pgvector extension or drop the
+        // "faceVector" column on startup. The previous drop-on-fallback logic wiped every
+        // enrolled face on each restart, so it has been removed. Sequelize sync (below)
+        // manages the column safely without data loss.
 
         const modelNames = Object.keys(db).filter(
             k => k !== 'sequelize' && k !== 'Sequelize'
