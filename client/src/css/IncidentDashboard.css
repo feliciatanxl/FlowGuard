@@ -230,6 +230,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
 }
 
 .inc-detail-label {
@@ -244,6 +245,9 @@
   font-size: 0.92rem;
   color: #e2e8f0;
   font-weight: 500;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  min-width: 0;
 }
 
 /* --- Notes section --- */
@@ -326,4 +330,308 @@
   .inc-stats-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* =========================================
+   CRUD ADDITIONS
+   ========================================= */
+
+/* --- "+ Log Incident" header button --- */
+.inc-create-btn {
+  background: linear-gradient(135deg, #2563eb, #0891b2);
+  color: white;
+  border: 1px solid rgba(147, 197, 253, 0.35);
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 0.88rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.2);
+  align-self: center;
+}
+
+.inc-create-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.35);
+}
+
+/* --- Create modal (wider than detail modal) --- */
+.inc-create-modal {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 16px;
+  padding: 30px;
+  width: 90%;
+  max-width: 660px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+  animation: scaleUp 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* --- Form grid inside create modal --- */
+.inc-form {
+  margin-top: 20px;
+}
+
+.inc-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 20px;
+}
+
+.inc-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.inc-form-full {
+  grid-column: 1 / -1;
+}
+
+/* --- Textarea (create form + edit mode) --- */
+.inc-notes-textarea {
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  color: #e2e8f0;
+  font-size: 0.88rem;
+  line-height: 1.6;
+  padding: 10px 14px;
+  resize: vertical;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color 0.2s;
+  font-family: inherit;
+}
+
+.inc-notes-textarea:focus {
+  border-color: #3b82f6;
+}
+
+.inc-notes-textarea::placeholder {
+  color: #475569;
+}
+
+/* --- Primary save button --- */
+.inc-save-btn {
+  background: #2563eb;
+  color: white;
+  border: none;
+  padding: 10px 22px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.15s;
+}
+
+.inc-save-btn:hover:not(:disabled) {
+  background: #1d4ed8;
+  transform: translateY(-1px);
+}
+
+.inc-save-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* --- Loading indicator --- */
+.inc-loading-bar {
+  color: #64748b;
+  font-size: 0.85rem;
+  padding: 4px 0 14px 0;
+  letter-spacing: 0.03em;
+}
+
+/* --- Responsive: single column on small screens --- */
+@media (max-width: 600px) {
+  .inc-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .inc-create-modal {
+    padding: 20px;
+    width: 95%;
+  }
+}
+
+/* --- Manual source badge --- */
+.inc-source-manual {
+  background: rgba(148, 163, 184, 0.1);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+/* --- Locked source field in create modal --- */
+.inc-source-locked {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 2px 0;
+}
+
+.inc-source-locked-note {
+  font-size: 0.72rem;
+  color: #475569;
+  letter-spacing: 0.02em;
+}
+
+/* --- Manual row tint --- */
+.management-table .inc-row-manual {
+  background-color: rgba(120, 105, 88, 0.09);
+}
+
+.management-table .inc-row-manual:hover {
+  background-color: rgba(120, 105, 88, 0.14);
+}
+
+/* --- New row slide-in animation --- */
+@keyframes incRowSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.inc-row-new {
+  animation: incRowSlideIn 0.4s ease-out forwards;
+}
+
+/* --- Back to top button --- */
+.inc-back-top {
+  position: fixed;
+  bottom: 32px;
+  transform: translateX(-50%);
+  width: 42px;
+  height: 42px;
+  background: linear-gradient(135deg, #2563eb, #0891b2);
+  color: white;
+  border: 1px solid rgba(147, 197, 253, 0.3);
+  border-radius: 50%;
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(37, 99, 235, 0.35);
+  z-index: 200;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease, transform 0.3s ease, box-shadow 0.2s ease;
+}
+
+.inc-back-top.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.inc-back-top:hover {
+  transform: translateX(-50%) translateY(-3px);
+  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.5);
+}
+
+/* --- Row delete slide-out animation --- */
+@keyframes incRowSlideOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.inc-row-deleting {
+  animation: incRowSlideOut 0.35s ease-in forwards;
+  pointer-events: none;
+}
+
+/* =========================================
+   TOAST STACK (between filter bar and table)
+   ========================================= */
+
+.inc-toast-stack {
+  margin-bottom: 12px;
+}
+
+/* Enter animation: expand height + fade in, pushing table down */
+@keyframes incToastEnter {
+  from {
+    max-height: 0;
+    opacity: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-bottom: 0;
+  }
+  to {
+    max-height: 80px;
+    opacity: 1;
+    padding-top: 11px;
+    padding-bottom: 11px;
+    margin-bottom: 8px;
+  }
+}
+
+/* Exit animation: collapse height + fade out, table slides back up */
+@keyframes incToastExit {
+  from {
+    max-height: 80px;
+    opacity: 1;
+    padding-top: 11px;
+    padding-bottom: 11px;
+    margin-bottom: 8px;
+  }
+  to {
+    max-height: 0;
+    opacity: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-bottom: 0;
+  }
+}
+
+.inc-toast-item {
+  overflow: hidden;
+  border-radius: 8px;
+  border-left: 3px solid;
+  font-size: 0.875rem;
+  font-weight: 500;
+  padding: 0 16px;
+  box-sizing: border-box;
+  animation: incToastEnter 0.35s ease forwards;
+  will-change: max-height, opacity;
+}
+
+.inc-toast-item.removing {
+  animation: incToastExit 0.35s ease forwards;
+}
+
+/* Type variants */
+.inc-toast-success {
+  background: rgba(52, 211, 153, 0.08);
+  border-color: #34d399;
+  color: #a7f3d0;
+}
+
+.inc-toast-delete {
+  background: rgba(248, 113, 113, 0.08);
+  border-color: #f87171;
+  color: #fca5a5;
+}
+
+.inc-toast-error {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: #f59e0b;
+  color: #fde68a;
 }
