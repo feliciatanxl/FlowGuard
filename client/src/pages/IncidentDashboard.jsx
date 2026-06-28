@@ -7,137 +7,6 @@ import '../css/Users.css';
 import '../css/IncidentDashboard.css';
 
 // ---------------------------------------------------------------------------
-// Static seed data — used once on first load to populate the DB.
-// ---------------------------------------------------------------------------
-const T = (hoursAgo) =>
-  new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
-
-const STATIC_INCIDENTS = [
-  {
-    camera_location: 'Gate A – Main Entrance',
-    person_name: null,
-    confidence_score: null,
-    status: 'UNAUTHORIZED_ACCESS',
-    source: 'Facial Recognition',
-    severity: 'Critical',
-    notes: '',
-    createdAt: T(0.4),
-  },
-  {
-    camera_location: 'Loading Bay 3',
-    person_name: null,
-    confidence_score: null,
-    status: 'UNATTENDED_OBJECT',
-    source: 'Object Detection',
-    severity: 'High',
-    notes: 'Unattended pallet detected for over 45 minutes. Staff dispatched to verify.',
-    createdAt: T(1.2),
-  },
-  {
-    camera_location: 'Sector B – Cold Storage',
-    person_name: 'Ahmad Faris',
-    confidence_score: 0.9234,
-    status: 'TAILGATING',
-    source: 'Facial Recognition',
-    severity: 'Critical',
-    notes: 'Ahmad Faris followed an authorised worker through a secured door without badging in. Incident escalated to security team.',
-    createdAt: T(2.5),
-  },
-  {
-    camera_location: 'Roof Stairwell',
-    person_name: null,
-    confidence_score: null,
-    status: 'UNAUTHORIZED_ACCESS',
-    source: 'Object Detection',
-    severity: 'High',
-    notes: '',
-    createdAt: T(3.8),
-  },
-  {
-    camera_location: 'Server Room Corridor',
-    person_name: 'Priya Menon',
-    confidence_score: 0.8812,
-    status: 'UNAUTHORIZED_ACCESS',
-    source: 'Facial Recognition',
-    severity: 'Critical',
-    notes: '',
-    createdAt: T(5.1),
-  },
-  {
-    camera_location: 'Loading Bay 1',
-    person_name: null,
-    confidence_score: null,
-    status: 'UNATTENDED_OBJECT',
-    source: 'Object Detection',
-    severity: 'Medium',
-    notes: 'Pallet successfully relocated to Bay 2 by staff. Confirmed false alarm.',
-    createdAt: T(7.3),
-  },
-  {
-    camera_location: 'Gate B – Staff Entrance',
-    person_name: 'Jason Toh',
-    confidence_score: 0.7621,
-    status: 'AUTHORIZED_ACCESS',
-    source: 'Facial Recognition',
-    severity: 'Low',
-    notes: 'Low-confidence match flagged for manual review. Physically verified by on-site guard — authorised personnel confirmed.',
-    createdAt: T(9.0),
-  },
-  {
-    camera_location: 'Sector C – Packaging',
-    person_name: null,
-    confidence_score: null,
-    status: 'OVERCROWDING',
-    source: 'Object Detection',
-    severity: 'Medium',
-    notes: 'Zone headcount exceeded threshold. Supervisor redistributed staff across bays.',
-    createdAt: T(12.4),
-  },
-  {
-    camera_location: 'Gate A – Main Entrance',
-    person_name: 'Li Wei',
-    confidence_score: 0.9712,
-    status: 'TAILGATING',
-    source: 'Facial Recognition',
-    severity: 'High',
-    notes: 'Second tailgating incident involving same individual within 24 hours. Security notified.',
-    createdAt: T(15.6),
-  },
-  {
-    camera_location: 'Loading Bay 2',
-    person_name: null,
-    confidence_score: null,
-    status: 'UNATTENDED_OBJECT',
-    source: 'Object Detection',
-    severity: 'Low',
-    notes: '',
-    createdAt: T(20.1),
-  },
-  {
-    camera_location: 'Sector A – Freezer',
-    person_name: 'Nur Hidayah',
-    confidence_score: 0.8443,
-    status: 'UNAUTHORIZED_ACCESS',
-    source: 'Facial Recognition',
-    severity: 'Critical',
-    notes: '',
-    createdAt: T(30.5),
-  },
-  {
-    camera_location: 'Roof Stairwell',
-    person_name: null,
-    confidence_score: null,
-    status: 'LOITERING',
-    source: 'Object Detection',
-    severity: 'Medium',
-    notes: 'Maintenance crew identified on site. FM confirmed authorised access.',
-    createdAt: T(45.2),
-  },
-];
-
-const SEED_FLAG = 'flowguard_incidents_seeded';
-
-// ---------------------------------------------------------------------------
 // Badge helpers
 // ---------------------------------------------------------------------------
 const severityClass = (s) => {
@@ -186,7 +55,7 @@ const IncidentDashboard = () => {
   // --- Data ---
   const [incidents, setIncidents]   = useState([]);
   const [loading, setLoading]       = useState(true);
-  const [newRowId, setNewRowId]     = useState(null);
+  const [newRowIds, setNewRowIds]   = useState(new Set());
   const [deletingId, setDeletingId] = useState(null);
 
   // --- Filters ---
@@ -268,8 +137,8 @@ const IncidentDashboard = () => {
   // ---------------------------------------------------------------------------
   // Fetch from API
   // ---------------------------------------------------------------------------
-  const fetchIncidents = useCallback(async () => {
-    setLoading(true);
+  const fetchIncidents = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const res = await axios.get('/api/incident', {
         headers: { Authorization: `Bearer ${getToken()}` },
@@ -277,40 +146,60 @@ const IncidentDashboard = () => {
       setIncidents(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       console.error('Failed to fetch incidents:', err);
-      showToast('Failed to load incidents from server.', 'error');
+      if (!silent) showToast('Failed to load incidents from server.', 'error');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [showToast]);
 
   // ---------------------------------------------------------------------------
-  // On mount: one-time seed, then fetch
+  // Background poll — every 10s, silently diff for new AI-created incidents
+  // Uses functional updater so prev is always current state (no stale closure)
+  // ---------------------------------------------------------------------------
+  const pollForNewIncidents = useCallback(async () => {
+    try {
+      const res = await axios.get('/api/incident', {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const freshData = Array.isArray(res.data) ? res.data : [];
+
+      setIncidents(prev => {
+        const existingIds = new Set(prev.map(i => i.id));
+        const brandNew = freshData.filter(i => !existingIds.has(i.id));
+
+        if (brandNew.length === 0) return prev; // no change — skip re-render
+
+        const newIdSet = new Set(brandNew.map(i => i.id));
+        setNewRowIds(cur => new Set([...cur, ...newIdSet]));
+        setTimeout(() => {
+          setNewRowIds(cur => {
+            const n = new Set(cur);
+            newIdSet.forEach(id => n.delete(id));
+            return n;
+          });
+        }, 700);
+
+        return freshData;
+      });
+    } catch {
+      // silent — polling errors are not surfaced to the user
+    }
+  }, []); // intentionally empty: functional updater pattern avoids stale closures
+
+  // ---------------------------------------------------------------------------
+  // On mount: fetch from DB (no seed — live AI data only)
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    const seedAndFetch = async () => {
-      if (!localStorage.getItem(SEED_FLAG)) {
-        try {
-          const token = getToken();
-          for (const inc of STATIC_INCIDENTS) {
-            await axios.post('/api/incident', {
-              camera_location: inc.camera_location,
-              status: inc.status,
-              source: inc.source,
-              severity: inc.severity,
-              person_name: inc.person_name || undefined,
-              confidence_score: inc.confidence_score || undefined,
-              notes: inc.notes || '',
-            }, { headers: { Authorization: `Bearer ${token}` } });
-          }
-          localStorage.setItem(SEED_FLAG, 'true');
-        } catch (err) {
-          console.warn('Seed partial/failed — will retry next load:', err.message);
-        }
-      }
-      await fetchIncidents();
-    };
-    seedAndFetch();
+    fetchIncidents();
   }, [fetchIncidents]);
+
+  // ---------------------------------------------------------------------------
+  // Polling effect — 10s interval, cleaned up on unmount
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const id = setInterval(pollForNewIncidents, 10_000);
+    return () => clearInterval(id);
+  }, [pollForNewIncidents]);
 
   // ---------------------------------------------------------------------------
   // Filter + stats
@@ -328,6 +217,11 @@ const IncidentDashboard = () => {
       return matchSearch && matchSeverity && matchSource && matchStatus;
     });
   }, [incidents, search, severityFilter, sourceFilter, statusFilter]);
+
+  const sourceCounts = useMemo(() => ({
+    ai:     incidents.filter(i => i.source !== 'Manual').length,
+    manual: incidents.filter(i => i.source === 'Manual').length,
+  }), [incidents]);
 
   const stats = useMemo(() => ({
     total:         filtered.length,
@@ -397,8 +291,10 @@ const IncidentDashboard = () => {
       }, { headers: { Authorization: `Bearer ${getToken()}` } });
 
       setIncidents(prev => [res.data, ...prev]);
-      setNewRowId(res.data.id);
-      setTimeout(() => setNewRowId(null), 700);
+      setNewRowIds(prev => new Set([...prev, res.data.id]));
+      setTimeout(() => {
+        setNewRowIds(prev => { const n = new Set(prev); n.delete(res.data.id); return n; });
+      }, 700);
 
       setShowCreate(false);
       setCreateForm({
@@ -475,6 +371,13 @@ const IncidentDashboard = () => {
             <div className="inc-stat-value">{stats.cleared}</div>
             <div className="inc-stat-label">Cleared</div>
           </div>
+        </div>
+
+        {/* ---- Source Counter ---- */}
+        <div className="inc-source-counter">
+          <span className="inc-source-chip inc-source-chip-ai">AI Detected: {sourceCounts.ai}</span>
+          <span className="inc-source-chip-divider">|</span>
+          <span className="inc-source-chip inc-source-chip-manual">Manually Logged: {sourceCounts.manual}</span>
         </div>
 
         {/* ---- Loading bar ---- */}
@@ -565,9 +468,9 @@ const IncidentDashboard = () => {
               ) : (
                 filtered.map((incident) => {
                   const rowClass = [
-                    incident.id === newRowId    ? 'inc-row-new'      : '',
-                    incident.id === deletingId  ? 'inc-row-deleting' : '',
-                    incident.source === 'Manual' ? 'inc-row-manual'  : '',
+                    newRowIds.has(incident.id)   ? 'inc-row-new'      : '',
+                    incident.id === deletingId   ? 'inc-row-deleting' : '',
+                    incident.source === 'Manual' ? 'inc-row-manual'   : '',
                   ].filter(Boolean).join(' ');
 
                   return (
