@@ -673,3 +673,13 @@
   border-color: #f59e0b;
   color: #fde68a;
 }
+
+/* ---- Table: horizontal scroll on narrow viewports ---- */
+.dashboard-main .table-container {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.dashboard-main .management-table {
+  min-width: 900px;
+}
