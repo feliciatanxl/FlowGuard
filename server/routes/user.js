@@ -14,6 +14,7 @@ const { verifyToken, requireRole } = require('../middlewares/auth');
 const { createRateLimiter } = require('../middlewares/rateLimit');
 const { sendPasswordResetEmail } = require('../services/mailer');
 const { assignStableEvaluationLabel, retireEvaluationParticipant } = require('../services/evaluationParticipants');
+const { aiServiceHeaders } = require('../services/aiServiceAuth');
 require('dotenv').config();
 
 const TENANT_INVITE_TTL_MS = 48 * 60 * 60 * 1000;
@@ -446,7 +447,7 @@ router.delete("/:id", verifyToken, async (req, res) => {
             const faceAiUrl = process.env.FACE_AI_URL || 'http://127.0.0.1:8501';
             await axios.get(`${faceAiUrl}/refresh`, {
                 timeout: 5000,
-                headers: { 'X-AI-Service-Key': process.env.AI_SERVICE_KEY || '' }
+                headers: await aiServiceHeaders(faceAiUrl)
             });
         } catch (refreshErr) {
             console.warn("AI face-cache refresh after off-boarding failed (non-fatal):", refreshErr.message);
@@ -509,7 +510,7 @@ router.post('/enroll-face', verifyToken, async (req, res) => {
             right: images.right
         }, {
             timeout: 20000,
-            headers: { 'X-AI-Service-Key': process.env.AI_SERVICE_KEY || '' }
+            headers: await aiServiceHeaders(faceAiUrl)
         });
 
         const faceVector = pythonResponse.data?.vector; // The 512-number array
@@ -534,7 +535,7 @@ router.post('/enroll-face', verifyToken, async (req, res) => {
         try {
             await axios.get(`${faceAiUrl}/refresh`, {
                 timeout: 5000,
-                headers: { 'X-AI-Service-Key': process.env.AI_SERVICE_KEY || '' }
+                headers: await aiServiceHeaders(faceAiUrl)
             });
             return res.status(200).json({ message: "Biometric enrollment successful" });
         } catch (refreshErr) {

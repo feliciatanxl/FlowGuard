@@ -1,0 +1,33 @@
+# Never copy secrets or local-only files into the image.
+.env
+.env.*
+!.env.example
+
+# Dependencies are installed inside the image from package-lock.json.
+node_modules
+
+# Git history / editor / OS noise
+.git
+.gitignore
+.vscode
+.vs
+.DS_Store
+Thumbs.db
+
+# Tests and coverage never ship in the production image.
+tests
+coverage
+*.test.js
+
+# Logs and temp output
+*.log
+npm-debug.log*
+logs
+
+# Docs / migrations are applied manually, not at runtime.
+migrations
+README.md
+
+# Container files themselves
+Dockerfile
+.dockerignore

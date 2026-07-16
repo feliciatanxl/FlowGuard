@@ -42,6 +42,10 @@ const facialRecognitionRoutes = require('./routes/facialRecognition');
 app.use('/api/facial-recognition', facialRecognitionRoutes);
 const supportRoutes = require('./routes/support');
 app.use('/api/support', supportRoutes);
+// Authenticated proxy to the (private) AI service's YOLO endpoints — the
+// browser never talks to FastAPI directly in any environment.
+const yoloRoutes = require('./routes/yolo');
+app.use('/api/yolo', yoloRoutes);
 
 // Fallback handlers - MUST stay last, after every route is mounted.
 const { notFound, errorHandler } = require('./middlewares/errorHandlers');

@@ -9,8 +9,11 @@ import '../css/ObjectDetection.css';
 const ZONES_URL = '/api/zones';
 const CAMERAS_URL = '/api/cameras';
 const ALERTS_URL = '/api/detection-alerts';
-const PEOPLE_URL = '/ai/api/yolo/people-count';
-const ANALYZE_FRAME_URL = '/ai/api/yolo/analyze-frame';
+// YOLO endpoints are served by the Node backend, which proxies to the PRIVATE
+// AI service with service-to-service auth — the browser never calls FastAPI
+// directly (the old '/ai/...' Vite/Nginx passthrough is gone).
+const PEOPLE_URL = '/api/yolo/people-count';
+const ANALYZE_FRAME_URL = '/api/yolo/analyze-frame';
 const OPEN_ALERT_STATUSES = ['Active', 'Acknowledged', 'Investigating', 'Escalated', 'Dispatched'];
 const SECUREPI_STREAM_URL = import.meta.env.VITE_SECUREPI_STREAM_URL || '';
 const SECUREPI_HEALTH_URL = import.meta.env.VITE_SECUREPI_HEALTH_URL || '';
@@ -133,7 +136,7 @@ const ObjectDetection = () => {
 
   const fetchPeopleCount = useCallback(() => {
     if (sourceModeRef.current === 'hardware') return;
-    axios.get(PEOPLE_URL, { timeout: 8000 })
+    axios.get(PEOPLE_URL, { timeout: 8000, headers })
       .then(res => {
         aiHealthFailuresRef.current = 0;
         setPeopleCount(res.data.count ?? 0);
@@ -221,7 +224,7 @@ const ObjectDetection = () => {
       const payload = buildAnalyzeFramePayload(image, monitoredCameraRef.current, resolveAlertSource(sourceMode));
 
       try {
-        const res = await axios.post(ANALYZE_FRAME_URL, payload, { timeout: 10000 });
+        const res = await axios.post(ANALYZE_FRAME_URL, payload, { timeout: 10000, headers });
         setDetections(res.data.detections ?? []);
         setPeopleCount(res.data.count ?? 0);
         setDetectionActive(res.data.detection_active ?? false);

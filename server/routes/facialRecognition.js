@@ -5,6 +5,7 @@ const { User, EvaluationParticipant } = require('../models');
 const { syncEligibleEvaluationParticipants, listEvaluationParticipants } = require('../services/evaluationParticipants');
 const { verifyToken, requireRole } = require('../middlewares/auth');
 const { shouldWriteLog, createSecurityLog, createSecurityLogRecord } = require('../services/securityAudit');
+const { aiServiceHeaders } = require('../services/aiServiceAuth');
 
 // FACE_AI_URL is the BASE url of the InsightFace service; paths are appended.
 const FACE_AI_URL = () => process.env.FACE_AI_URL || 'http://127.0.0.1:8501';
@@ -40,7 +41,7 @@ const forwardRecognitionFrame = async (image) => {
   const startedAt = Date.now();
   const aiResponse = await axios.post(`${FACE_AI_URL()}/user/recognize`, { image }, {
     timeout: 15000,
-    headers: { 'X-AI-Service-Key': process.env.AI_SERVICE_KEY || '' }
+    headers: await aiServiceHeaders(FACE_AI_URL())
   });
   return { aiResult: aiResponse.data || {}, totalRequestMs: Date.now() - startedAt };
 };
@@ -317,7 +318,7 @@ router.post('/track', allowFMOrEdgeService, async (req, res) => {
   try {
     const aiResponse = await axios.post(`${FACE_AI_URL()}/user/track`, { image: req.body.image }, {
       timeout: TRACK_TIMEOUT_MS,
-      headers: { 'X-AI-Service-Key': process.env.AI_SERVICE_KEY || '' }
+      headers: await aiServiceHeaders(FACE_AI_URL())
     });
     const {
       faceDetected = false,
@@ -362,7 +363,7 @@ router.post('/recognize', allowFMOrEdgeService, async (req, res) => {
   try {
     const aiResponse = await axios.post(`${FACE_AI_URL()}/user/recognize`, { image }, {
       timeout: 15000,
-      headers: { 'X-AI-Service-Key': process.env.AI_SERVICE_KEY || '' }
+      headers: await aiServiceHeaders(FACE_AI_URL())
     });
     aiResult = aiResponse.data;
   } catch (err) {

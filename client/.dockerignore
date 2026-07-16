@@ -1,0 +1,39 @@
+# Never copy env files into the image — VITE_ values must be supplied
+# explicitly (and only public ones); secrets never belong in the bundle.
+.env
+.env.*
+!.env.example
+
+# Installed inside the image from package-lock.json.
+node_modules
+
+# Local build output — the image builds fresh.
+dist
+
+# Git / editor / OS noise
+.git
+.gitignore
+.vscode
+.DS_Store
+Thumbs.db
+
+# Tests, coverage, screenshots and test recordings never ship.
+# (src/assets and public/ media are real UI assets and stay in.)
+tests
+coverage
+*.test.jsx
+*.test.js
+**/__snapshots__
+tests/**/*.png
+tests/**/*.jpg
+tests/**/*.mp4
+tests/**/*.webm
+
+# Logs
+*.log
+npm-debug.log*
+
+# Container files themselves
+Dockerfile
+.dockerignore
+README.md

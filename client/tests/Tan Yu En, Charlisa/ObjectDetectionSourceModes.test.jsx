@@ -64,7 +64,7 @@ const mockBackend = (cameras, { peopleCount } = {}) => {
     if (url === '/api/zones') return Promise.resolve({ data: [] });
     if (url === '/api/cameras') return Promise.resolve({ data: cameras });
     if (url === '/api/detection-alerts') return Promise.resolve({ data: [] });
-    if (url === '/ai/api/yolo/people-count') return Promise.resolve({ data: { count: 0, detection_active: false } });
+    if (url === '/api/yolo/people-count') return Promise.resolve({ data: { count: 0, detection_active: false } });
     if (url.endsWith('/health')) return Promise.resolve({ data: { status: 'ok' } });
     if (url.endsWith('/people-count')) {
       return peopleCount
@@ -80,8 +80,8 @@ const renderPage = () => render(<MemoryRouter><ObjectDetection /></MemoryRouter>
 
 const healthCalls = () => axios.get.mock.calls.filter(([url]) => url.endsWith('/health'));
 // SecurePi's own /people-count status route — distinct from the browser-YOLO
-// /ai/api/yolo/people-count polled in camera/file mode.
-const securePiPeopleCountCalls = () => axios.get.mock.calls.filter(([url]) => url.endsWith('/people-count') && !url.includes('/ai/api/yolo'));
+// /api/yolo/people-count (Node proxy) polled in camera/file mode.
+const securePiPeopleCountCalls = () => axios.get.mock.calls.filter(([url]) => url.endsWith('/people-count') && !url.includes('/api/yolo'));
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -218,7 +218,7 @@ describe('SecurePi Hardware mode - live people count', () => {
     renderPage();
 
     await screen.findByRole('option', { name: /CAM-SECUREPI-01/ });
-    await waitFor(() => expect(axios.get.mock.calls.some(([url]) => url === '/ai/api/yolo/people-count')).toBe(true));
+    await waitFor(() => expect(axios.get.mock.calls.some(([url]) => url === '/api/yolo/people-count')).toBe(true));
     expect(securePiPeopleCountCalls()).toHaveLength(0);
   });
 

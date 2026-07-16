@@ -62,9 +62,13 @@ export default function CameraFeed({ cam }) {
       captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
 
       const image = captureCanvas.toDataURL('image/jpeg', 0.75);
-      const response = await axios.post('/ai/api/yolo/analyze-frame', {
+      // Node proxies this to the private AI service (JWT-gated) — the browser
+      // never calls FastAPI directly.
+      const response = await axios.post('/api/yolo/analyze-frame', {
         image,
         cam_id: cam.id,
+      }, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('accessToken')}` },
       });
 
       drawDetections(response.data);

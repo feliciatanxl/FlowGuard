@@ -1,12 +1,20 @@
 // Raspberry Pi Camera Module 3 — gate camera node configuration.
-// URLs come from Vite env (VITE_PI_CAMERA_STREAM_URL / VITE_PI_CAMERA_SNAPSHOT_URL)
-// with demo-network fallbacks so the kiosk works out of the box.
+// URLs come from Vite env (VITE_PI_CAMERA_STREAM_URL / VITE_PI_CAMERA_SNAPSHOT_URL).
+//
+// The out-of-the-box fallback exists ONLY in local development (mDNS hostname,
+// never a private IP). A production/cloud build ships NO default Pi address:
+// unless VITE_PI_CAMERA_* is explicitly configured (kiosk builds on the demo
+// network), the Pi is treated as unreachable and every scanner page falls back
+// to the browser webcam. SecurePi alert ingestion is unaffected — the Pi
+// pushes outbound to the authenticated /api/edge route; the cloud never
+// reaches into the LAN.
+const DEV_PI_BASE = import.meta.env.DEV ? "http://raspberrypi.local:8081" : "";
 
 export const PI_CAMERA_STREAM_URL =
-  import.meta.env.VITE_PI_CAMERA_STREAM_URL || "http://172.20.10.4:8081/video_feed";
+  import.meta.env.VITE_PI_CAMERA_STREAM_URL || (DEV_PI_BASE ? `${DEV_PI_BASE}/video_feed` : "");
 
 export const PI_CAMERA_SNAPSHOT_URL =
-  import.meta.env.VITE_PI_CAMERA_SNAPSHOT_URL || "http://172.20.10.4:8081/snapshot";
+  import.meta.env.VITE_PI_CAMERA_SNAPSHOT_URL || (DEV_PI_BASE ? `${DEV_PI_BASE}/snapshot` : "");
 
 export const CAMERA_SOURCES = {
   PI: "pi",
@@ -60,6 +68,9 @@ export async function isPiCameraReachableCached(now = Date.now()) {
  * caller can fall back to the laptop webcam.
  */
 export async function isPiCameraReachable(timeoutMs = 3500) {
+  // No Pi camera configured (e.g. any cloud build without VITE_PI_CAMERA_*):
+  // report unreachable immediately so pages use the browser webcam.
+  if (!PI_CAMERA_SNAPSHOT_URL) return false;
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -80,6 +91,7 @@ export async function isPiCameraReachable(timeoutMs = 3500) {
  * tainted and toDataURL keeps working for the recognition API).
  */
 export async function fetchPiSnapshotBitmap(timeoutMs = 4000) {
+  if (!PI_CAMERA_SNAPSHOT_URL) throw new Error("Pi camera is not configured.");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {

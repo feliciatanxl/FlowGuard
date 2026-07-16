@@ -6,6 +6,7 @@ const axios = require('axios');
 const multer = require('multer');
 const FormData = require('form-data');
 const { verifyToken, requireRole, verifyServiceOrRole } = require('../middlewares/auth');
+const { aiServiceHeaders } = require('../services/aiServiceAuth');
 require('dotenv').config();
 
 const ALLOWED_STATUSES = ['Active', 'Investigating', 'Escalated to Security', 'Cleared'];
@@ -69,8 +70,13 @@ router.post("/scan-frame", verifyServiceOrRole('FM', 'Staff'), upload.single('fi
         formData.append('file', req.file.buffer, req.file.originalname);
 
         // 2. Request AI analysis
+        // Merge multipart headers with the AI-service auth headers (Google ID
+        // token on Cloud Run + X-AI-Service-Key defence in depth).
         const aiResponse = await axios.post(process.env.PYTHON_AI_URL, formData, {
-            headers: formData.getHeaders()
+            headers: {
+                ...formData.getHeaders(),
+                ...(await aiServiceHeaders(process.env.PYTHON_AI_URL))
+            }
         });
 
         const faces = aiResponse.data.faces;

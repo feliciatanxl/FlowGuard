@@ -62,8 +62,11 @@ describe('CameraFeed', () => {
     await vi.advanceTimersByTimeAsync(2000);
 
     expect(axios.post).toHaveBeenCalledWith(
-      '/ai/api/yolo/analyze-frame',
-      expect.objectContaining({ cam_id: 'CAM-01' })
+      '/api/yolo/analyze-frame',
+      expect.objectContaining({ cam_id: 'CAM-01' }),
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: expect.stringContaining('Bearer') }),
+      })
     );
   });
 });
