@@ -38,7 +38,9 @@ RUN pip install --no-cache-dir torch==2.11.0 torchvision==0.26.0 \
 FROM python:3.12-slim
 # OpenCV (cv2) runtime libraries only — no compilers in the final image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libgl1 libglib2.0-0 \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --uid 1001 appuser
