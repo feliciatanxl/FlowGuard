@@ -19,7 +19,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
 # Public (browser-visible) value only. Never pass secrets here.
-ARG VITE_RECAPTCHA_SITE_KEY=""
+ARG VITE_RECAPTCHA_SITE_KEY="6LdlueksAAAAAKcaIPqJG3IpQVavifKxCMkYk0P9"
 ENV VITE_RECAPTCHA_SITE_KEY=${VITE_RECAPTCHA_SITE_KEY}
 RUN npm run build
 
