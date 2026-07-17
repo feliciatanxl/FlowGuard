@@ -6,13 +6,13 @@
 export const SCAN_INTERVAL_MS = 1000;
 export const TARGET_LOCK_MS = 600;
 
-// Recognition capture width (was 420 px) — smaller frames cut encode/upload/
-// inference time; InsightFace still detects comfortably at this size.
-export const CAPTURE_MAX_WIDTH = 352;
+// Recognition frames need enough facial detail for stable embeddings on
+// Cloud Run CPU inference. 512 px is still lightweight, but avoids the
+// over-compression/low-detail mismatch that can produce very weak similarities.
+export const CAPTURE_MAX_WIDTH = 512;
 
-// JPEG quality for recognition frames. Never full quality (payload size), but
-// high enough that compression artefacts don't degrade face embeddings.
-export const CAPTURE_JPEG_QUALITY = 0.62;
+// Keep embedding-grade detail without sending full-quality webcam frames.
+export const CAPTURE_JPEG_QUALITY = 0.74;
 
 // --- Lightweight tracking loop (face box + head-turn sampling) --------------
 // Independent of the full recognition loop: it calls the detection-only

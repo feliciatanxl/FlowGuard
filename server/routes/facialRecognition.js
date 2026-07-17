@@ -380,13 +380,34 @@ router.post('/recognize', allowFMOrEdgeService, async (req, res) => {
     return res.status(502).json({ error: 'Facial recognition service returned an error.' });
   }
 
-  const { matchedUserId, confidence = 0, box = null, liveness_ratio = 0.5, faceDetected, inference_ms = null } = aiResult || {};
+  const {
+    matchedUserId,
+    confidence = 0,
+    box = null,
+    liveness_ratio = 0.5,
+    faceDetected,
+    registry_ready = true,
+    enrolled_face_count = null,
+    inference_ms = null
+  } = aiResult || {};
 
   // Development timing telemetry - durations only, never images or templates.
   const nodeToAiMs = Date.now() - aiStartedAt;
   const timings = { nodeToAiMs, inferenceMs: inference_ms, totalRequestMs: nodeToAiMs };
   if (process.env.NODE_ENV !== 'production') {
     console.log(`[recognize] Node->FastAPI ${timings.nodeToAiMs}ms, InsightFace inference ${inference_ms ?? '?'}ms`);
+  }
+
+  // A detected face with an empty/unavailable AI registry is a service
+  // configuration/cache problem, not an "unknown person". Fail safely without
+  // writing a misleading 0% intrusion event.
+  if (faceDetected !== false && registry_ready === false) {
+    console.error(
+      `[recognize] Face registry unavailable; enrolled templates reported: ${enrolled_face_count ?? 0}`
+    );
+    return res.status(503).json({
+      error: 'Facial recognition registry is not ready. Re-enrol or refresh the AI face cache.'
+    });
   }
 
   // No face in frame -> no recognition attempt, and no suspicious-person log.

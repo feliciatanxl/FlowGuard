@@ -215,16 +215,20 @@ const ObjectDetection = () => {
 
       processingFrameRef.current = true;
       const context = canvas.getContext('2d');
-      const maxWidth = 960;
+      // Preserve smaller objects in uploaded/CCTV footage. The previous
+      // 0.35 JPEG quality removed detail from monitors, bottles, chairs and
+      // other small COCO objects before YOLO received the frame.
+      const maxWidth = sourceMode === 'file' ? 1280 : 960;
+      const jpegQuality = sourceMode === 'file' ? 0.72 : 0.62;
       const scale = Math.min(1, maxWidth / video.videoWidth);
       canvas.width = Math.round(video.videoWidth * scale);
       canvas.height = Math.round(video.videoHeight * scale);
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const image = canvas.toDataURL('image/jpeg', 0.35);
+      const image = canvas.toDataURL('image/jpeg', jpegQuality);
       const payload = buildAnalyzeFramePayload(image, monitoredCameraRef.current, resolveAlertSource(sourceMode));
 
       try {
-        const res = await axios.post(ANALYZE_FRAME_URL, payload, { timeout: 10000, headers });
+        const res = await axios.post(ANALYZE_FRAME_URL, payload, { timeout: 20000, headers });
         setDetections(res.data.detections ?? []);
         setPeopleCount(res.data.count ?? 0);
         setDetectionActive(res.data.detection_active ?? false);
@@ -613,7 +617,10 @@ const ObjectDetection = () => {
                 Python AI service offline - start ai-service to enable stream
               </div>
             ) : (
-              <div className={`od-video-stage ${sourceMode === 'hardware' ? 'od-video-stage-hardware' : ''}`}>
+              <div
+                className={`od-video-stage ${sourceMode === 'hardware' ? 'od-video-stage-hardware' : ''}`}
+                style={sourceMode === 'hardware' ? undefined : { aspectRatio: `${frameSize.width} / ${frameSize.height}` }}
+              >
                 {sourceMode === 'hardware' ? (
                   <img
                     key={hardwareReloadKey}

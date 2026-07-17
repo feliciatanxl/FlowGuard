@@ -194,7 +194,14 @@ export default function Cameras() {
                   className={`camera-card camera-card-${statusClass(cam.status)}`}
                   onClick={() => setSelectedId(cam.id)}
                 >
-                  <CameraFeed cam={{ id: cam.camera_code, video: cam.stream_url || FALLBACK_VIDEO }} />
+                  <CameraFeed
+                    cam={{
+                      databaseId: cam.id,
+                      code: cam.camera_code,
+                      zoneId: cam.zone_id,
+                      video: cam.stream_url || FALLBACK_VIDEO,
+                    }}
+                  />
 
                   <div className="camera-info">
                     <div className="cam-title-row">

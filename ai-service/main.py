@@ -70,32 +70,90 @@ def get_db_connection():
     )
 
 # 3. Memory bank for the "Security Scan"
+#
+# The cache is replaced only after a successful database read. A temporary
+# Cloud SQL error must not erase an already-working cache and make every person
+# appear as an unknown 0% match.
 known_faces = []
+_known_faces_lock = threading.Lock()
+_face_cache_last_attempt = 0.0
+_FACE_CACHE_RETRY_SECONDS = float(os.getenv("FACE_CACHE_RETRY_SECONDS", "15"))
+_FACE_MATCH_THRESHOLD = float(os.getenv("FACE_MATCH_THRESHOLD", "0.45"))
+
 
 @app.on_event("startup")
 def load_authorized_faces():
-    """Fetches all staff embeddings from Postgres on startup"""
-    global known_faces
-    known_faces = []
-    
+    """Load normalized enrolled-user embeddings from PostgreSQL.
+
+    Returns the number of usable templates. Invalid/empty vectors are skipped,
+    and the active cache is swapped atomically only after the query succeeds.
+    """
+    global known_faces, _face_cache_last_attempt
+    _face_cache_last_attempt = time.time()
+    conn = None
+    cur = None
+
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        # Cache keys on the unique user ID; name is retained ONLY for developer
-        # logging — matching and API responses use user_id, never the name.
-        cur.execute('SELECT id, name, "faceVector" FROM users WHERE "faceVector" IS NOT NULL')
+        cur.execute(
+            'SELECT id, name, "faceVector" FROM users '
+            'WHERE "isEnrolled" = TRUE AND "faceVector" IS NOT NULL'
+        )
         rows = cur.fetchall()
+        loaded_faces = []
 
         for user_id, name, embedding_json in rows:
             raw_embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
-            embedding = np.array(raw_embedding, dtype=np.float32)
-            known_faces.append({"user_id": user_id, "name": name, "embedding": embedding})
-            
-        cur.close()
-        conn.close()
-        print(f"✅ Security Scan Ready: {len(known_faces)} enrolled members loaded.")
+            embedding = np.asarray(raw_embedding, dtype=np.float32).reshape(-1)
+            norm = float(np.linalg.norm(embedding))
+
+            if embedding.size == 0 or not np.isfinite(embedding).all() or norm <= 0:
+                print(f"⚠️  Skipping invalid face template for user #{user_id}.")
+                continue
+
+            loaded_faces.append({
+                "user_id": user_id,
+                "name": name,
+                "embedding": embedding / norm,
+            })
+
+        with _known_faces_lock:
+            known_faces = loaded_faces
+
+        print(f"✅ Security Scan Ready: {len(loaded_faces)} enrolled members loaded.")
+        return len(loaded_faces)
     except Exception as e:
+        # Keep the previous good cache instead of replacing it with [].
         print(f"❌ DB Load Error: {e}")
+        with _known_faces_lock:
+            return len(known_faces)
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
+
+
+def _known_faces_snapshot():
+    """Return a stable copy for one recognition request."""
+    with _known_faces_lock:
+        return list(known_faces)
+
+
+def _ensure_face_cache():
+    """Retry an empty cache without hammering Cloud SQL on every frame."""
+    with _known_faces_lock:
+        cache_ready = bool(known_faces)
+
+    if cache_ready:
+        return True
+
+    if time.time() - _face_cache_last_attempt >= _FACE_CACHE_RETRY_SECONDS:
+        load_authorized_faces()
+
+    with _known_faces_lock:
+        return bool(known_faces)
 
 
 # --- Phase 2 - Biometric Enrollment Endpoint ---
@@ -207,40 +265,74 @@ async def recognize(request: RecognitionRequest):
     live_faces = face_app.get(img)
     inference_ms = int((time.time() - _inference_started) * 1000)
 
-    for face in live_faces:
-        best_match = None
-        highest_similarity = 0.0
-        live_embedding = face.embedding / np.linalg.norm(face.embedding)
-
-        for known in known_faces:
-            sim = float(np.dot(live_embedding, known["embedding"]))
-            if sim > highest_similarity:
-                highest_similarity = sim
-                best_match = known if sim > 0.45 else None
-
-        bbox = face.bbox
-        x = int(bbox[0])
-        y = int(bbox[1])
-        width = int(bbox[2] - bbox[0])
-        height = int(bbox[3] - bbox[1])
-
-        # 🎯 Calculate the Head Turn Ratio
-        liveness_ratio = calculate_head_turn(face.kps)
-
-        # Name stays in the developer log only — never in the response.
-        if best_match:
-            print(f"Recognize: matched user #{best_match['user_id']} ({best_match['name']}) sim={highest_similarity:.3f}")
-
+    if not live_faces:
         return {
-            "matchedUserId": best_match["user_id"] if best_match else None,
-            "confidence": round(highest_similarity, 4),
-            "box": [x, y, width, height],
-            "liveness_ratio": liveness_ratio,
-            "faceDetected": True,
-            "inference_ms": inference_ms
+            "matchedUserId": None,
+            "confidence": 0.0,
+            "box": None,
+            "liveness_ratio": 0.5,
+            "faceDetected": False,
+            "registry_ready": _ensure_face_cache(),
+            "enrolled_face_count": len(_known_faces_snapshot()),
+            "inference_ms": inference_ms,
         }
 
-    return {"matchedUserId": None, "confidence": 0.0, "box": None, "liveness_ratio": 0.5, "faceDetected": False, "inference_ms": inference_ms}
+    # Retry an empty/stale startup cache before classifying a detected face.
+    registry_ready = _ensure_face_cache()
+    face_registry = _known_faces_snapshot()
+
+    # Prefer the largest face in-frame. InsightFace's returned order is not a
+    # promise, and choosing a small/background face can produce an incorrect
+    # unknown result even when the intended subject is centred.
+    face = max(
+        live_faces,
+        key=lambda item: max(0.0, float(item.bbox[2] - item.bbox[0]))
+        * max(0.0, float(item.bbox[3] - item.bbox[1]))
+    )
+
+    best_match = None
+    highest_similarity = 0.0
+    live_norm = float(np.linalg.norm(face.embedding))
+    live_embedding = face.embedding / live_norm if live_norm > 0 else face.embedding
+
+    for known in face_registry:
+        sim = float(np.dot(live_embedding, known["embedding"]))
+        if sim > highest_similarity:
+            highest_similarity = sim
+            best_match = known if sim >= _FACE_MATCH_THRESHOLD else None
+
+    bbox = face.bbox
+    x = int(bbox[0])
+    y = int(bbox[1])
+    width = int(bbox[2] - bbox[0])
+    height = int(bbox[3] - bbox[1])
+    liveness_ratio = calculate_head_turn(face.kps)
+
+    # Name stays in the developer log only — never in the response.
+    if best_match:
+        print(
+            f"Recognize: matched user #{best_match['user_id']} "
+            f"({best_match['name']}) sim={highest_similarity:.3f}"
+        )
+    elif registry_ready:
+        print(
+            f"Recognize: unknown face, best similarity={highest_similarity:.3f}, "
+            f"threshold={_FACE_MATCH_THRESHOLD:.3f}, templates={len(face_registry)}"
+        )
+    else:
+        print("Recognize: face detected but the enrolled-face registry is empty.")
+
+    return {
+        "matchedUserId": best_match["user_id"] if best_match else None,
+        "confidence": round(max(0.0, highest_similarity), 4),
+        "box": [x, y, width, height],
+        "liveness_ratio": liveness_ratio,
+        "faceDetected": True,
+        "registry_ready": registry_ready,
+        "enrolled_face_count": len(face_registry),
+        "inference_ms": inference_ms,
+    }
+
 
 # --- Lightweight face tracking (detection + keypoints ONLY, no identity) ----
 # Powers the scanners' real-time face box + head-turn movement sampling. It
@@ -302,8 +394,12 @@ async def track(request: RecognitionRequest):
 # Helper to refresh the list manually if a new staff joins
 @app.get("/refresh", dependencies=[Depends(require_service_key)])
 def refresh():
-    load_authorized_faces()
-    return {"message": "Staff list updated from database"}
+    loaded = load_authorized_faces()
+    return {
+        "message": "Staff list updated from database",
+        "enrolled_face_count": loaded,
+        "registry_ready": loaded > 0,
+    }
 
 
 # ============================================================
@@ -318,12 +414,21 @@ _FOOD_CLASSES = {'banana', 'apple', 'orange'}
 _VEHICLE_CLASSES = {'truck'}
 # COCO ids: 0 person, 7 truck, 24 backpack, 26 handbag, 28 suitcase, 39 bottle,
 # 41 cup, 46 banana, 47 apple, 49 orange, 63 laptop, 67 cell phone, 73 book
-_YOLO_CLASS_IDS = os.getenv("YOLO_CLASS_IDS", "").strip()
-_YOLO_CLASS_IDS = [int(x.strip()) for x in _YOLO_CLASS_IDS.split(",") if x.strip()] or None
+_YOLO_CLASS_IDS_RAW = os.getenv("YOLO_CLASS_IDS", "").strip().lower()
+if _YOLO_CLASS_IDS_RAW in {"", "all", "*"}:
+    _YOLO_CLASS_IDS = None
+else:
+    _YOLO_CLASS_IDS = [
+        int(x.strip()) for x in _YOLO_CLASS_IDS_RAW.split(",") if x.strip()
+    ] or None
+
 _CAMERA_WIDTH = int(os.getenv("CAMERA_WIDTH", "640"))
 _CAMERA_HEIGHT = int(os.getenv("CAMERA_HEIGHT", "360"))
-_YOLO_IMG_SIZE = int(os.getenv("YOLO_IMG_SIZE", "640"))
-_YOLO_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.25"))
+# Slightly larger inference input + lower threshold help retain small office
+# objects (monitor/TV, chair, bottle, laptop, keyboard, mouse) in compressed
+# browser/video frames while staying practical for CPU-only Cloud Run.
+_YOLO_IMG_SIZE = int(os.getenv("YOLO_IMG_SIZE", "768"))
+_YOLO_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.18"))
 _YOLO_FPS = float(os.getenv("YOLO_FPS", "8"))
 _STREAM_FPS = float(os.getenv("STREAM_FPS", "12"))
 _FACE_RECOG_EVERY_N_FRAMES = int(os.getenv("FACE_RECOG_EVERY_N_FRAMES", "5"))
@@ -332,6 +437,11 @@ _PERSON_CRITICAL_COUNT = int(os.getenv("PERSON_CRITICAL_COUNT", "2"))
 _PERSON_ALERT_COOLDOWN = int(os.getenv("PERSON_ALERT_COOLDOWN", "30"))
 _PROXIMITY_PX = 160      # centroid distance threshold (pixels at 640-wide frame)
 _NODE_URL = os.getenv("NODE_SERVER_URL", "http://localhost:5001")
+print(
+    "YOLO config: "
+    f"imgsz={_YOLO_IMG_SIZE}, conf={_YOLO_CONFIDENCE}, "
+    f"classes={_YOLO_CLASS_IDS if _YOLO_CLASS_IDS is not None else 'ALL'}"
+)
 
 # A browser-submitted analyse-frame request may only claim to be one of these two
 # sources — never "SecurePi Edge Node", which is reserved for the authenticated
@@ -637,7 +747,7 @@ def _annotate_detection_frame(frame, recognize_faces=True, zone_config=None, sou
         if class_name == 'person':
             people_count += 1
             recog_name = "UNKNOWN"
-            display_label = "Person Detected"
+            display_label = f"Person {conf:.2f}"
             box_color = (0, 200, 200)
             label_color = (0, 200, 200)
 
@@ -845,7 +955,7 @@ def _yolo_detection_loop():
                 recog_name = "UNKNOWN"
                 box_color = (0, 200, 200)
                 label_color = (0, 200, 200)
-                display_label = "Person Detected"
+                display_label = f"Person {conf:.2f}"
 
                 track_key = (x1 // 80, y1 // 80)
                 cached_name, cached_sim = _person_name_cache[track_key]
