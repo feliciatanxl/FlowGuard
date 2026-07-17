@@ -9,18 +9,49 @@
   color: #f8fafc;
 }
 
+html {
+  width: 100%;
+  min-height: 100%;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #1e293b #0f172a;
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
   padding: 0;
-  min-height: 100vh;
   width: 100%;
-  overflow-x: hidden; 
-  position: relative; 
+  min-height: 100vh;
+  overflow-x: hidden;
+  position: relative;
 }
 
 #root {
   width: 100%;
-  overflow-x: hidden; 
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+.App {
+  width: 100%;
+  min-height: 100vh;
+}
+
+/*
+ * Authenticated FlowGuard pages use .dashboard-layout as a fixed-height shell.
+ * Lock every outer document layer while that shell exists so the browser/body
+ * cannot become a second vertical scroll container. .dashboard-main remains
+ * the only vertical content scroller.
+ */
+html:has(.dashboard-layout),
+html:has(.dashboard-layout) body,
+html:has(.dashboard-layout) #root,
+html:has(.dashboard-layout) .App {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden !important;
 }
 
 ::-webkit-scrollbar {
@@ -28,30 +59,23 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #0f172a; 
+  background: #0f172a;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1e293b; 
-  border-radius: 10px; 
+  background: #1e293b;
+  border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3b82f6; 
-}
-
-html {
-  overflow-x: hidden; 
-  scrollbar-width: thin;
-  scrollbar-color: #1e293b #0f172a;
-  scroll-behavior: smooth;
+  background: #3b82f6;
 }
 
 section[id] {
-  scroll-margin-top: 80px; 
+  scroll-margin-top: 80px;
 }
 
 .grecaptcha-badge {
-    bottom: 20px !important;
-    z-index: 9999 !important;
+  bottom: 20px !important;
+  z-index: 9999 !important;
 }
