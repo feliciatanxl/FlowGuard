@@ -84,7 +84,10 @@
     border: 1px solid #1e293b;
     box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2);
     margin-top: 1rem;
-    overflow: hidden;
+    /* overflow: hidden clipped badges on narrow production layouts;
+       allow horizontal scroll inside the card instead. */
+    overflow-x: auto;
+    overflow-y: hidden;
 }
 
 .management-table {
@@ -564,6 +567,52 @@
 .review-textarea:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15); }
 .review-select option { background: #0b0f1a; color: #f8fafc; }
 .review-textarea { resize: vertical; min-height: 52px; font-family: inherit; }
+
+/* =========================================
+   STAFF MANAGEMENT BADGES (page-specific — the generic .status-badge is
+   styled by several pages and collides in the production CSS bundle)
+   ========================================= */
+.staff-face-badge,
+.staff-presence-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.staff-face-badge.is-enrolled,
+.staff-presence-badge {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.staff-face-badge.not-enrolled {
+    background: #334155;
+    color: #cbd5e1;
+    border: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+/* Desktop: give the Face ID and Status columns room so badges never clip. */
+.staff-table th:nth-child(3),
+.staff-table td:nth-child(3) { min-width: 140px; }
+.staff-table th:nth-child(4),
+.staff-table td:nth-child(4) { min-width: 110px; }
+
+@media (max-width: 768px) {
+    /* The card layout stacks cells full-width; min-widths are unnecessary there. */
+    .staff-table th:nth-child(3),
+    .staff-table td:nth-child(3),
+    .staff-table th:nth-child(4),
+    .staff-table td:nth-child(4) { min-width: 0; }
+}
 
 /* Phones: keep the existing card behavior; drop min-widths so nothing overflows. */
 @media (max-width: 768px) {
