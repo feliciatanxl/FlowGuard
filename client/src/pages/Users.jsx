@@ -164,7 +164,7 @@ const Users = () => {
   const renderRoleBadge = (userRole) => {
     const meta = ROLE_META[userRole] || { badge: String(userRole), description: '' };
     return (
-      <div className="role-cell">
+      <div className="role-cell user-role-content">
         <span className={`role-badge role-${String(userRole).toLowerCase()}`}>{meta.badge}</span>
         {meta.description && <span className="role-description">{meta.description}</span>}
       </div>
@@ -344,9 +344,9 @@ const Users = () => {
                           <td className="user-name-cell" data-label="Personnel">
                             <div className="user-identity">
                               <div className="user-avatar-small">{u.name?.charAt(0).toUpperCase()}</div>
-                              <span className="user-name-text">
+                              <span className="user-name-line">
                                 <span className="user-name-value">{u.name}</span>
-                                {isSelf && <span className="self-tag">(You)</span>}
+                                {isSelf && <span className="current-user-badge" title="This is the account you are currently signed in with" aria-label="Currently signed-in account">YOU</span>}
                               </span>
                             </div>
                           </td>
@@ -375,8 +375,10 @@ const Users = () => {
                         <div className="user-avatar-small">{u.name?.charAt(0).toUpperCase()}</div>
                         <div className="user-card-identity">
                           <span className="user-card-name">
-                            {u.name}
-                            {isSelf && <span className="self-tag">(You)</span>}
+                            <span className="user-name-line">
+                              <span className="user-name-value">{u.name}</span>
+                              {isSelf && <span className="current-user-badge" title="This is the account you are currently signed in with" aria-label="Currently signed-in account">YOU</span>}
+                            </span>
                           </span>
                           <div className="user-card-badges">
                             {renderRoleBadge(u.role)}
