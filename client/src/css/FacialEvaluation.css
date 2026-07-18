@@ -212,3 +212,34 @@
 .eval-correct { color: #34d399; font-weight: 700; }
 .eval-incorrect { color: #fb7185; font-weight: 700; }
 @media (max-width: 900px) { .image-eval-grid { grid-template-columns: 1fr; } }
+
+/* --- Overview dashboard (auto-calculated scores + matrix) --- */
+.eval-mode-note {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  background: rgba(59, 130, 246, 0.1);
+  color: #93c5fd;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin-bottom: 12px;
+}
+
+.eval-summary-line { color: #cbd5e1; font-size: 0.9rem; margin: 10px 0 14px; }
+
+.eval-empty-state {
+  text-align: center;
+  padding: 28px 16px;
+  border: 1px dashed #334155;
+  border-radius: 12px;
+}
+.eval-empty-state h3 { margin: 0 0 8px; color: #f8fafc; }
+.eval-empty-state .eval-primary-btn { margin-top: 12px; }
+
+.eval-matrix-legend { color: #94a3b8; font-size: 0.82rem; margin: 14px 0 6px; }
+
+.eval-matrix-help { margin-top: 10px; font-size: 0.85rem; }
+.eval-matrix-help summary { cursor: pointer; color: #93c5fd; font-weight: 600; }
+.eval-matrix-help p { margin: 8px 0 0; }

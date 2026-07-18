@@ -29,8 +29,8 @@ const participants = [
 const renderPage = () => render(<MemoryRouter><FacialEvaluation /></MemoryRouter>);
 
 const getCard = () => screen.getByTestId("evaluation-participants-card");
-const openConfirm = () => fireEvent.click(within(getCard()).getByRole("button", { name: "Sync Enrolled Participants" }));
-const getDialog = () => screen.getByRole("dialog", { name: "Sync Enrolled Participants" });
+const openConfirm = () => fireEvent.click(within(getCard()).getByRole("button", { name: "Sync Participants" }));
+const getDialog = () => screen.getByRole("dialog", { name: "Sync Participants" });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -49,9 +49,9 @@ afterEach(() => {
 describe("Evaluation Participants sync card", () => {
   test("renders the active participant count and the FM sync button, without auto-syncing", async () => {
     renderPage();
-    expect(await within(getCard()).findByText("Active participants: 3")).toBeInTheDocument();
-    expect(within(getCard()).getByText("Assign stable evaluation labels to existing Face ID-enrolled users.")).toBeInTheDocument();
-    expect(within(getCard()).getByRole("button", { name: "Sync Enrolled Participants" })).toBeEnabled();
+    expect(await within(getCard()).findByText("P03")).toBeInTheDocument();
+    expect(within(getCard()).getByText(/FM-only mapping of anonymised P-labels/)).toBeInTheDocument();
+    expect(within(getCard()).getByRole("button", { name: "Sync Participants" })).toBeEnabled();
     // Read-only on load: GET only, never the POST sync endpoint.
     expect(mockAxios.get).toHaveBeenCalledWith(expect.stringContaining(PARTICIPANTS_URL), expect.anything());
     expect(mockAxios.post).not.toHaveBeenCalled();
@@ -65,32 +65,32 @@ describe("Evaluation Participants sync card", () => {
     const legend = await screen.findByTestId("participant-legend");
     expect(within(legend).getByText("P07")).toBeInTheDocument();
     expect(within(legend).getByText("Endpoint-Sourced Person")).toBeInTheDocument();
-    expect(screen.getByText("Active participants: 1")).toBeInTheDocument();
+    expect(within(legend).queryByText("P01")).toBeNull(); // endpoint data only — no hardcoded rows
   });
 
   test("clicking sync opens a confirmation explaining that existing labels are not changed", async () => {
     renderPage();
-    await within(getCard()).findByText("Active participants: 3");
+    await within(getCard()).findByText("P03");
     openConfirm();
     const dialog = getDialog();
-    expect(within(dialog).getByText(/Existing labels will not be changed/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/only eligible Face ID-enrolled users receive labels/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Existing labels are never changed or renumbered/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/every database user/)).toBeInTheDocument();
     expect(mockAxios.post).not.toHaveBeenCalled();
   });
 
   test("cancelling the confirmation makes no request", async () => {
     renderPage();
-    await within(getCard()).findByText("Active participants: 3");
+    await within(getCard()).findByText("P03");
     openConfirm();
     fireEvent.click(within(getDialog()).getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("dialog", { name: "Sync Enrolled Participants" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Sync Participants" })).toBeNull();
     expect(mockAxios.post).not.toHaveBeenCalled();
   });
 
   test("confirming calls ONLY the sync endpoint, shows the success count, and reloads participants", async () => {
     mockAxios.post.mockResolvedValue({ data: { synced: 2, participants } });
     renderPage();
-    await within(getCard()).findByText("Active participants: 3");
+    await within(getCard()).findByText("P03");
     const getCallsBefore = mockAxios.get.mock.calls.length;
 
     openConfirm();
@@ -111,7 +111,7 @@ describe("Evaluation Participants sync card", () => {
     let resolveSync;
     mockAxios.post.mockImplementation(() => new Promise((resolve) => { resolveSync = resolve; }));
     renderPage();
-    await within(getCard()).findByText("Active participants: 3");
+    await within(getCard()).findByText("P03");
 
     openConfirm();
     const confirmBtn = within(getDialog()).getByRole("button", { name: "Confirm Sync" });
@@ -119,33 +119,33 @@ describe("Evaluation Participants sync card", () => {
 
     // In-flight: modal button disabled + card button disabled; extra clicks do nothing.
     expect(screen.getByRole("button", { name: "Syncing…" })).toBeDisabled();
-    expect(within(getCard()).getByRole("button", { name: "Sync Enrolled Participants" })).toBeDisabled();
+    expect(within(getCard()).getByRole("button", { name: "Sync Participants" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Syncing…" }));
-    fireEvent.click(within(getCard()).getByRole("button", { name: "Sync Enrolled Participants" }));
+    fireEvent.click(within(getCard()).getByRole("button", { name: "Sync Participants" }));
     expect(mockAxios.post).toHaveBeenCalledTimes(1);
 
     resolveSync({ data: { synced: 0, participants } });
     expect(await screen.findByText("Participant sync completed. 0 new mapping(s) created.")).toBeInTheDocument();
-    expect(within(getCard()).getByRole("button", { name: "Sync Enrolled Participants" })).toBeEnabled();
+    expect(within(getCard()).getByRole("button", { name: "Sync Participants" })).toBeEnabled();
   });
 
   test("a failed sync shows a safe error message without leaking server internals", async () => {
     mockAxios.post.mockRejectedValue(new Error("ECONNREFUSED 127.0.0.1:3001 with secret stack"));
     renderPage();
-    await within(getCard()).findByText("Active participants: 3");
+    await within(getCard()).findByText("P03");
 
     openConfirm();
     fireEvent.click(within(getDialog()).getByRole("button", { name: "Confirm Sync" }));
 
     expect(await screen.findByText(/Participant sync failed\. Existing labels were not changed/)).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/ECONNREFUSED|stack|127\.0\.0\.1/);
-    expect(within(getCard()).getByRole("button", { name: "Sync Enrolled Participants" })).toBeEnabled();
+    expect(within(getCard()).getByRole("button", { name: "Sync Participants" })).toBeEnabled();
   });
 
   test("the sync flow never calls Attendance, SecurityLog, access-event, recognise or evaluate APIs", async () => {
     mockAxios.post.mockResolvedValue({ data: { synced: 1, participants } });
     renderPage();
-    await within(getCard()).findByText("Active participants: 3");
+    await within(getCard()).findByText("P03");
 
     openConfirm();
     fireEvent.click(within(getDialog()).getByRole("button", { name: "Confirm Sync" }));
@@ -163,7 +163,7 @@ describe("Evaluation Participants sync card", () => {
   test("no biometric or credential data is ever rendered", async () => {
     mockAxios.post.mockResolvedValue({ data: { synced: 1, participants } });
     renderPage();
-    await within(getCard()).findByText("Active participants: 3");
+    await within(getCard()).findByText("P03");
     openConfirm();
     fireEvent.click(within(getDialog()).getByRole("button", { name: "Confirm Sync" }));
     await screen.findByText(/Participant sync completed/);

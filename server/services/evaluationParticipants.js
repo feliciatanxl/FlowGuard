@@ -10,8 +10,9 @@ const formatEvaluationLabel = (sequenceNumber) => {
 const evaluationLabelSequence = (label) => { const match = LABEL_RE.exec(String(label || '')); return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER; };
 const isEligibleEvaluationUser = (user) => Boolean(user?.isEnrolled && Array.isArray(user?.faceVector) && user.faceVector.length > 0);
 
-async function assignStableEvaluationLabel(user, retries = 3) {
-  if (!isEligibleEvaluationUser(user)) return null;
+async function assignStableEvaluationLabel(user, retries = 3, { requireEligibility = true } = {}) {
+  if (!user?.id) return null;
+  if (requireEligibility && !isEligibleEvaluationUser(user)) return null;
   const existing = await EvaluationParticipant.findOne({ where: { userId: user.id } });
   if (existing) return existing;
   for (let attempt = 0; attempt < retries; attempt += 1) {
@@ -42,16 +43,19 @@ async function retireEvaluationParticipant(userId, transaction) {
   return participant;
 }
 
+// Every non-deleted User (any role, enrolled or not, suspended or not) gets a
+// stable P-label; matrix eligibility is reported separately via matrixEligible.
 async function syncEligibleEvaluationParticipants() {
-  const users = await User.findAll({ attributes: ['id', 'name', 'role', 'isActive', 'isEnrolled', 'faceVector'], where: { isEnrolled: true, faceVector: { [Op.ne]: null } } });
+  const users = await User.findAll({ attributes: ['id', 'name', 'role', 'isActive', 'isEnrolled', 'faceVector'] });
   const assigned = [];
-  for (const user of users) { const participant = await assignStableEvaluationLabel(user); if (participant) assigned.push(participant); }
+  for (const user of users) { const participant = await assignStableEvaluationLabel(user, 3, { requireEligibility: false }); if (participant) assigned.push(participant); }
   return assigned;
 }
 
 async function listEvaluationParticipants() {
-  const rows = await EvaluationParticipant.findAll({ where: { active: true, userId: { [Op.ne]: null } }, include: [{ model: User, as: 'User', attributes: ['id', 'name', 'role', 'isActive', 'isEnrolled'], required: true }] });
-  return rows.filter((row) => row.User?.isEnrolled).map((row) => ({ userId: row.User.id, evaluationLabel: row.evaluationLabel, name: row.User.name, role: row.User.role, isActive: Boolean(row.User.isActive), isEnrolled: Boolean(row.User.isEnrolled) })).sort((a, b) => evaluationLabelSequence(a.evaluationLabel) - evaluationLabelSequence(b.evaluationLabel));
+  const rows = await EvaluationParticipant.findAll({ where: { active: true, userId: { [Op.ne]: null } }, include: [{ model: User, as: 'User', attributes: ['id', 'name', 'role', 'isActive', 'isEnrolled', 'faceVector'], required: true }] });
+  // faceVector is used ONLY to compute eligibility server-side; it is never returned.
+  return rows.map((row) => ({ userId: row.User.id, evaluationLabel: row.evaluationLabel, name: row.User.name, role: row.User.role, isActive: Boolean(row.User.isActive), isEnrolled: Boolean(row.User.isEnrolled), matrixEligible: isEligibleEvaluationUser(row.User) })).sort((a, b) => evaluationLabelSequence(a.evaluationLabel) - evaluationLabelSequence(b.evaluationLabel));
 }
 
 module.exports = { formatEvaluationLabel, evaluationLabelSequence, isEligibleEvaluationUser, assignStableEvaluationLabel, retireEvaluationParticipant, syncEligibleEvaluationParticipants, listEvaluationParticipants };

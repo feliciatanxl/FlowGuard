@@ -123,6 +123,7 @@ const Sidebar = () => {
               <NavLink to="/object-detection" onClick={handleNavClick}>Object Detection</NavLink>
               <NavLink to="/detection-settings" onClick={handleNavClick}>Detection Setup</NavLink>
               <NavLink to="/gate-scanner" onClick={handleNavClick}>Gate Scanner</NavLink>
+              <NavLink to="/facial-evaluation" onClick={handleNavClick}>AI Evaluation</NavLink>
             </>
           )}
 

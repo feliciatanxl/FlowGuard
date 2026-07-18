@@ -13,7 +13,9 @@ vi.mock("axios", () => ({ default: mockAxios }));
 import FacialEvaluation from "../../src/pages/FacialEvaluation";
 import { SIM_USERS_KEY, EVAL_STORAGE_KEY } from "../../src/constants/evaluation";
 
-const renderPage = (initialEntry = "/facial-evaluation") =>
+// Overview is the page default; these CRUD tests exercise the Simulated
+// Workflow tab, so deep-link straight to it.
+const renderPage = (initialEntry = "/facial-evaluation?tab=sim") =>
   render(<MemoryRouter initialEntries={[initialEntry]}><FacialEvaluation /></MemoryRouter>);
 
 beforeEach(() => {
@@ -205,9 +207,9 @@ describe("Simulated DELETE", () => {
 });
 
 describe("Deep links", () => {
-  test("?tab=matrix&source=Live opens the matrix tab in Live mode", () => {
+  test("legacy ?tab=matrix&source=Live lands on Overview (which hosts the matrix) in Live mode", () => {
     renderPage("/facial-evaluation?tab=matrix&source=Live&origin=Gate%20Scanner");
-    expect(screen.getByRole("tab", { name: "Confusion Matrix", selected: true })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Overview", selected: true })).toBeTruthy();
     expect(screen.getByLabelText("Matrix source filter").value).toBe("Live");
     expect(screen.getByLabelText("Matrix origin filter").value).toBe("Gate Scanner");
   });

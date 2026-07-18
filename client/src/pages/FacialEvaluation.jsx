@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
@@ -44,7 +44,7 @@ import {
 const formatPct = (v) => `${(v * 100).toFixed(1)}%`;
 const nowIso = () => new Date().toISOString();
 
-const TABS = ['live', 'sim', 'records', 'matrix'];
+const TABS = ['overview', 'live', 'records', 'sim'];
 const ORIENTATIONS = ['Front', 'Left Angle', 'Right Angle'];
 const SIM_ENROL_SOURCES = ['Simulated Pi Camera', 'Simulated Laptop Webcam', 'Temporary Upload'];
 const READ_SCENARIOS = [
@@ -95,7 +95,9 @@ const FacialEvaluation = () => {
   const paramSource = searchParams.get('source');
   const paramOrigin = searchParams.get('origin');
 
-  const [activeTab, setActiveTab] = useState(TABS.includes(paramTab) ? paramTab : 'sim');
+  // Overview is the default: scores and the matrix are the purpose of the page.
+  // Legacy ?tab=matrix deep links land on Overview, which now hosts the matrix.
+  const [activeTab, setActiveTab] = useState(TABS.includes(paramTab) ? paramTab : 'overview');
   const [records, setRecords] = useState(() => loadRecords());
   const [filters, setFilters] = useState({ source: 'All', condition: 'All', date: '', origin: 'All' });
   // The matrix defaults to LIVE records: only live records measure the actual
@@ -142,7 +144,7 @@ const FacialEvaluation = () => {
   const token = localStorage.getItem('accessToken');
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [clearAccessToo, setClearAccessToo] = useState(false);
-  const { participants: evaluationParticipants, labels: participantLabels, namesByLabel, reload: reloadParticipants } = useEvaluationParticipants();
+  const { participants: evaluationParticipants, eligibleParticipants, labels: participantLabels, namesByLabel, reload: reloadParticipants } = useEvaluationParticipants();
 
   // Explicit FM-controlled backfill only — never triggered on page load.
   const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
@@ -492,31 +494,33 @@ const FacialEvaluation = () => {
     URL.revokeObjectURL(url);
   };
 
-  const filtered = filterRecords(records, filters);
-  const matrixFiltered = filterRecords(records, matrixFilters);
-  const stats = computeConfusionMatrix(matrixFiltered, participantLabels);
-  const liveStats = computeConfusionMatrix(filterRecords(records, { source: 'Live' }), participantLabels);
-  const simStats = computeConfusionMatrix(filterRecords(records, { source: 'Simulated' }), participantLabels);
+  // All scores derive automatically from records + filters — no Calculate
+  // button. Any record or filter change recomputes the matrix immediately.
+  const filtered = useMemo(() => filterRecords(records, filters), [records, filters]);
+  const matrixFiltered = useMemo(() => filterRecords(records, matrixFilters), [records, matrixFilters]);
+  const stats = useMemo(() => computeConfusionMatrix(matrixFiltered, participantLabels), [matrixFiltered, participantLabels]);
   const labelOptions = [...IDENTITY_LABELS, NO_FACE];
+  const totalUsers = evaluationParticipants.length;
+  const enrolledUsersCount = evaluationParticipants.filter((p) => p.isEnrolled).length;
+  const overviewIsSim = matrixFilters.source === 'Simulated';
+  const METRIC_CARDS = [
+    ['Confirmed Samples', String(stats.sampleCount), 'stat-samples', 'Evaluator-confirmed identity samples matching the current filters.'],
+    ['Accuracy', formatPct(stats.accuracy), 'stat-accuracy', 'Percentage of confirmed identity samples predicted correctly.'],
+    ['Macro Precision', formatPct(stats.macroPrecision), 'stat-precision', 'Average precision across evaluated identity classes.'],
+    ['Macro Recall', formatPct(stats.macroRecall), 'stat-recall', 'Average recall across evaluated identity classes.'],
+    ['Macro F1', formatPct(stats.macroF1), 'stat-f1', 'Balanced average of macro precision and macro recall.'],
+    ['False Accept Rate', formatPct(stats.far), 'stat-far', 'Unknown participant incorrectly predicted as an enrolled P-label.'],
+    ['False Reject Rate', formatPct(stats.frr), 'stat-frr', 'Enrolled participant incorrectly predicted as Unknown.'],
+    ['Avg Latency', `${Math.round(stats.avgLatencyMs)} ms`, 'stat-latency', 'Average model response time for the filtered samples.'],
+  ];
 
   return (
     <div className="dashboard-layout">
       <Sidebar />
       <main className="dashboard-main eval-main">
-        <header className="dashboard-header"><div className="header-titles"><h1>Facial Evaluation Lab</h1><p>FM-only accuracy evaluation with stable database-backed participant labels</p></div><button className="eval-danger-btn" onClick={() => setClearDialogOpen(true)}>Clear Local Evaluation Records</button></header>
-        <div className="eval-banner" role="status">SIMULATION MODE — Production users, Face IDs, attendance and security logs are not modified.</div><p className="eval-warning">Some historical evaluation records were created before database-backed identity labels were enabled and may be inaccurate.</p>
-        <div className="eval-live-links"><span>Production workflows remain on their live pages:</span><Link to="/enrollment" className="eval-link-btn">Open Face Enrollment</Link><Link to="/vpatrol" className="eval-link-btn">Open V-Patrol</Link><Link to="/gate-scanner" className="eval-link-btn">Open Gate Scanner</Link></div>
+        <header className="dashboard-header"><div className="header-titles"><h1>Facial Recognition Evaluation</h1><p>Measure recognition accuracy using evaluator-confirmed ground-truth samples. FlowGuard proof-of-concept evaluation results — not certified biometric accuracy.</p></div><button className="eval-danger-btn" onClick={() => setClearDialogOpen(true)}>Clear Local Evaluation Records</button></header>
 
-        <section className="eval-card" data-testid="evaluation-participants-card"><h2>Evaluation Participants</h2>
-          <p><strong>Active participants: {evaluationParticipants.length}</strong></p>
-          <p className="eval-muted">Assign stable evaluation labels to existing Face ID-enrolled users.</p>
-          <div className="eval-map-list" data-testid="participant-legend">{evaluationParticipants.map((participant) => <div className="eval-map-row" key={participant.evaluationLabel}><strong>{participant.evaluationLabel}</strong><span>{participant.name}</span></div>)}</div>
-          <button className="eval-primary-btn" disabled={syncing} onClick={() => setSyncConfirmOpen(true)}>Sync Enrolled Participants</button>
-          {syncMessage && <p className="eval-success" role="status">{syncMessage}</p>}
-          {syncError && <p className="eval-error" role="alert">{syncError}</p>}
-        </section>
-
-        {syncConfirmOpen && <div className="eval-recorder-overlay" role="dialog" aria-modal="true" aria-label="Sync Enrolled Participants"><div className="eval-recorder-modal"><h3>Sync Enrolled Participants</h3><p>This assigns the next stable P-labels to eligible Face ID-enrolled users that do not have one yet. Existing labels will not be changed, and only eligible Face ID-enrolled users receive labels.</p><div className="eval-recorder-actions"><button onClick={() => setSyncConfirmOpen(false)} disabled={syncing}>Cancel</button><button className="eval-primary-btn" disabled={syncing} onClick={runParticipantSync}>{syncing ? 'Syncing…' : 'Confirm Sync'}</button></div></div></div>}
+        {syncConfirmOpen && <div className="eval-recorder-overlay" role="dialog" aria-modal="true" aria-label="Sync Participants"><div className="eval-recorder-modal"><h3>Sync Participants</h3><p>This assigns the next stable P-label to every database user that does not have one yet, regardless of role, enrolment or suspension. Existing labels are never changed or renumbered.</p><div className="eval-recorder-actions"><button onClick={() => setSyncConfirmOpen(false)} disabled={syncing}>Cancel</button><button className="eval-primary-btn" disabled={syncing} onClick={runParticipantSync}>{syncing ? 'Syncing…' : 'Confirm Sync'}</button></div></div></div>}
 
         {clearDialogOpen && <div className="eval-recorder-overlay" role="dialog" aria-modal="true" aria-label="Clear Local Evaluation Records"><div className="eval-recorder-modal"><h3>Clear Local Evaluation Records</h3>
           <p>Identity evaluation records are stored locally in this browser only. Clearing this local evaluation metadata does not remove or modify:</p>
@@ -530,16 +534,57 @@ const FacialEvaluation = () => {
           </ul>
           <p>Access-decision records are cleared only when you separately select the option below. These records never contain uploaded images, base64 data or embeddings.</p>
           <label><input type="checkbox" checked={clearAccessToo} onChange={(event) => setClearAccessToo(event.target.checked)} /> Also clear local access evaluation records</label><div className="eval-recorder-actions"><button onClick={() => setClearDialogOpen(false)}>Cancel</button><button className="eval-danger-btn" onClick={() => { saveRecords([]); setRecords([]); if (clearAccessToo) saveAccessEvaluationRecords([]); notifyEvaluationRecordsUpdated(); setClearDialogOpen(false); }}>Confirm Clear</button></div></div></div>}        <div className="eval-tabs" role="tablist">
-          <button role="tab" aria-selected={activeTab === 'live'} className={`eval-tab ${activeTab === 'live' ? 'active' : ''}`} onClick={() => setActiveTab('live')}>Live Model Evaluation</button>
-          <button role="tab" aria-selected={activeTab === 'sim'} className={`eval-tab ${activeTab === 'sim' ? 'active' : ''}`} onClick={() => setActiveTab('sim')}>Simulated Facial CRUD</button>
+          <button role="tab" aria-selected={activeTab === 'overview'} className={`eval-tab ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}>Overview</button>
+          <button role="tab" aria-selected={activeTab === 'live'} className={`eval-tab ${activeTab === 'live' ? 'active' : ''}`} onClick={() => setActiveTab('live')}>Run Live Evaluation</button>
           <button role="tab" aria-selected={activeTab === 'records'} className={`eval-tab ${activeTab === 'records' ? 'active' : ''}`} onClick={() => setActiveTab('records')}>Evaluation Records</button>
-          <button role="tab" aria-selected={activeTab === 'matrix'} className={`eval-tab ${activeTab === 'matrix' ? 'active' : ''}`} onClick={() => setActiveTab('matrix')}>Confusion Matrix</button>
+          <button role="tab" aria-selected={activeTab === 'sim'} className={`eval-tab ${activeTab === 'sim' ? 'active' : ''}`} onClick={() => setActiveTab('sim')}>Simulated Workflow</button>
         </div>
 
-        {activeTab === 'live' && <section className="eval-card"><h2>Live Model Evaluation</h2><p className="eval-muted">Uses the real side-effect-free model endpoint (/api/facial-recognition/evaluate). Temporary frames only — no Attendance, SecurityLogs, User updates, enrolment changes, images, templates or vectors are stored.</p>
-          <div className="eval-card nested"><h3>Database-backed participant labels</h3><div className="eval-map-list">{evaluationParticipants.map((participant) => <div className="eval-map-row" key={participant.evaluationLabel}><strong>{participant.evaluationLabel}</strong><span>{participant.name}</span></div>)}</div></div>
+        {activeTab === 'overview' && <>
+          <p className="eval-mode-note" role="status" data-testid="overview-mode-note">{overviewIsSim ? 'SIMULATED RESULTS — Workflow test data that does not measure real model accuracy.' : 'LIVE MODEL RESULTS — Calculated automatically from confirmed controlled evaluation samples.'}</p>
+
+          <section className="eval-card">
+            <div className="eval-filter-bar">
+              <label>Source<select aria-label="Matrix source filter" value={matrixFilters.source} onChange={(e) => setMatrixFilters({ ...matrixFilters, source: e.target.value })}><option value="Live">Live — real model evaluation</option><option value="Simulated">Simulated — workflow data</option><option value="All">All sources</option></select></label>
+              <label>Condition<select aria-label="Matrix condition filter" value={matrixFilters.condition} onChange={(e) => setMatrixFilters({ ...matrixFilters, condition: e.target.value })}>{['All', ...CONDITIONS].map((c) => <option key={c}>{c}</option>)}</select></label>
+              <label>Origin<select aria-label="Matrix origin filter" value={matrixFilters.origin} onChange={(e) => setMatrixFilters({ ...matrixFilters, origin: e.target.value })}><option value="All">{matrixFilters.source === 'Live' ? 'All Live Sources' : 'All Origins'}</option>{ORIGINS.map((o) => <option key={o} value={o}>{o}</option>)}</select></label>
+              <label>Date<input type="date" aria-label="Matrix date filter" value={matrixFilters.date} onChange={(e) => setMatrixFilters({ ...matrixFilters, date: e.target.value })} /></label>
+              <button className="eval-secondary-btn" onClick={() => { setRecords(loadRecords()); reloadParticipants(); }}>Refresh</button>
+            </div>
+            <p className="eval-summary-line" data-testid="overview-summary">{totalUsers} total users • {enrolledUsersCount} face-enrolled • {totalUsers - enrolledUsersCount} not enrolled • {stats.sampleCount} confirmed samples</p>
+
+            {stats.sampleCount === 0 ? (
+              <div className="eval-empty-state" data-testid="overview-empty">
+                <h3>No confirmed {overviewIsSim ? 'Simulated' : 'Live'} evaluation samples are available yet.</h3>
+                <p className="eval-muted">Complete controlled recognition tests with a confirmed actual identity to generate the confusion matrix.</p>
+                <button className="eval-primary-btn" onClick={() => setActiveTab('live')}>Run Live Evaluation</button>
+              </div>
+            ) : (<>
+              <div className="eval-stat-row">{METRIC_CARDS.map(([label, value, testId, help]) => <div className="eval-stat" key={testId} title={help}><span>{label}</span><strong data-testid={testId}>{value}</strong></div>)}</div>
+              <p className="eval-matrix-legend">Rows: Actual identity · Columns: AI prediction · Diagonal: correct recognition</p>
+              <div className="eval-table-wrap"><table className="eval-table eval-matrix" data-testid="confusion-matrix"><thead><tr><th>Actual \ Predicted</th>{stats.labels.map((l) => <th key={l}>{l}</th>)}</tr></thead><tbody>{stats.labels.map((rowLabel, i) => <tr key={rowLabel}><th>{rowLabel}</th>{stats.labels.map((colLabel, j) => <td key={colLabel} className={i === j ? 'eval-diagonal' : stats.matrix[i][j] > 0 ? 'eval-offdiag' : ''}>{stats.matrix[i][j]}</td>)}</tr>)}</tbody></table></div>
+              <details className="eval-matrix-help"><summary>How to read this matrix</summary><p className="eval-muted">Each row is the evaluator-confirmed actual identity; each column is the AI prediction. Off-diagonal cells are recognition mistakes. An actual Unknown predicted as an enrolled P-label is a false accept; an enrolled P-label predicted as Unknown is a false reject. Suspended-but-enrolled participants remain valid identity classes — suspension affects access permission, not recognition accuracy. &ldquo;No Face&rdquo; is a detection outcome and is never counted as an identity class.</p></details>
+              <div className="eval-form-row"><button className="eval-secondary-btn" onClick={() => setActiveTab('live')}>Add evaluation sample</button></div>
+            </>)}
+
+            {stats.noFaceCount > 0 && <p className="eval-muted" data-testid="no-face-stat">Detection quality: {stats.noFaceCount} &ldquo;No Face&rdquo; sample(s) ({formatPct(stats.noFaceRate)} of filtered records) - tracked separately, never as an identity class.</p>}
+          </section>
+
+          <section className="eval-card" data-testid="evaluation-participants-card"><h2>Participant Directory</h2>
+            <p className="eval-muted">FM-only mapping of anonymised P-labels to database users. Real names never appear on matrix axes, in records or in CSV exports.</p>
+            <div className="eval-table-wrap"><table className="eval-table" data-testid="participant-legend"><thead><tr><th>Label</th><th>Name</th><th>Role</th><th>Status</th><th>Face ID</th><th>Matrix</th></tr></thead><tbody>{evaluationParticipants.length === 0 ? <tr><td colSpan={6} className="eval-muted">No participant mappings yet — run Sync Participants.</td></tr> : evaluationParticipants.map((participant) => <tr key={participant.evaluationLabel}><td><strong>{participant.evaluationLabel}</strong></td><td>{participant.name}</td><td>{participant.role}</td><td>{participant.isActive === false ? 'Suspended' : 'Active'}</td><td>{participant.isEnrolled ? 'Face enrolled' : 'Not enrolled'}</td><td>{(participant.matrixEligible ?? participant.isEnrolled) ? 'Included in matrix' : 'Excluded until face enrolment'}</td></tr>)}</tbody></table></div>
+            <button className="eval-primary-btn" disabled={syncing} onClick={() => setSyncConfirmOpen(true)}>Sync Participants</button>
+            {syncMessage && <p className="eval-success" role="status">{syncMessage}</p>}
+            {syncError && <p className="eval-error" role="alert">{syncError}</p>}
+          </section>
+
+          <div className="eval-live-links"><span>Production workflows remain on their live pages:</span><Link to="/enrollment" className="eval-link-btn">Open Face Enrollment</Link><Link to="/vpatrol" className="eval-link-btn">Open V-Patrol</Link><Link to="/gate-scanner" className="eval-link-btn">Open Gate Scanner</Link></div>
+        </>}
+
+        {activeTab === 'live' && <section className="eval-card"><h2>Run Live Evaluation</h2><p className="eval-mode-note">SAFE LIVE EVALUATION — Uses the real recognition model without creating Attendance or SecurityLog records. Temporary frames only; no images, templates or vectors are stored.</p>
+          <div className="eval-card nested"><h3>Eligible enrolled identities</h3><div className="eval-map-list">{eligibleParticipants.map((participant) => <div className="eval-map-row" key={participant.evaluationLabel}><strong>{participant.evaluationLabel}</strong><span>{participant.name}</span></div>)}</div></div>
           <div className="eval-live-grid"><div><h3>Temporary source</h3><button className="eval-secondary-btn" onClick={initLiveCamera}>Use Pi primary / webcam fallback</button><span className="eval-muted"> {cameraStatusMsg}</span><div className="eval-camera-box"><video ref={videoRef} autoPlay playsInline muted /><canvas ref={canvasRef} style={{ display: 'none' }} /></div><button className="eval-primary-btn" onClick={() => runLiveEvaluate('camera')}>Run model on camera frame</button></div><div><h3>Temporary upload</h3><input aria-label="Temporary evaluation upload" type="file" accept="image/*" onChange={(e) => handleUpload(e.target.files[0])} />{uploadPreviewUrl && <img src={uploadPreviewUrl} alt="temporary evaluation preview" className="eval-upload-preview" />}<button className="eval-primary-btn" onClick={() => runLiveEvaluate('upload')}>Run model on upload</button></div></div>
-          <div className="eval-form-row"><label>Actual label<select value={liveInput.actualLabel} onChange={(e) => setLiveInput({ ...liveInput, actualLabel: e.target.value })}><option value="">Select ground-truth identity</option>{evaluationParticipants.map((participant) => <option key={participant.evaluationLabel} value={participant.evaluationLabel}>{participant.evaluationLabel} — {participant.name}</option>)}<option value="Unknown">Unknown Person</option></select></label><label>Condition<select value={liveInput.condition} onChange={(e) => setLiveInput({ ...liveInput, condition: e.target.value })}>{CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}</select></label><label className="eval-notes-field">Notes<input value={liveInput.notes} onChange={(e) => setLiveInput({ ...liveInput, notes: e.target.value })} /></label></div>
+          <div className="eval-form-row"><label>Actual label<select value={liveInput.actualLabel} onChange={(e) => setLiveInput({ ...liveInput, actualLabel: e.target.value })}><option value="">Select ground-truth identity</option>{eligibleParticipants.map((participant) => <option key={participant.evaluationLabel} value={participant.evaluationLabel}>{participant.evaluationLabel} — {participant.name}</option>)}<option value="Unknown">Unknown — Non-enrolled participant</option></select></label><label>Condition<select value={liveInput.condition} onChange={(e) => setLiveInput({ ...liveInput, condition: e.target.value })}>{CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}</select></label><label className="eval-notes-field">Notes<input value={liveInput.notes} onChange={(e) => setLiveInput({ ...liveInput, notes: e.target.value })} /></label></div>
           {liveResult && <div className="eval-result"><h3>Model telemetry</h3><p>Predicted: {liveDraft?.detectionOutcome === DETECTION_OUTCOMES.NO_FACE ? 'No Face' : liveDraft?.predictedLabel || 'Assign evaluation label first'}</p><p>Confidence: {liveDraft?.confidence ?? 0}</p><p>Latency: {liveDraft?.latencyMs ?? 0} ms</p><p>Liveness: {liveResult.liveness?.status || 'unavailable'}</p>{liveDraft?.needsMapping && <p className="eval-error">Assign evaluation label first</p>}<button className="eval-primary-btn" disabled={liveDraft?.needsMapping} onClick={saveLiveDraft}>Save Live Evaluation Record</button></div>}
           {liveError && <p className={liveError.includes('recorded') ? 'eval-success' : 'eval-error'}>{liveError}</p>}
         </section>}
@@ -557,7 +602,7 @@ const FacialEvaluation = () => {
               <li><strong>Delete:</strong> removes only the simulated participant and its simulated evaluation records.</li>
               <li><strong>Live vs Simulated:</strong> only Live records (Live Model Evaluation, Gate Scanner, V-Patrol) measure the actual model. Simulated records only prove workflow logic.</li>
               <li><strong>Ground truth:</strong> the Actual label cannot be inferred from the AI prediction — you must confirm who was really in front of the camera, otherwise the matrix would only ever agree with the model.</li>
-              <li><strong>Results:</strong> confirmed records appear under Evaluation Records and in the Confusion Matrix tab (live pages embed their own live matrices).</li>
+              <li><strong>Results:</strong> confirmed records appear in Overview (scores and matrix) and under Evaluation Records.</li>
             </ul>
           </div>
 
@@ -621,11 +666,10 @@ const FacialEvaluation = () => {
           {lastResult && <div className="eval-result" data-testid="sim-result"><h3>{lastResult.title}</h3><dl className="eval-result-grid"><div><dt>Person</dt><dd>{lastResult.personLabel}</dd></div><div><dt>Role</dt><dd>{lastResult.role}</dd></div><div><dt>Confidence</dt><dd>{Number(lastResult.confidence || 0).toFixed(2)}</dd></div><div><dt>Account State</dt><dd>{lastResult.accountState}</dd></div><div><dt>Decision</dt><dd className={lastResult.access === 'Access Granted' ? 'eval-granted' : 'eval-denied'}>{lastResult.access}</dd></div><div><dt>Latency</dt><dd>{lastResult.latencyMs} ms</dd></div></dl><p className="eval-action">{lastResult.action}</p>{lastResult.recordable && <div className="eval-result-actions"><label>Condition:<select value={simCondition} onChange={(e) => setSimCondition(e.target.value)}>{CONDITIONS.map((c) => <option key={c} value={c}>{c}</option>)}</select></label><button className="eval-primary-btn" onClick={logLastResult}>Log to evaluation records</button></div>}</div>}
         </section>}
 
-        {activeTab === 'records' && <section className="eval-card"><h2>Evaluation Records</h2><form className="eval-live-form" onSubmit={addLiveRecord} aria-label="Record live result"><h3>Manual live result fallback</h3><div className="eval-form-row"><label>Actual<select value={liveForm.actualLabel} onChange={(e) => setLiveForm({ ...liveForm, actualLabel: e.target.value })}>{labelOptions.map((l) => <option key={l}>{l}</option>)}</select></label><label>Predicted<select value={liveForm.predictedLabel} onChange={(e) => setLiveForm({ ...liveForm, predictedLabel: e.target.value })}>{labelOptions.map((l) => <option key={l}>{l}</option>)}</select></label><label>Confidence<input type="number" step="0.01" min="0" max="1" value={liveForm.confidence} onChange={(e) => setLiveForm({ ...liveForm, confidence: e.target.value })} /></label><label>Condition<select value={liveForm.condition} onChange={(e) => setLiveForm({ ...liveForm, condition: e.target.value })}>{CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></label><label>Origin<select value={liveForm.origin} onChange={(e) => setLiveForm({ ...liveForm, origin: e.target.value })}>{ORIGINS.map((o) => <option key={o}>{o}</option>)}</select></label><label>Latency (ms)<input type="number" min="0" value={liveForm.latencyMs} onChange={(e) => setLiveForm({ ...liveForm, latencyMs: e.target.value })} /></label><label className="eval-notes-field">Notes<input value={liveForm.notes} onChange={(e) => setLiveForm({ ...liveForm, notes: e.target.value })} /></label><button type="submit" className="eval-primary-btn">Add Live Result</button></div></form>
+        {activeTab === 'records' && <section className="eval-card"><h2>Evaluation Records</h2><p className="eval-mode-note">ANONYMISED RECORDS — Images and biometric templates are not stored.</p><form className="eval-live-form" onSubmit={addLiveRecord} aria-label="Record live result"><h3>Manual live result fallback</h3><div className="eval-form-row"><label>Actual<select value={liveForm.actualLabel} onChange={(e) => setLiveForm({ ...liveForm, actualLabel: e.target.value })}>{labelOptions.map((l) => <option key={l}>{l}</option>)}</select></label><label>Predicted<select value={liveForm.predictedLabel} onChange={(e) => setLiveForm({ ...liveForm, predictedLabel: e.target.value })}>{labelOptions.map((l) => <option key={l}>{l}</option>)}</select></label><label>Confidence<input type="number" step="0.01" min="0" max="1" value={liveForm.confidence} onChange={(e) => setLiveForm({ ...liveForm, confidence: e.target.value })} /></label><label>Condition<select value={liveForm.condition} onChange={(e) => setLiveForm({ ...liveForm, condition: e.target.value })}>{CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></label><label>Origin<select value={liveForm.origin} onChange={(e) => setLiveForm({ ...liveForm, origin: e.target.value })}>{ORIGINS.map((o) => <option key={o}>{o}</option>)}</select></label><label>Latency (ms)<input type="number" min="0" value={liveForm.latencyMs} onChange={(e) => setLiveForm({ ...liveForm, latencyMs: e.target.value })} /></label><label className="eval-notes-field">Notes<input value={liveForm.notes} onChange={(e) => setLiveForm({ ...liveForm, notes: e.target.value })} /></label><button type="submit" className="eval-primary-btn">Add Live Result</button></div></form>
           <div className="eval-filter-bar"><label>Source<select aria-label="Filter by source" value={filters.source} onChange={(e) => setFilters({ ...filters, source: e.target.value })}>{['All', ...SOURCES].map((s) => <option key={s}>{s}</option>)}</select></label><label>Condition<select aria-label="Filter by condition" value={filters.condition} onChange={(e) => setFilters({ ...filters, condition: e.target.value })}>{['All', ...CONDITIONS].map((c) => <option key={c}>{c}</option>)}</select></label><label>Origin<select aria-label="Filter by origin" value={filters.origin} onChange={(e) => setFilters({ ...filters, origin: e.target.value })}>{['All', ...ORIGINS].map((o) => <option key={o}>{o}</option>)}</select></label><label>Date<input type="date" aria-label="Filter by date" value={filters.date} onChange={(e) => setFilters({ ...filters, date: e.target.value })} /></label><button className="eval-secondary-btn" onClick={exportCsv}>Export CSV</button><button className="eval-danger-btn" onClick={clearSimulated}>Clear Simulated Results</button></div>
           <div className="eval-table-wrap"><table className="eval-table"><thead><tr><th>Actual</th><th>Predicted</th><th>Confidence</th><th>Condition</th><th>Latency</th><th>Source</th><th>Origin</th><th>Notes</th><th>Outcome</th><th>Time</th><th>Actions</th></tr></thead><tbody>{filtered.length === 0 ? <tr><td colSpan={11} className="eval-muted">No evaluation records match the current filters.</td></tr> : filtered.map((r) => <tr key={r.id} data-testid={`eval-row-${r.id}`}>{editingId === r.id ? <><td><select aria-label="Edit actual label" value={editDraft.actualLabel} onChange={(e) => setEditDraft({ ...editDraft, actualLabel: e.target.value })}>{IDENTITY_LABELS.map((l) => <option key={l}>{l}</option>)}</select></td><td><select aria-label="Edit predicted label" value={editDraft.predictedLabel} onChange={(e) => setEditDraft({ ...editDraft, predictedLabel: e.target.value })}>{IDENTITY_LABELS.map((l) => <option key={l}>{l}</option>)}</select></td><td>{r.confidence ?? '-'}</td><td><select aria-label="Edit condition" value={editDraft.condition} onChange={(e) => setEditDraft({ ...editDraft, condition: e.target.value })}>{CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></td><td>{r.latencyMs ?? '-'}</td><td>{r.source}</td><td><select aria-label="Edit origin" value={editDraft.origin} onChange={(e) => setEditDraft({ ...editDraft, origin: e.target.value })}>{ORIGINS.map((o) => <option key={o}>{o}</option>)}</select></td><td><input aria-label="Edit notes" value={editDraft.notes} onChange={(e) => setEditDraft({ ...editDraft, notes: e.target.value })} /></td><td>{r.detectionOutcome || '-'}</td><td>{(r.timestamp || '').slice(0, 16).replace('T', ' ')}</td><td><button className="eval-primary-btn" onClick={() => saveEdit(r.id)}>Save</button><button className="eval-secondary-btn" onClick={() => setEditingId(null)}>Cancel</button></td></> : <><td>{r.actualLabel || '-'}</td><td>{r.predictedLabel || '-'}</td><td>{r.confidence == null ? '-' : Number(r.confidence).toFixed(2)}</td><td>{r.condition}</td><td>{r.latencyMs == null ? '-' : `${r.latencyMs} ms`}</td><td><span className={`eval-source-tag ${r.source.toLowerCase()}`}>{r.source}</span></td><td>{r.origin}</td><td className="eval-notes-cell">{r.notes}</td><td>{r.detectionOutcome || '-'}</td><td>{(r.timestamp || '').slice(0, 16).replace('T', ' ')}</td><td><button className="eval-secondary-btn" onClick={() => startEdit(r)}>Edit</button><button className="eval-danger-btn" onClick={() => deleteRecord(r.id)}>Delete</button></td></>}</tr>)}</tbody></table></div></section>}
 
-        {activeTab === 'matrix' && <section className="eval-card"><h2>Confusion Matrix</h2><p className="eval-muted"><strong>Only Live records measure actual model performance.</strong> Simulated records validate workflow behaviour only. The default view below is therefore Live-only.</p><p className="eval-muted">Live Accuracy: {formatPct(liveStats.accuracy)} | Simulated Workflow Results: {formatPct(simStats.accuracy)}</p><div className="eval-filter-bar"><label>Source<select aria-label="Matrix source filter" value={matrixFilters.source} onChange={(e) => setMatrixFilters({ ...matrixFilters, source: e.target.value })}>{['Live', 'Simulated', 'All'].map((s) => <option key={s}>{s}</option>)}</select></label><label>Condition<select aria-label="Matrix condition filter" value={matrixFilters.condition} onChange={(e) => setMatrixFilters({ ...matrixFilters, condition: e.target.value })}>{['All', ...CONDITIONS].map((c) => <option key={c}>{c}</option>)}</select></label><label>Origin<select aria-label="Matrix origin filter" value={matrixFilters.origin} onChange={(e) => setMatrixFilters({ ...matrixFilters, origin: e.target.value })}><option value="All">{matrixFilters.source === 'Live' ? 'All Live Sources' : 'All Origins'}</option>{ORIGINS.map((o) => <option key={o} value={o}>{o}</option>)}</select></label></div><div className="eval-stat-row"><div className="eval-stat"><span>Samples</span><strong data-testid="stat-samples">{stats.sampleCount}</strong></div><div className="eval-stat"><span>Accuracy</span><strong data-testid="stat-accuracy">{formatPct(stats.accuracy)}</strong></div><div className="eval-stat"><span>Macro Precision</span><strong data-testid="stat-precision">{formatPct(stats.macroPrecision)}</strong></div><div className="eval-stat"><span>Macro Recall</span><strong data-testid="stat-recall">{formatPct(stats.macroRecall)}</strong></div><div className="eval-stat"><span>Macro F1</span><strong data-testid="stat-f1">{formatPct(stats.macroF1)}</strong></div><div className="eval-stat"><span>FAR</span><strong data-testid="stat-far">{formatPct(stats.far)}</strong></div><div className="eval-stat"><span>FRR</span><strong data-testid="stat-frr">{formatPct(stats.frr)}</strong></div><div className="eval-stat"><span>Avg Latency</span><strong data-testid="stat-latency">{Math.round(stats.avgLatencyMs)} ms</strong></div></div><p className="eval-muted" data-testid="no-face-stat">Detection quality: {stats.noFaceCount} &ldquo;No Face&rdquo; sample(s) ({formatPct(stats.noFaceRate)} of filtered records) - tracked separately, never as an identity class.</p><div className="eval-table-wrap"><table className="eval-table eval-matrix" data-testid="confusion-matrix"><thead><tr><th>Actual \ Predicted</th>{stats.labels.map((l) => <th key={l}>{l}</th>)}</tr></thead><tbody>{stats.labels.map((rowLabel, i) => <tr key={rowLabel}><th>{rowLabel}</th>{stats.labels.map((colLabel, j) => <td key={colLabel} className={i === j ? 'eval-diagonal' : stats.matrix[i][j] > 0 ? 'eval-offdiag' : ''}>{stats.matrix[i][j]}</td>)}</tr>)}</tbody></table></div><p className="eval-muted">FAR = actual Unknown predicted as P01-P05 / all actual Unknown. FRR = actual P01-P05 predicted as Unknown / all enrolled samples.</p></section>}
       </main>
     </div>
   );

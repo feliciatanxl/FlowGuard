@@ -1,6 +1,6 @@
 // Frontend tests — mobile sidebar drawer open/close behaviour, Escape, scroll-lock.
 import React from 'react';
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, screen } from '@testing-library/react';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { describe, test, expect, beforeEach } from 'vitest';
 
@@ -72,5 +72,18 @@ describe('Sidebar mobile drawer', () => {
     fireEvent.click(document.querySelector('.mobile-menu-btn'));
     expect(document.querySelector('.sidebar-bottom .user-name').textContent).toBe('Flow Manager');
     expect(document.querySelector('.logout-btn')).toBeTruthy();
+  });
+});
+
+describe('AI Evaluation sidebar link (FM-only)', () => {
+  test('FM sees the AI Evaluation link pointing to /facial-evaluation', () => {
+    render(<MemoryRouter><Sidebar /></MemoryRouter>);
+    expect(screen.getByRole('link', { name: 'AI Evaluation' }).getAttribute('href')).toBe('/facial-evaluation');
+  });
+
+  test.each(['Tenant', 'Staff'])('%s never sees the AI Evaluation link', (role) => {
+    localStorage.setItem('userRole', role);
+    render(<MemoryRouter><Sidebar /></MemoryRouter>);
+    expect(screen.queryByRole('link', { name: 'AI Evaluation' })).toBeNull();
   });
 });

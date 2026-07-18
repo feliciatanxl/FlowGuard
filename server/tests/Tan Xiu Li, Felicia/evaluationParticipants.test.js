@@ -2,7 +2,8 @@ const mockParticipant = { findOne: jest.fn(), findAll: jest.fn(), create: jest.f
 const transaction = { LOCK: { UPDATE: 'UPDATE' } };
 const mockSequelize = { transaction: jest.fn((callback) => callback(transaction)) };
 jest.mock('../../models', () => ({ sequelize: mockSequelize, User: { findAll: jest.fn() }, EvaluationParticipant: mockParticipant }));
-const { formatEvaluationLabel, evaluationLabelSequence, assignStableEvaluationLabel, retireEvaluationParticipant } = require('../../services/evaluationParticipants');
+const { formatEvaluationLabel, evaluationLabelSequence, assignStableEvaluationLabel, retireEvaluationParticipant, syncEligibleEvaluationParticipants } = require('../../services/evaluationParticipants');
+const { User } = require('../../models');
 
 describe('stable evaluation participant labels', () => {
   beforeEach(() => jest.clearAllMocks());
@@ -54,5 +55,33 @@ describe('evaluation participant retirement (PDPA off-boarding)', () => {
 
     const row = await assignStableEvaluationLabel({ id: 42, isEnrolled: true, faceVector: [1] });
     expect(row.evaluationLabel).toBe('P04');
+  });
+});
+describe('full participant coverage (every non-deleted user gets a stable P-label)', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test('sync assigns labels to unenrolled, suspended and every role — existing mappings untouched', async () => {
+    User.findAll.mockResolvedValue([
+      { id: 1, name: 'FM Admin', role: 'FM', isActive: true, isEnrolled: true, faceVector: [1] },
+      { id: 2, name: 'Tenant No Face', role: 'Tenant', isActive: true, isEnrolled: false, faceVector: null },
+      { id: 3, name: 'Suspended Staff', role: 'Staff', isActive: false, isEnrolled: true, faceVector: [1] },
+    ]);
+    // id 1 already mapped; ids 2 and 3 have no mapping yet.
+    mockParticipant.findOne.mockImplementation(({ where }) =>
+      Promise.resolve(where.userId === 1 ? { userId: 1, evaluationLabel: 'P01' } : null));
+    mockParticipant.findAll.mockResolvedValue([{ evaluationLabel: 'P01' }]);
+    const created = [];
+    mockParticipant.create.mockImplementation((value) => { created.push(value); return Promise.resolve(value); });
+
+    const assigned = await syncEligibleEvaluationParticipants();
+    expect(assigned).toHaveLength(3);
+    // The unenrolled Tenant and suspended Staff BOTH receive labels.
+    expect(created.map((c) => c.userId).sort()).toEqual([2, 3]);
+    // Existing P01 is reused, never recreated or renumbered.
+    expect(created.some((c) => c.evaluationLabel === 'P01')).toBe(false);
+  });
+
+  test('default direct assignment still requires eligibility (enrolment-time behaviour unchanged)', async () => {
+    expect(await assignStableEvaluationLabel({ id: 5, isEnrolled: false, faceVector: null })).toBeNull();
   });
 });
