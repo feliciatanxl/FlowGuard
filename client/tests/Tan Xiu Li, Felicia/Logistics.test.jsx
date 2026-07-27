@@ -22,6 +22,10 @@ import axios from "axios";
 
 const renderPage = () => render(<MemoryRouter><TenantLogistics /></MemoryRouter>);
 
+// The page now defaults to TODAY (Singapore). These fixtures use fixed past
+// dates, so switch to "All dates" to view the full history like before.
+const showAllDates = () => fireEvent.click(screen.getByRole("button", { name: /All dates/i }));
+
 beforeEach(() => {
   mockGet.mockClear();
   mockNavigate.mockClear();
@@ -67,6 +71,7 @@ describe("Logistics page", () => {
       data: [{ id: 1, booking_ref: "FG-AAA", license_plate: "P1", transport_company: "C1", driver_name: "D1", loading_bay: "Bay A", slot_start: "2026-06-21T09:00", status: "Pending" }],
     });
     renderPage();
+    showAllDates();
     await screen.findByText("FG-AAA");
     expect(screen.queryByRole("button", { name: /Mark Confirmed/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /Mark Arrived/i })).toBeNull();
@@ -114,6 +119,7 @@ describe("Logistics page", () => {
       data: [{ id: 1, booking_ref: "FG-AAA", license_plate: "P1", transport_company: "C1", driver_name: "D1", loading_bay: "Bay A", slot_start: "2026-06-21T09:00", status: "Pending" }],
     });
     renderPage();
+    showAllDates();
     await screen.findByText("FG-AAA");
 
     const group = screen.getByLabelText("Actions for FG-AAA");
@@ -133,6 +139,7 @@ describe("Logistics page", () => {
       data: [{ id: 7, booking_ref: "FG-CCC", license_plate: "P7", transport_company: "C7", driver_name: "D7", loading_bay: "Bay B", slot_start: "2026-06-23T09:00", status: "Pending" }],
     });
     renderPage();
+    showAllDates();
     await screen.findByText("FG-CCC");
 
     fireEvent.click(screen.getByRole("button", { name: "Mark Confirmed" }));
@@ -159,6 +166,7 @@ describe("Logistics page", () => {
       data: [{ id: 9, booking_ref: "FG-DDD", license_plate: "P9", transport_company: "C9", driver_name: "D9", loading_bay: "Bay A", slot_start: "2026-06-20T09:00", status: "Completed" }],
     });
     renderPage();
+    showAllDates();
     await screen.findByText("FG-DDD");
     expect(screen.queryByLabelText("Actions for FG-DDD")).toBeNull();
     expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
@@ -173,6 +181,8 @@ describe("Logistics page", () => {
       ],
     });
     renderPage();
+    // Start from the full history (the page defaults to today), then narrow.
+    showAllDates();
     expect(await screen.findByText("FG-AAA")).toBeTruthy();
     expect(screen.getByText("FG-BBB")).toBeTruthy();
 

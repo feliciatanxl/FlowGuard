@@ -32,6 +32,9 @@ afterEach(() => {
 const renderAs = async (role) => {
   localStorage.setItem("userRole", role);
   render(<MemoryRouter><TenantLogistics /></MemoryRouter>);
+  // The page now defaults to today (Singapore); this fixture is dated 2026-07-10,
+  // so switch to "All dates" to make the booking visible.
+  fireEvent.click(screen.getByRole("button", { name: /All dates/i }));
   await screen.findByText("FG-EDIT01");
 };
 

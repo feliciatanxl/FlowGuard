@@ -11,6 +11,7 @@ import {
   isoToSingaporeLocalInput,
   formatSingaporeBookingDateTime,
   singaporeDateKey,
+  getSingaporeTodayDateKey,
 } from '../constants/datetime';
 
 const BAYS = ['Bay A', 'Bay B'];
@@ -40,7 +41,9 @@ const TenantLogistics = () => {
   const [searchText, setSearchText] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterBay, setFilterBay] = useState('All');
-  const [filterDate, setFilterDate] = useState(''); // YYYY-MM-DD; empty = all dates
+  // Default to TODAY in Singapore so FMs land on the day's schedule; '' = All
+  // dates (full history). Re-initialised to the current SG day on every mount.
+  const [filterDate, setFilterDate] = useState(() => getSingaporeTodayDateKey()); // YYYY-MM-DD; empty = all dates
 
   const token = localStorage.getItem('accessToken');
   const role = localStorage.getItem('userRole');
@@ -162,7 +165,9 @@ const TenantLogistics = () => {
   const slotDateKey = (b) => singaporeDateKey(b.slot_start);
 
   // --- Compact summary stats ---
-  const todayKey = singaporeDateKey(new Date());
+  // Always Singapore today — the "Today's Bookings" card never changes meaning
+  // when the FM selects another date or All dates.
+  const todayKey = getSingaporeTodayDateKey();
   const stats = {
     today: bookings.filter(b => slotDateKey(b) === todayKey).length,
     open: bookings.filter(b => b.status === 'Pending' || b.status === 'Confirmed').length,
@@ -180,6 +185,13 @@ const TenantLogistics = () => {
     const matchesDate = !filterDate || slotDateKey(b) === filterDate;
     return matchesQ && matchesStatus && matchesBay && matchesDate;
   });
+
+  // Context-aware empty message for when data exists but nothing matches.
+  const emptyFilteredMessage = !filterDate
+    ? 'No bookings match the selected filters.'
+    : filterDate === todayKey
+      ? 'No bookings scheduled for today.'
+      : 'No bookings found for the selected date.';
 
   return (
     <div className="dashboard-layout">
@@ -250,11 +262,18 @@ const TenantLogistics = () => {
             onChange={(e) => setFilterDate(e.target.value)}
             aria-label="Filter by slot date"
           />
-          {filterDate && (
-            <button type="button" className="edit-btn" onClick={() => setFilterDate('')} aria-label="Clear date filter">
-              Clear date
-            </button>
-          )}
+          {/* Escape hatch to the full booking history. Active state is shown by
+              the ✓ text + aria-pressed (never colour alone). */}
+          <button
+            type="button"
+            className={`logistics-filter logistics-alldates${!filterDate ? ' active' : ''}`}
+            onClick={() => setFilterDate('')}
+            aria-pressed={!filterDate}
+            aria-label="Show all dates — full booking history"
+            title="Show all booking history (all dates)"
+          >
+            {!filterDate ? '✓ All dates' : 'All dates'}
+          </button>
         </div>
 
         {/* Booking list — plain table styled like Workforce Attendance (no bulky card/heading) */}
@@ -264,7 +283,7 @@ const TenantLogistics = () => {
           ) : bookings.length === 0 ? (
             <p style={{ padding: '24px', color: '#94a3b8' }}>No bookings scheduled yet.</p>
           ) : filtered.length === 0 ? (
-            <p style={{ padding: '24px', color: '#94a3b8' }}>No bookings match your filters.</p>
+            <p style={{ padding: '24px', color: '#94a3b8' }}>{emptyFilteredMessage}</p>
           ) : (
             <div className="table-container">
               <table className="management-table">

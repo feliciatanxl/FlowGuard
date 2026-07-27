@@ -7,6 +7,7 @@ import {
   isoToSingaporeLocalInput,
   formatSingaporeBookingDateTime,
   singaporeDateKey,
+  getSingaporeTodayDateKey,
 } from "../../src/constants/datetime";
 
 describe("singaporeLocalInputToIso", () => {
@@ -63,5 +64,19 @@ describe("singaporeDateKey", () => {
     expect(singaporeDateKey("2026-07-27T10:01:00.000Z")).toBe("2026-07-27");
     // 17:00 UTC = 01:00 SG next day.
     expect(singaporeDateKey("2026-07-27T17:00:00.000Z")).toBe("2026-07-28");
+  });
+});
+
+describe("getSingaporeTodayDateKey", () => {
+  test("resolves 'today' in Singapore, NOT in UTC", () => {
+    // 20:00 UTC on 27 Jul is already 04:00 on 28 Jul in Singapore.
+    const instant = new Date("2026-07-27T20:00:00.000Z");
+    expect(getSingaporeTodayDateKey(instant)).toBe("2026-07-28");
+    // The naive UTC approach the task warns against would wrongly say the 27th.
+    expect(instant.toISOString().slice(0, 10)).toBe("2026-07-27");
+  });
+
+  test("format is YYYY-MM-DD", () => {
+    expect(getSingaporeTodayDateKey(new Date("2026-07-27T02:00:00.000Z"))).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });

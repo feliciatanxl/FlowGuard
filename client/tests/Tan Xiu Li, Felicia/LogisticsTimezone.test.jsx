@@ -34,8 +34,13 @@ beforeEach(() => {
 
 afterEach(() => { cleanup(); localStorage.clear(); });
 
+// The page defaults to today (Singapore); this fixture is dated 27 Jul 2026, so
+// switch to "All dates" to keep it visible regardless of the real run date.
+const showAllDates = () => fireEvent.click(screen.getByRole("button", { name: /All dates/i }));
+
 const renderPage = async () => {
   render(<MemoryRouter><TenantLogistics /></MemoryRouter>);
+  showAllDates();
   await screen.findByText("FG-TZ01");
 };
 
@@ -49,6 +54,7 @@ describe("Logistics Singapore time", () => {
 
   test("Edit pre-fills the datetime-local input with the original Singapore wall clock", async () => {
     const { container } = render(<MemoryRouter><TenantLogistics /></MemoryRouter>);
+    showAllDates();
     await screen.findByText("FG-TZ01");
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
@@ -61,7 +67,8 @@ describe("Logistics Singapore time", () => {
   });
 
   test("saving an edit sends explicit UTC ISO and refreshes the table", async () => {
-    const { container } = render(<MemoryRouter><TenantLogistics /></MemoryRouter>);
+    render(<MemoryRouter><TenantLogistics /></MemoryRouter>);
+    showAllDates();
     await screen.findByText("FG-TZ01");
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));

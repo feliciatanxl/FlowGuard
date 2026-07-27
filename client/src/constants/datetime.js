@@ -138,3 +138,12 @@ export const singaporeDateKey = (value) => {
   if (isNaN(date.getTime())) return '';
   return sgDateKey(date);
 };
+
+/**
+ * Today's Singapore calendar date as YYYY-MM-DD — the Logistics default filter.
+ * Resolved explicitly through Asia/Singapore, so it is correct even when the
+ * browser, OS, Node or Cloud Run runs in UTC (unlike
+ * `new Date().toISOString().slice(0, 10)`, which can return the wrong day near
+ * Singapore midnight). `now` is injectable for deterministic tests.
+ */
+export const getSingaporeTodayDateKey = (now = new Date()) => sgDateKey(now);

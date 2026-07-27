@@ -325,6 +325,22 @@
 .logistics-filter:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15); }
 .logistics-filter option { background: #0b0f1a; color: #f8fafc; }
 
+/* "All dates" toggle — jumps to the full booking history. Sits beside the date
+   picker in the filter row. Active state uses a visible ✓ + a raised border
+   (never colour alone) so it reads for colour-blind users too. */
+.logistics-alldates {
+  cursor: pointer;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.logistics-alldates:hover { border-color: #3b82f6; }
+.logistics-alldates.active {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.18);
+  color: #dbeafe;
+  box-shadow: inset 0 0 0 1px #3b82f6;
+}
+
 /* Dark-theme native date/time pickers — booking modal slots + logistics date filter.
    Scoped to .dark-form / .logistics-date so auth pages (Login/Register) are unaffected. */
 .dark-form input[type="datetime-local"],
