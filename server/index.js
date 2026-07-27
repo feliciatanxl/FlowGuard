@@ -6,9 +6,9 @@ const app = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// Environment-based CORS allowlist (CLIENT_URL + ALLOWED_ORIGINS). When no
+// Environment-based CORS allowlist (FRONTEND_URL + CLIENT_URL + ALLOWED_ORIGINS). When no
 // origins are configured it falls back to allow-all for local/LAN development -
-// configure CLIENT_URL (and optionally ALLOWED_ORIGINS) for any deployment.
+// configure FRONTEND_URL or CLIENT_URL (and optionally ALLOWED_ORIGINS) for any deployment.
 const { buildCorsOptions } = require('./middlewares/corsOptions');
 app.use(cors(buildCorsOptions()));
 

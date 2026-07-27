@@ -130,26 +130,61 @@ function formatSlotRange(booking) {
   }
 }
 
-// Driver-pass deep link (read base URL from env; falls back for local demo).
+// Build a driver-pass URL from a base origin + booking ref. Strips any trailing
+// slash(es) so we never emit a double slash, and encodes the ref so the URL is
+// always well-formed. Returns '' when either part is missing (never "undefined").
+function buildDriverPassUrl(base, bookingRef) {
+  const origin = String(base || '').trim().replace(/\/+$/, '');
+  if (!origin || !bookingRef) return '';
+  return `${origin}/driver-pass/${encodeURIComponent(bookingRef)}`;
+}
+
+// Canonical driver-pass link — used in every environment (the laptop link in dev,
+// the HTTPS Cloud Run link in production). Falls back to localhost for a bare
+// local demo, but fails closed in production so localhost can never leak into a
+// live notification when the canonical frontend environment is misconfigured.
 function driverPassLink(booking) {
   if (!booking.booking_ref) return '';
-  const base = process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:5173';
-  return `${base.replace(/\/$/, '')}/driver-pass/${booking.booking_ref}`;
+  const configuredBase = process.env.FRONTEND_URL || process.env.CLIENT_URL;
+  if (!configuredBase && process.env.NODE_ENV === 'production') return '';
+  const base = configuredBase || 'http://localhost:5173';
+  return buildDriverPassUrl(base, booking.booking_ref);
+}
+
+// Optional LAN/phone link for LOCAL DEVELOPMENT only. Lets a driver open the pass
+// on a phone that shares the laptop's Wi-Fi (localhost would point at the phone).
+// Suppressed in production so a dev LAN address never leaks into a live message,
+// and omitted entirely when FRONTEND_NETWORK_URL is not configured.
+function driverPassNetworkLink(booking) {
+  if (process.env.NODE_ENV === 'production') return '';
+  if (!booking.booking_ref) return '';
+  return buildDriverPassUrl(process.env.FRONTEND_NETWORK_URL, booking.booking_ref);
 }
 
 // --- Notification events (all non-throwing; simulated when WhatsApp is disabled) ---
 
-// Booking created — full details + driver pass link.
+// Booking created — full details + driver pass link(s).
 function sendBookingCreated(booking) {
   const link = driverPassLink(booking);
+  const networkLink = driverPassNetworkLink(booking);
   const lines = [
     'FlowGuard — Harrison Food Factory',
     `Booking ${booking.booking_ref} received.`,
     `Company: ${booking.transport_company} · Plate: ${booking.license_plate}`,
     `Bay: ${booking.loading_bay} · Slot: ${formatSlotRange(booking)}`,
-    link ? `Driver pass: ${link}` : null,
-    'Please wait for confirmation before arriving.',
-  ].filter(Boolean);
+  ];
+
+  // Dev with a LAN URL configured → give both so the driver can open on a phone.
+  // Otherwise keep the single canonical link exactly as before.
+  if (networkLink) {
+    lines.push('Driver pass:');
+    lines.push(`Phone/Wi-Fi: ${networkLink}`);
+    lines.push(`Laptop: ${link}`);
+  } else if (link) {
+    lines.push(`Driver pass: ${link}`);
+  }
+
+  lines.push('Please wait for confirmation before arriving.');
   return sendMessage(booking.driver_phone, lines.join('\n'));
 }
 
@@ -198,6 +233,9 @@ module.exports = {
   sendBookingCancelled,
   isConfigured,
   normalizePhone,
+  driverPassLink,
+  driverPassNetworkLink,
+  buildDriverPassUrl,
   _maskKey: maskKey,
   _maskToken: maskToken,
   _maskPhone: maskPhone,

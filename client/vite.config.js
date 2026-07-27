@@ -6,6 +6,9 @@ export default defineConfig({
     react()
   ],
   server: {
+    // Listen on every local interface so the same dev server works from both
+    // localhost and another device on the laptop's current Wi-Fi/hotspot.
+    host: '0.0.0.0',
     proxy: {
       '/user': {
         target: 'http://127.0.0.1:5001',

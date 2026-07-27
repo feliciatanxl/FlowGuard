@@ -5,12 +5,14 @@ const originAllowed = (options, origin) =>
   new Promise((resolve) => options.origin(origin, (err, allowed) => resolve(allowed)));
 
 describe("buildAllowedOrigins", () => {
-  test("combines CLIENT_URL and ALLOWED_ORIGINS, trimmed and deduplicated", () => {
+  test("combines frontend URL variables and ALLOWED_ORIGINS, trimmed and deduplicated", () => {
     const env = {
+      FRONTEND_URL: "https://flowguard-client-staging-590663319889.asia-southeast1.run.app/",
       CLIENT_URL: "http://localhost:5173/",
       ALLOWED_ORIGINS: " https://flowguard.vercel.app , http://192.168.1.20:5173, http://localhost:5173",
     };
     expect(buildAllowedOrigins(env)).toEqual([
+      "https://flowguard-client-staging-590663319889.asia-southeast1.run.app",
       "http://localhost:5173",
       "https://flowguard.vercel.app",
       "http://192.168.1.20:5173",
@@ -36,6 +38,15 @@ describe("buildCorsOptions", () => {
     });
     expect(await originAllowed(options, "http://localhost:5173")).toBe(true);
     expect(await originAllowed(options, "https://flowguard.vercel.app")).toBe(true);
+  });
+
+  test("production FRONTEND_URL alone creates an exact staging allowlist", async () => {
+    const staging = "https://flowguard-client-staging-590663319889.asia-southeast1.run.app";
+    const options = buildCorsOptions({ NODE_ENV: "production", FRONTEND_URL: staging });
+    expect(buildAllowedOrigins({ NODE_ENV: "production", FRONTEND_URL: staging })).toEqual([staging]);
+    expect(await originAllowed(options, staging)).toBe(true);
+    expect(await originAllowed(options, "http://localhost:5173")).toBe(false);
+    expect(options.credentials).toBeUndefined();
   });
 
   test("configured origins: unlisted origins are rejected", async () => {

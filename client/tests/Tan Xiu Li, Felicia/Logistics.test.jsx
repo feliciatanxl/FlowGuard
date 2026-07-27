@@ -4,10 +4,18 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { vi, describe, test, expect, beforeEach } from "vitest";
 
-const { mockGet } = vi.hoisted(() => ({ mockGet: vi.fn(() => Promise.resolve({ data: [] })) }));
+const { mockGet, mockNavigate } = vi.hoisted(() => ({
+  mockGet: vi.fn(() => Promise.resolve({ data: [] })),
+  mockNavigate: vi.fn(),
+}));
 vi.mock("axios", () => ({
   default: { get: mockGet, post: vi.fn(() => Promise.resolve({ data: {} })), patch: vi.fn(() => Promise.resolve({ data: {} })) },
 }));
+// Keep the real router (MemoryRouter) but capture navigation from the Gate Scan button.
+vi.mock("react-router-dom", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, useNavigate: () => mockNavigate };
+});
 
 import TenantLogistics from "../../src/pages/TenantLogistics";
 import axios from "axios";
@@ -16,6 +24,7 @@ const renderPage = () => render(<MemoryRouter><TenantLogistics /></MemoryRouter>
 
 beforeEach(() => {
   mockGet.mockClear();
+  mockNavigate.mockClear();
   localStorage.clear();
   localStorage.setItem("accessToken", "test-token");
   localStorage.setItem("userRole", "FM");
@@ -87,21 +96,10 @@ describe("Logistics page", () => {
     expect(screen.queryByRole("button", { name: /Gate Scan/i })).toBeNull();
   });
 
-  test("Gate Scan modal opens and submitting entry calls the gate-scan API", async () => {
+  test("Gate Scan navigates to the dedicated FM-only gate verification page", () => {
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: /Gate Scan/i }));
-    expect(await screen.findByText(/Loading Bay Gate Scan/i)).toBeTruthy();
-
-    fireEvent.change(screen.getByLabelText(/Booking reference/i), { target: { value: "FG-AAA" } });
-    fireEvent.click(screen.getByRole("button", { name: /Mark Arrived/i }));
-
-    await waitFor(() =>
-      expect(axios.patch).toHaveBeenCalledWith(
-        "/api/bookings/FG-AAA/gate-scan",
-        expect.objectContaining({ action: "entry" }),
-        expect.any(Object)
-      )
-    );
+    expect(mockNavigate).toHaveBeenCalledWith("/logistics/gate-verification");
   });
 
   test("renders the slot-date filter alongside the other filters", () => {

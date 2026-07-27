@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
 import '../css/Dashboard.css';
@@ -17,6 +18,7 @@ const emptyForm = {
 };
 
 const TenantLogistics = () => {
+  const navigate = useNavigate();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -33,13 +35,6 @@ const TenantLogistics = () => {
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterBay, setFilterBay] = useState('All');
   const [filterDate, setFilterDate] = useState(''); // YYYY-MM-DD; empty = all dates
-
-  // Gate Scan (FM/Staff) — verify a driver pass by booking ref at the loading bay.
-  const [gateOpen, setGateOpen] = useState(false);
-  const [gateRef, setGateRef] = useState('');
-  const [gatePlate, setGatePlate] = useState('');
-  const [gateBusy, setGateBusy] = useState(false);
-  const [gateError, setGateError] = useState('');
 
   const token = localStorage.getItem('accessToken');
   const role = localStorage.getItem('userRole');
@@ -153,35 +148,6 @@ const TenantLogistics = () => {
     }
   };
 
-  const openGate = () => { setGateError(''); setGateRef(''); setGatePlate(''); setGateOpen(true); };
-  const closeGate = () => setGateOpen(false);
-
-  const gateScan = async (action) => {
-    const ref = gateRef.trim();
-    if (!ref) { setGateError('Enter a booking reference.'); return; }
-    setGateBusy(true);
-    setGateError('');
-    try {
-      const res = await axios.patch(
-        `${API_BASE_URL}/api/bookings/${encodeURIComponent(ref)}/gate-scan`,
-        { action, observedPlate: gatePlate.trim() || undefined },
-        authHeader
-      );
-      const d = res.data || {};
-      let msg = d.message || `Gate ${action} recorded.`;
-      if (d.plateMatched === false) msg += ' ⚠ Plate mismatch — please verify the vehicle.';
-      if (d.nextInLine) msg += ` Next in line: ${d.nextInLine}.`;
-      msg += describeWhatsapp(d.whatsappStatus);
-      setNotice(msg);
-      setGateOpen(false);
-      fetchBookings();
-    } catch (err) {
-      setGateError(err.response?.data?.error || 'Gate scan failed.');
-    } finally {
-      setGateBusy(false);
-    }
-  };
-
   const fmtSlot = (b) => {
     if (!b.slot_start) return '—';
     try { return new Date(b.slot_start).toLocaleString('en-SG', { dateStyle: 'short', timeStyle: 'short' }); }
@@ -229,7 +195,7 @@ const TenantLogistics = () => {
           <div className="header-actions">
             <button className="edit-btn" onClick={fetchBookings}>Refresh</button>
             {canGateScan && (
-              <button className="edit-btn" onClick={openGate}>Gate Scan</button>
+              <button className="edit-btn" onClick={() => navigate('/logistics/gate-verification')}>Gate Scan</button>
             )}
             {canCreate && (
               <button className="new-booking-btn" onClick={openForm}>+ New Booking</button>
@@ -415,52 +381,6 @@ const TenantLogistics = () => {
           </div>
         )}
 
-        {/* Gate Scan modal (FM/Staff) — verify a driver pass at the loading bay */}
-        {gateOpen && canGateScan && (
-          <div className="modal-overlay" onClick={closeGate}>
-            <div className="modal-content booking-modal" onClick={(e) => e.stopPropagation()}>
-              <div className="booking-modal-head">
-                <h2>Loading Bay Gate Scan</h2>
-                <button className="modal-x" onClick={closeGate} aria-label="Close">✕</button>
-              </div>
-
-              {gateError && <div className="error-banner" style={{ margin: '0 0 14px' }}>⚠️ {gateError}</div>}
-
-              <div className="dark-form">
-                <div className="form-group">
-                  <label>Booking Reference *</label>
-                  <input
-                    value={gateRef}
-                    onChange={(e) => setGateRef(e.target.value)}
-                    placeholder="e.g., FG-02C7F5"
-                    aria-label="Booking reference"
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Observed Vehicle Plate (optional)</label>
-                  <input
-                    value={gatePlate}
-                    onChange={(e) => setGatePlate(e.target.value)}
-                    placeholder="e.g., GBG 1234M"
-                    aria-label="Observed vehicle plate"
-                  />
-                </div>
-                <p style={{ color: '#94a3b8', fontSize: '0.8rem', margin: '0 0 12px' }}>
-                  Scan the driver's QR or type the booking reference, then record entry or exit.
-                </p>
-                <div className="booking-modal-actions">
-                  <button type="button" className="cancel-btn" onClick={closeGate}>Cancel</button>
-                  <button type="button" className="edit-btn" disabled={gateBusy} onClick={() => gateScan('entry')}>
-                    {gateBusy ? 'Working…' : 'Mark Arrived (Entry)'}
-                  </button>
-                  <button type="button" className="new-booking-btn" disabled={gateBusy} onClick={() => gateScan('exit')}>
-                    {gateBusy ? 'Working…' : 'Mark Completed (Exit)'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </main>
     </div>
   );

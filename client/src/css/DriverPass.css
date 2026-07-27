@@ -145,6 +145,23 @@
 
 .bay-highlight { color: #60a5fa !important; }
 
+/* --- Copy-link action --- */
+.copy-pass-btn {
+  width: 100%;
+  margin-top: 16px;
+  padding: 11px 14px;
+  border: 1px solid #2d364f;
+  border-radius: 12px;
+  background: #0b0f1a;
+  color: #cbd5e1;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.copy-pass-btn:hover { border-color: #3b82f6; color: #f8fafc; }
+.copy-pass-btn:active { background: #131a2c; }
+
 /* --- Footer + states --- */
 .pass-card footer { margin-top: 18px; }
 .pass-card footer p {

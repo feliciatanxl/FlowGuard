@@ -21,6 +21,7 @@ import Cameras from './pages/Cameras';
 import CameraInventory from './pages/CameraInventory';
 import DriverPass from './pages/DriverPass';
 import TenantLogistics from './pages/TenantLogistics';
+import GateVerification from './pages/GateVerification';
 import DriverPortal from './pages/DriverPortal';
 import StaffManagement from './pages/StaffManagement';
 import UserLogs from './pages/UserLogs';
@@ -120,6 +121,12 @@ function App() {
         <Route path="/logistics" element={
           <ProtectedRoute allowedRoles={ACCESS.ANY}>
             <TenantLogistics />
+          </ProtectedRoute>
+        } />
+        {/* Loading-bay gate verification — FM only (not exposed to Tenant/Staff). */}
+        <Route path="/logistics/gate-verification" element={
+          <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
+            <GateVerification />
           </ProtectedRoute>
         } />
 

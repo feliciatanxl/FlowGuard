@@ -5,6 +5,7 @@ const { Op } = require('sequelize');
 const { Booking, User } = require('../models');
 const { verifyToken, requireRole } = require('../middlewares/auth');
 const whatsapp = require('../services/whatsappService');
+const { verifyGate } = require('../services/gateVerification');
 
 const STATUSES = ['Pending', 'Confirmed', 'Arrived', 'Completed', 'Cancelled'];
 
@@ -348,6 +349,26 @@ router.patch('/:ref/gate-scan', verifyToken, requireRole('FM'), async (req, res)
     } catch (err) {
         console.error('Gate scan error:', err);
         return res.status(500).json({ error: 'Could not process gate scan.' });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// GATE VERIFICATION — FM only: dual-mode (automatic QR+plate / manual) loading-bay
+// gate decision. Delegates ALL rules + audit to the stateless gateVerification
+// service (booking is re-read from PostgreSQL with a row lock on every call).
+//   body: { action, bookingRef, observedPlate, verificationMode, plateSource,
+//           plateConfidence, manualOverride, overrideReason }
+// Returns a stable decision keyed by reasonCode (200 = decision made; 400 = bad
+// request; 500 = server/audit failure — access NOT granted). This is additive:
+// the legacy PATCH /:ref/gate-scan route above is left untouched for compatibility.
+// ---------------------------------------------------------------------------
+router.post('/gate-verification', verifyToken, requireRole('FM'), async (req, res) => {
+    try {
+        const { http, body } = await verifyGate(req.body || {}, req.user);
+        return res.status(http).json(body);
+    } catch (err) {
+        console.error('Gate verification error:', err);
+        return res.status(500).json({ access: 'DENIED', reasonCode: 'AUDIT_FAILED', message: 'Could not process gate verification.' });
     }
 });
 

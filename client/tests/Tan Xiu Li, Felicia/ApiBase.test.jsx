@@ -36,7 +36,7 @@ describe("Shared API base (VITE_API_BASE_URL)", () => {
     mockAxios.get.mockResolvedValue({ data: [] });
 
     const { default: TenantLogistics } = await import("../../src/pages/TenantLogistics");
-    render(<TenantLogistics />);
+    render(<MemoryRouter><TenantLogistics /></MemoryRouter>);
 
     await waitFor(() => expect(mockAxios.get).toHaveBeenCalled());
     expect(mockAxios.get).toHaveBeenCalledWith(
@@ -71,9 +71,31 @@ describe("Shared API base (VITE_API_BASE_URL)", () => {
   test("blank base URL keeps local relative paths (Vite proxy)", async () => {
     mockAxios.get.mockResolvedValue({ data: [] });
     const { default: TenantLogistics } = await import("../../src/pages/TenantLogistics");
-    render(<TenantLogistics />);
+    render(<MemoryRouter><TenantLogistics /></MemoryRouter>);
 
     await waitFor(() => expect(mockAxios.get).toHaveBeenCalled());
     expect(mockAxios.get).toHaveBeenCalledWith("/api/bookings/", expect.any(Object));
+  });
+
+  test("Driver Pass uses a RELATIVE /api path locally so it works over the LAN (phone via Vite proxy)", async () => {
+    // Blank base (no VITE_API_BASE_URL) → same-origin /api request → Vite proxy →
+    // local backend. This is why opening the pass on a phone at http://<lan-ip>:5173
+    // works: the fetch is same-origin, never hardcoded to localhost:5001.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ booking_ref: "FG-LAN01", loading_bay: "Bay A", status: "Confirmed" }),
+    });
+
+    const { default: DriverPass } = await import("../../src/pages/DriverPass");
+    render(
+      <MemoryRouter initialEntries={["/driver-pass/FG-LAN01"]}>
+        <Routes>
+          <Route path="/driver-pass/:ref" element={<DriverPass />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText("FG-LAN01")).toBeTruthy();
+    expect(global.fetch).toHaveBeenCalledWith("/api/bookings/FG-LAN01");
   });
 });

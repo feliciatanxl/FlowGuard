@@ -1,6 +1,7 @@
 // Environment-based CORS allowlist.
 //
 // Origins come from:
+//   FRONTEND_URL     — canonical frontend origin used by generated links
 //   CLIENT_URL       — the primary frontend origin (localhost:5173 in dev,
 //                      the Vercel URL when deployed)
 //   ALLOWED_ORIGINS  — optional comma-separated extras (e.g. LAN dev origins
@@ -17,7 +18,7 @@
 const normalizeOrigin = (origin) => String(origin || '').trim().replace(/\/+$/, '');
 
 const buildAllowedOrigins = (env = process.env) => {
-  const origins = [env.CLIENT_URL, ...(env.ALLOWED_ORIGINS || '').split(',')]
+  const origins = [env.FRONTEND_URL, env.CLIENT_URL, ...(env.ALLOWED_ORIGINS || '').split(',')]
     .map(normalizeOrigin)
     .filter(Boolean);
   return [...new Set(origins)];

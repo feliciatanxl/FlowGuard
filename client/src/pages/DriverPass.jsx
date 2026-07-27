@@ -34,6 +34,7 @@ const DriverPass = () => {
     const [booking, setBooking] = useState(null);
     const [loading, setLoading] = useState(true);
     const [notFound, setNotFound] = useState(false);
+    const [copied, setCopied] = useState(false);
 
     // Tag the body so global floating widgets (reCAPTCHA badge) can be hidden on the pass.
     useEffect(() => {
@@ -65,6 +66,33 @@ const DriverPass = () => {
         };
         fetchBooking();
     }, [ref]);
+
+    // Copy the link to THIS pass using whatever host the browser is on:
+    //   localhost → localhost link, 172.x LAN → LAN link, Cloud Run → HTTPS link.
+    // No host is ever hardcoded here.
+    const copyPassLink = async () => {
+        const url = window.location.origin + window.location.pathname;
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(url);
+            } else {
+                // Fallback for insecure/older contexts without the async clipboard API.
+                const ta = document.createElement("textarea");
+                ta.value = url;
+                ta.setAttribute("readonly", "");
+                ta.style.position = "absolute";
+                ta.style.left = "-9999px";
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand("copy");
+                document.body.removeChild(ta);
+            }
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } catch {
+            setCopied(false);
+        }
+    };
 
     if (loading) return <div className="driver-container"><div className="loader">Loading your pass…</div></div>;
     if (notFound || !booking) return <div className="driver-container"><div className="pass-card"><div className="error">Pass not found or expired.</div></div></div>;
@@ -142,6 +170,15 @@ const DriverPass = () => {
                         <p>{fmt(booking.slot_end)}</p>
                     </div>
                 </div>
+
+                <button
+                    type="button"
+                    className="copy-pass-btn"
+                    onClick={copyPassLink}
+                    aria-label="Copy driver pass link"
+                >
+                    {copied ? "✓ Link copied" : "🔗 Copy Driver Pass Link"}
+                </button>
 
                 <footer>
                     <p>Show this QR code at the loading bay gate. Please do not arrive before your slot.</p>
