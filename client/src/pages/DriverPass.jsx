@@ -1,8 +1,12 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import * as QRLib from "react-qr-code";
 import "../css/DriverPass.css";
 import { API_BASE_URL } from "../constants/api";
+import { formatSingaporeBookingDateTime } from "../constants/datetime";
+
+// Background refresh cadence while the pass stays open (ms).
+const REFRESH_INTERVAL_MS = 12000;
 
 // Resolve the QR component across CJS/ESM interop shapes. Under Vite/React 19 the
 // CommonJS module can be wrapped so `QRLib.default` is the module object (an object,
@@ -23,11 +27,9 @@ if (import.meta.env?.DEV) {
     console.log("[DriverPass] QR export type:", typeof QRCodeComponent, "canRender:", canRenderQr);
 }
 
-const fmt = (v) => {
-    if (!v) return "—";
-    try { return new Date(v).toLocaleString("en-SG", { dateStyle: "medium", timeStyle: "short" }); }
-    catch { return String(v); }
-};
+// Slot times always render in Singapore time, regardless of the driver's phone
+// timezone (the stored value is an absolute UTC instant).
+const fmt = (v) => formatSingaporeBookingDateTime(v);
 
 const DriverPass = () => {
     const { ref } = useParams(); // booking_ref from /driver-pass/:ref
@@ -36,6 +38,14 @@ const DriverPass = () => {
     const [notFound, setNotFound] = useState(false);
     const [copied, setCopied] = useState(false);
 
+    // Refs coordinate the background refresh without re-rendering:
+    //   alive     — block state updates after unmount
+    //   inFlight  — prevent overlapping requests
+    //   stopped   — stop polling for good once the pass is permanently gone (404)
+    const aliveRef = useRef(true);
+    const inFlightRef = useRef(false);
+    const stoppedRef = useRef(false);
+
     // Tag the body so global floating widgets (reCAPTCHA badge) can be hidden on the pass.
     useEffect(() => {
         document.body.classList.add("driver-pass-page");
@@ -43,28 +53,69 @@ const DriverPass = () => {
     }, []);
 
     useEffect(() => {
+        aliveRef.current = true;
+        stoppedRef.current = false;
+
         // Guard: don't call /api/bookings/ with an empty ref.
         if (!ref) { setNotFound(true); setLoading(false); return; }
-        const fetchBooking = async () => {
+
+        // A single reusable loader. `background` refreshes never show the
+        // full-page loader and never wipe a good pass on a transient failure —
+        // that keeps the QR steady and avoids flicker while polling.
+        const load = async ({ background = false } = {}) => {
+            if (stoppedRef.current || inFlightRef.current) return;
+            inFlightRef.current = true;
             try {
-                // Public pass — works on Vercel via VITE_API_BASE_URL (blank locally → Vite proxy).
-                const res = await fetch(`${API_BASE_URL}/api/bookings/${encodeURIComponent(ref)}`);
+                // cache: "no-store" so an already-open pass always sees the latest
+                // status/slot after an FM edits or cancels the booking.
+                const res = await fetch(
+                    `${API_BASE_URL}/api/bookings/${encodeURIComponent(ref)}`,
+                    { cache: "no-store" }
+                );
                 const payload = await res.json().catch(() => null);
                 // Support both shapes: a direct booking object OR a { booking } envelope.
-                const loadedBooking = payload && (payload.booking || payload);
-                if (!res.ok || !loadedBooking || !(loadedBooking.booking_ref || loadedBooking.reference)) {
+                const loaded = payload && (payload.booking || payload);
+                if (!aliveRef.current) return;
+
+                if (res.status === 404) {
+                    stoppedRef.current = true;   // gone for good — stop polling
                     setNotFound(true);
+                } else if (!res.ok || !loaded || !(loaded.booking_ref || loaded.reference)) {
+                    if (!background) setNotFound(true); // keep last-good data on a background blip
                 } else {
-                    setBooking(loadedBooking);
+                    setBooking(loaded);
+                    setNotFound(false);
                 }
             } catch (err) {
-                console.error("Error fetching pass:", err);
-                setNotFound(true);
+                if (!aliveRef.current) return;
+                if (!background) {
+                    console.error("Error fetching pass:", err);
+                    setNotFound(true);
+                }
             } finally {
-                setLoading(false);
+                inFlightRef.current = false;
+                if (!background && aliveRef.current) setLoading(false);
             }
         };
-        fetchBooking();
+
+        // Initial load (foreground), then keep the open pass live.
+        load({ background: false });
+
+        const refresh = () => load({ background: true });
+        const onFocus = () => refresh();
+        const onVisibility = () => { if (document.visibilityState === "visible") refresh(); };
+        window.addEventListener("focus", onFocus);
+        document.addEventListener("visibilitychange", onVisibility);
+        const interval = setInterval(() => {
+            if (document.visibilityState !== "hidden") refresh();
+        }, REFRESH_INTERVAL_MS);
+
+        return () => {
+            aliveRef.current = false;
+            clearInterval(interval);
+            window.removeEventListener("focus", onFocus);
+            document.removeEventListener("visibilitychange", onVisibility);
+        };
     }, [ref]);
 
     // Copy the link to THIS pass using whatever host the browser is on:

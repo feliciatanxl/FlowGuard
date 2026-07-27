@@ -65,7 +65,7 @@ describe("Shared API base (VITE_API_BASE_URL)", () => {
     );
 
     expect(await screen.findByText("FG-DEPLOY1")).toBeTruthy();
-    expect(global.fetch).toHaveBeenCalledWith(`${DEPLOYED_BASE}/api/bookings/FG-DEPLOY1`);
+    expect(global.fetch).toHaveBeenCalledWith(`${DEPLOYED_BASE}/api/bookings/FG-DEPLOY1`, { cache: "no-store" });
   });
 
   test("blank base URL keeps local relative paths (Vite proxy)", async () => {
@@ -96,6 +96,6 @@ describe("Shared API base (VITE_API_BASE_URL)", () => {
     );
 
     expect(await screen.findByText("FG-LAN01")).toBeTruthy();
-    expect(global.fetch).toHaveBeenCalledWith("/api/bookings/FG-LAN01");
+    expect(global.fetch).toHaveBeenCalledWith("/api/bookings/FG-LAN01", { cache: "no-store" });
   });
 });

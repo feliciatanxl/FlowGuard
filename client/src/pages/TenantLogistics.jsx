@@ -6,6 +6,12 @@ import '../css/Dashboard.css';
 import '../css/Management.css';
 import '../css/Booking.css';
 import { API_BASE_URL } from '../constants/api';
+import {
+  singaporeLocalInputToIso,
+  isoToSingaporeLocalInput,
+  formatSingaporeBookingDateTime,
+  singaporeDateKey,
+} from '../constants/datetime';
 
 const BAYS = ['Bay A', 'Bay B'];
 const STATUSES = ['Pending', 'Confirmed', 'Arrived', 'Completed', 'Cancelled'];
@@ -72,15 +78,6 @@ const TenantLogistics = () => {
   const openForm = () => { setError(''); setForm(emptyForm); setEditingId(null); setIsFormOpen(true); };
   const closeForm = () => { setIsFormOpen(false); setEditingId(null); };
 
-  // ISO/DB timestamp → value accepted by <input type="datetime-local">.
-  const toLocalInput = (v) => {
-    if (!v) return '';
-    const d = new Date(v);
-    if (isNaN(d.getTime())) return '';
-    const p = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-  };
-
   const openEdit = (b) => {
     setError('');
     setForm({
@@ -89,8 +86,10 @@ const TenantLogistics = () => {
       driver_phone: b.driver_phone || '',
       driver_name: b.driver_name || '',
       loading_bay: b.loading_bay || '',
-      slot_start: toLocalInput(b.slot_start),
-      slot_end: toLocalInput(b.slot_end),
+      // Stored UTC instant → the Singapore wall-clock value the driver booked
+      // (never the browser's local time via getHours()/getDate()).
+      slot_start: isoToSingaporeLocalInput(b.slot_start),
+      slot_end: isoToSingaporeLocalInput(b.slot_end),
       notes: b.notes || ''
     });
     setEditingId(b.id);
@@ -108,12 +107,20 @@ const TenantLogistics = () => {
     setSubmitting(true);
     setError('');
     try {
+      // Convert the Singapore wall-clock datetime-local inputs into explicit UTC
+      // ISO instants so the stored time can never be re-interpreted by the
+      // server's timezone. The backend also normalises defensively.
+      const payload = {
+        ...form,
+        slot_start: form.slot_start ? singaporeLocalInputToIso(form.slot_start) : '',
+        slot_end: form.slot_end ? singaporeLocalInputToIso(form.slot_end) : '',
+      };
       if (editingId) {
         // Manual UPDATE — editable fields only; server enforces ownership + slot conflicts.
-        await axios.patch(`${API_BASE_URL}/api/bookings/${editingId}`, form, authHeader);
+        await axios.patch(`${API_BASE_URL}/api/bookings/${editingId}`, payload, authHeader);
         setNotice('Booking updated.');
       } else {
-        const res = await axios.post(`${API_BASE_URL}/api/bookings/create`, form, authHeader);
+        const res = await axios.post(`${API_BASE_URL}/api/bookings/create`, payload, authHeader);
         setNotice(`Booking created (status: Pending).${describeWhatsapp(res.data?.whatsapp)}`);
       }
       setForm(emptyForm);
@@ -148,23 +155,14 @@ const TenantLogistics = () => {
     }
   };
 
-  const fmtSlot = (b) => {
-    if (!b.slot_start) return '—';
-    try { return new Date(b.slot_start).toLocaleString('en-SG', { dateStyle: 'short', timeStyle: 'short' }); }
-    catch { return b.slot_start; }
-  };
+  // Booking slot shown in Singapore time regardless of the viewer's device zone.
+  const fmtSlot = (b) => formatSingaporeBookingDateTime(b.slot_start);
 
-  // Local YYYY-MM-DD of a booking's slot start (matches the date input + displayed Slot).
-  const slotDateKey = (b) => {
-    if (!b.slot_start) return '';
-    const d = new Date(b.slot_start);
-    if (isNaN(d.getTime())) return String(b.slot_start).slice(0, 10);
-    const p = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  };
+  // Singapore YYYY-MM-DD of a booking's slot start (matches the date input + displayed Slot).
+  const slotDateKey = (b) => singaporeDateKey(b.slot_start);
 
   // --- Compact summary stats ---
-  const todayKey = slotDateKey({ slot_start: new Date().toISOString() });
+  const todayKey = singaporeDateKey(new Date());
   const stats = {
     today: bookings.filter(b => slotDateKey(b) === todayKey).length,
     open: bookings.filter(b => b.status === 'Pending' || b.status === 'Confirmed').length,

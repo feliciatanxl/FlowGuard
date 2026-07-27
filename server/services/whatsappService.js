@@ -9,6 +9,8 @@
 //
 // Never throws — always resolves to a result object so a booking flow can't crash on it.
 
+const { formatSingaporeDateTime, formatSingaporeTime } = require('../utils/bookingDateTime');
+
 // Read config at call time so env changes (and tests) are picked up; token has a fallback.
 function readConfig() {
   return {
@@ -110,24 +112,19 @@ async function sendMessage(to, body) {
   }
 }
 
+// Slot text is always Singapore wall-clock time, regardless of the server's
+// timezone (Cloud Run runs in UTC), so the driver reads the same "27 Jul 2026,
+// 6:01 PM" that was booked — never a UTC-shifted time.
 function formatSlot(booking) {
   if (!booking.slot_start) return 'your scheduled time';
-  try {
-    return new Date(booking.slot_start).toLocaleString('en-SG', { dateStyle: 'medium', timeStyle: 'short' });
-  } catch {
-    return String(booking.slot_start);
-  }
+  return formatSingaporeDateTime(booking.slot_start) || String(booking.slot_start);
 }
 
 function formatSlotRange(booking) {
   const start = formatSlot(booking);
   if (!booking.slot_end) return start;
-  try {
-    const end = new Date(booking.slot_end).toLocaleString('en-SG', { timeStyle: 'short' });
-    return `${start} – ${end}`;
-  } catch {
-    return start;
-  }
+  const end = formatSingaporeTime(booking.slot_end);
+  return end ? `${start} – ${end}` : start;
 }
 
 // Build a driver-pass URL from a base origin + booking ref. Strips any trailing

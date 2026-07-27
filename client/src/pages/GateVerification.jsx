@@ -11,6 +11,7 @@ import {
   startQrScan, startCamera,
 } from '../utils/gateCamera';
 import { recognizePlate } from '../utils/plateOcr';
+import { formatSingaporeBookingDateTime } from '../constants/datetime';
 import '../css/Dashboard.css';
 import '../css/Booking.css';
 import '../css/GateVerification.css';
@@ -39,11 +40,7 @@ const REASON_TEXT = {
 
 const AUTO_STEPS = ['Scan QR', 'Capture Plate', 'Verify Booking', 'Access Decision'];
 
-const fmtSlot = (v) => {
-  if (!v) return '—';
-  try { return new Date(v).toLocaleString('en-SG', { dateStyle: 'medium', timeStyle: 'short' }); }
-  catch { return String(v); }
-};
+const fmtSlot = (v) => formatSingaporeBookingDateTime(v);
 
 const GateVerification = () => {
   const navigate = useNavigate();
