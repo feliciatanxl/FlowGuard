@@ -1,67 +1,140 @@
-# FlowGuard Python AI service (FastAPI + InsightFace + YOLOv8) — Cloud Run image.
+# FlowGuard Python AI service (FastAPI + InsightFace + YOLOv8)
+# Cloud Run CPU-only image.
 #
 # Key decisions:
-#   - CPU-only PyTorch wheels (download.pytorch.org/whl/cpu): Cloud Run has no
-#     GPU here, and the default PyPI torch wheel bundles CUDA (~2+ GB saved).
-#     main.py already runs everything on CPU (FACE_CTX_ID=-1 default,
-#     onnxruntime CPU provider), so CPU execution support is preserved.
-#   - insightface==0.7.3 has no prebuilt Linux wheel — it compiles C++/Cython,
-#     hence the build-essential builder stage. The runtime stage ships no
-#     compiler toolchain.
-#   - Models are baked in at BUILD time, never downloaded per request or per
-#     cold start:
-#       * yolov8n.pt is copied from the repo (standard COCO weights — contains
-#         no personal data);
-#       * the InsightFace "buffalo_l" model pack is downloaded once during the
-#         build into the app user's ~/.insightface cache.
-#   - Listens on the Cloud Run-injected PORT, binds 0.0.0.0, started by
-#     uvicorn (the __main__ block's hardcoded 8501 is dev-only and unused here).
-#   - USE_SERVER_CAMERA stays false: no physical webcam exists on Cloud Run;
-#     frames arrive from the browser via /api/yolo/analyze-frame.
-#   - No secrets baked in — DB_*, AI_SERVICE_KEY, NODE_SERVER_URL etc. come
-#     from Cloud Run env vars / Secret Manager. .env excluded by .dockerignore.
+#   - CPU-only PyTorch wheels are installed from:
+#       https://download.pytorch.org/whl/cpu
+#   - Compatible AI runtime pair:
+#       torch==2.13whl/cpu
+#   -.0
+#       torchvision==0.28.0
+#   - PyTorch dependencies are kept separately in requirements-torch.txt.
+#   - InsightFace 0.7.3 is compiled during the builder stage using the pinned
+#     Cython, NumPy and setuptools versions already present in requirements.txt.
+#   - The runtime image contains no compiler toolchain.
+#   - YOLO and InsightFace run on CPU in Cloud Run.
+#   - Models are included/downloaded during image build, not during requests.
+#   - No secrets are copied into the image. Runtime secrets come from Cloud Run
+#     environment variables and Secret Manager.
+#
+# Required files:
+#   requirements-torch.txt
+#   requirements.txt
+#   main.py
+#   zone_rules.py
+#   yolo_service.py
+#   yolov8n.pt
+
+
+# ============================================================
+# Builder stage
+# ============================================================
 
 FROM python:3.12-slim AS builder
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential g++ \
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# InsightFace 0.7.3 must be compiled from source on Linux.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        g++ \
     && rm -rf /var/lib/apt/lists/*
+
+# Keep all installed Python packages in a portable virtual environment.
 RUN python -m venv /opt/venv
+
 ENV PATH="/opt/venv/bin:$PATH"
+
 WORKDIR /build
-COPY requirements.txt .
-# CPU torch first (satisfies the torch==2.11.0 / torchvision==0.26.0 pins),
-# then the rest of the pinned requirements.
-RUN pip install --no-cache-dir torch==2.11.0 torchvision==0.26.0 \
-        --index-url https://download.pytorch.org/whl/cpu \
-    && pip install --no-cache-dir -r requirements.txt
+
+# PyTorch is separated so CPU-only wheels come from the PyTorch CPU index.
+COPY requirements-torch.txt requirements.txt ./
+
+# Installation sequence:
+#   1. Upgrade packaging tools.
+#   2. Install the matching CPU-only PyTorch pair.
+#   3. Install all pinned dependencies except InsightFace.
+#   4. Compile InsightFace using the already-installed pinned build tools.
+#   5. Verify the final dependency graph.
+RUN python -m pip install --no-cache-dir --upgrade pip wheel \
+    && python -m pip install --no-cache-dir "setuptools==81.0.0" \
+    && python -m pip install --no-cache-dir -r requirements-torch.txt \
+    && grep -vE '^[[:space:]]*insightface==' requirements.txt \
+        > requirements-without-insightface.txt \
+    && python -m pip install --no-cache-dir \
+        -r requirements-without-insightface.txt \
+    && python -m pip install --no-cache-dir \
+        --no-build-isolation \
+        --no-deps \
+        "insightface==0.7.3" \
+    && python -m pip check
+
+
+# ============================================================
+# Runtime stage
+# ============================================================
 
 FROM python:3.12-slim
-# OpenCV (cv2) runtime libraries only — no compilers in the final image.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1 \
-    libglib2.0-0 \
-    libgomp1 \
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Runtime libraries required by OpenCV, ONNX Runtime and AI packages.
+# No compiler toolchain is included in the final image.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libgl1 \
+        libglib2.0-0 \
+        libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd --create-home --uid 1001 appuser
+# Run as an unprivileged user.
+RUN useradd \
+    --create-home \
+    --uid 1001 \
+    appuser
+
+# Copy only the completed virtual environment from the builder.
 COPY --from=builder /opt/venv /opt/venv
+
 ENV PATH="/opt/venv/bin:$PATH" \
-    # Writable config/cache dirs for ultralytics + matplotlib on a read-only-ish FS.
-    YOLO_CONFIG_DIR=/tmp \
-    MPLCONFIGDIR=/tmp/matplotlib \
-    USE_SERVER_CAMERA=false \
-    PYTHONUNBUFFERED=1
+    HOME="/home/appuser" \
+    YOLO_CONFIG_DIR="/tmp/ultralytics" \
+    MPLCONFIGDIR="/tmp/matplotlib" \
+    USE_SERVER_CAMERA="false" \
+    PYTHONUNBUFFERED="1"
 
 USER appuser
 WORKDIR /app
 
-# Bake the InsightFace buffalo_l pack into the image at build time so cold
-# starts never download models. (~280 MB into /home/appuser/.insightface)
-RUN python -c "from insightface.app import FaceAnalysis; FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider'])"
+# Prepare writable runtime cache/config directories.
+RUN mkdir -p \
+    /tmp/ultralytics \
+    /tmp/matplotlib
 
-# Copy only the application files — never .env, .venv, tests, or face images.
-COPY --chown=appuser:appuser main.py zone_rules.py yolo_service.py yolov8n.pt ./
+# Download and bake the InsightFace buffalo_l model pack into the image.
+# This avoids downloading the model during a Cloud Run cold start.
+RUN python -c \
+    "from insightface.app import FaceAnalysis; \
+    FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider']); \
+    print('InsightFace buffalo_l model prepared')"
 
-# Documentation only — Cloud Run supplies PORT and routes to it.
+# Copy only runtime application files.
+# .env, .venv, tests and private face images must be excluded by .dockerignore.
+COPY --chown=appuser:appuser \
+    main.py \
+    zone_rules.py \
+    yolo_service.py \
+    yolov8n.pt \
+    ./
+
+# Cloud Run supplies PORT at runtime.
 EXPOSE 8080
+
 CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}"]
