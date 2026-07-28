@@ -27,7 +27,7 @@
     "react-google-recaptcha": "^3.1.0",
     "react-google-recaptcha-v3": "^1.11.0",
     "react-qr-code": "^2.0.21",
-    "react-router-dom": "^7.14.2",
+    "react-router-dom": "^7.18.1",
     "react-router-hash-link": "^2.4.3",
     "tesseract.js": "^7.0.0",
     "yup": "^1.7.1"
@@ -48,5 +48,11 @@
     "jsdom": "^29.1.1",
     "vite": "^8.1.5",
     "vitest": "^4.1.9"
+  },
+  "//overrides": "Dev/build-toolchain-only transitives (never in the shipped Vite bundle). Each is pinned to the smallest API-compatible PATCHED version so Dependabot clears without an uncontrolled parent upgrade: js-yaml stays on the v3 API @istanbuljs/load-nyc-config needs; brace-expansion has a stable single-function API; @babel/core is a 7.x patch. `npm audit fix` was rejected because it bumped the jest chain and INCREASED total advisories.",
+  "overrides": {
+    "@babel/core": "^7.29.7",
+    "js-yaml": "3.15.0",
+    "brace-expansion": "5.0.8"
   }
 }
