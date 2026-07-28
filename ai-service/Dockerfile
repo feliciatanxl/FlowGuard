@@ -5,8 +5,7 @@
 #   - CPU-only PyTorch wheels are installed from:
 #       https://download.pytorch.org/whl/cpu
 #   - Compatible AI runtime pair:
-#       torch==2.13whl/cpu
-#   -.0
+#       torch==2.13.0
 #       torchvision==0.28.0
 #   - PyTorch dependencies are kept separately in requirements-torch.txt.
 #   - InsightFace 0.7.3 is compiled during the builder stage using the pinned
@@ -61,7 +60,7 @@ COPY requirements-torch.txt requirements.txt ./
 #   4. Compile InsightFace using the already-installed pinned build tools.
 #   5. Verify the final dependency graph.
 RUN python -m pip install --no-cache-dir --upgrade pip wheel \
-    && python -m pip install --no-cache-dir "setuptools==81.0.0" \
+    && python -m pip install --no-cache-dir "setuptools==83.0.0" \
     && python -m pip install --no-cache-dir -r requirements-torch.txt \
     && grep -vE '^[[:space:]]*insightface==' requirements.txt \
         > requirements-without-insightface.txt \
