@@ -25,7 +25,10 @@ use placeholder names only.
 
 **Backend (Render)**
 `APP_PORT`, `APP_SECRET`, `CLIENT_URL` + `ALLOWED_ORIGINS` (CORS allowlist — set the Vercel URL;
-unset = dev allow-all fallback), `FRONTEND_URL`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`,
+**required in production/staging**: with `NODE_ENV=production|staging` and no origin configured the
+server FAILS CLOSED and denies every browser origin), `FRONTEND_URL`, `TRUST_PROXY` (proxy hop count,
+Cloud Run = `1`), `RATE_LIMIT_*` (optional API rate-limit overrides — safe defaults apply if unset),
+`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`,
 `DB_PWD`, `FACE_AI_URL`, `PYTHON_AI_URL`, `AI_SERVICE_KEY`, `EDGE_SERVICE_TOKEN` (optional),
 `RECAPTCHA_SECRET_KEY`, `WHATSAPP_ENABLED`, `WHATSAPP_API_URL`, `WHATSAPP_ACCESS_TOKEN`,
 `WHATSAPP_API_KEY`, `WHATSAPP_PHONE_NUMBER_ID`
@@ -41,6 +44,21 @@ locally so the Vite proxy handles `/api`; the Vite dev proxies do not exist in p
 `VITE_RECAPTCHA_SITE_KEY`, `VITE_PI_CAMERA_STREAM_URL`, `VITE_PI_CAMERA_SNAPSHOT_URL`
 (demo-network Pi camera). No secret values in any `VITE_` variable — they are public in the
 built bundle.
+
+## Security hardening (CORS, rate limiting, proxy)
+
+- **CORS fails closed in production/staging.** Set `NODE_ENV=production` (or `staging`) on the
+  backend AND configure at least one of `FRONTEND_URL` / `CLIENT_URL` / `ALLOWED_ORIGINS` with the
+  exact deployed client origin (e.g. the Cloud Run/Vercel URL). If none is set in a
+  production/staging environment the server denies all browser-origin requests and logs a clear
+  error — it never falls back to a wildcard. In development (any other `NODE_ENV`) an explicit
+  localhost allowlist is used automatically.
+- **Rate limiting.** All API routes are rate-limited by `express-rate-limit` (keyed per
+  authenticated user, IP fallback; trusted `x-service-key` AI calls are exempt). Defaults are
+  polling-safe; tune per environment via the `RATE_LIMIT_*` variables in `server/.env.example`.
+- **Trust proxy.** Behind Cloud Run/Render (one proxy hop) set `TRUST_PROXY=1` so the limiter sees
+  the real client IP from `X-Forwarded-For` without trusting arbitrary forwarded values. Adjust the
+  hop count if additional proxies sit in front; never trust all proxies.
 
 ## Notes
 - **Deploy order:** database → backend → frontend (the frontend needs the backend URL; the backend
