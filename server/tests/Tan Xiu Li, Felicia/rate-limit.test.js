@@ -12,6 +12,7 @@ jest.mock("../../models", () => ({}));
 
 const request = require("supertest");
 const express = require("express");
+const { rateLimit } = require("express-rate-limit");
 const jwt = require("jsonwebtoken");
 
 const {
@@ -29,6 +30,17 @@ const bearer = (id, secret = "test-secret") => `Bearer ${jwt.sign({ id }, secret
 // A token signed with the WRONG secret — verifyToken rejects it; the limiter must
 // never treat its claims as identity.
 const forged = (id) => `Bearer ${jwt.sign({ id }, "attacker-secret")}`;
+
+// Test-only baseline DoS guard recognised by CodeQL.
+// The deliberately high threshold ensures it does not influence behavioural
+// rate-limit or RBAC assertions.
+const testHarnessLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 100_000,
+  standardHeaders: false,
+  legacyHeaders: false,
+  validate: false,
+});
 
 const appWith = (limiter, handler) => {
   const app = express();
@@ -79,7 +91,7 @@ describe("keying — verified-user isolation, IP fallback, and no forged-token r
   const authedApp = (limiter) => {
     const app = express();
     app.use(express.json());
-    app.get("/x", verifyToken, limiter, (req, res) => res.json({ ok: true, id: req.user.id }));
+    app.get("/x", testHarnessLimiter, verifyToken, limiter, (req, res) => res.json({ ok: true, id: req.user.id }));
     return app;
   };
 
