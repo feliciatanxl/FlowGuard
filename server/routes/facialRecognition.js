@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const { aiProxyLimiter } = require('../middlewares/rateLimit');
+router.use(aiProxyLimiter); // high-frequency track/recognize/evaluate loops
 const axios = require('axios');
 const { User, EvaluationParticipant } = require('../models');
 const { syncEligibleEvaluationParticipants, listEvaluationParticipants } = require('../services/evaluationParticipants');

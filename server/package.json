@@ -18,6 +18,7 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^7.5.0",
     "form-data": "^4.0.5",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
@@ -34,5 +35,11 @@
     "jest": "^30.4.2",
     "nodemon": "^3.1.14",
     "supertest": "^7.2.2"
+  },
+  "//overrides": "uuid<11.1.1 (GHSA-w5hq-g745-h8pq) reaches us only transitively via sequelize@6.37.8, which calls uuid.v1()/v4() with no `buf` argument — the vulnerable buffer-bounds path is never exercised. sequelize has no patched 6.x release that bumps uuid, and `npm audit fix --force` would downgrade sequelize to 3.x (breaking). brace-expansion/js-yaml are DEV-ONLY jest transitives (never in the deployed server) pinned to the smallest API-compatible patched version; js-yaml stays on v3 for @istanbuljs/load-nyc-config. `npm audit fix` was rejected because it destabilised the toolchain.",
+  "overrides": {
+    "uuid": "^11.1.1",
+    "brace-expansion": "5.0.8",
+    "js-yaml": "3.15.0"
   }
 }

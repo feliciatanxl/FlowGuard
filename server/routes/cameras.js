@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const { readLimiter } = require('../middlewares/rateLimit');
+router.use(readLimiter); // route-wide rate limiting
 const { Camera, MonitoringZone, sequelize } = require('../models');
 const { verifyToken, requireRole } = require('../middlewares/auth');
 

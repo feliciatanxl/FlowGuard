@@ -8,6 +8,7 @@ import useEvaluationParticipants from '../hooks/useEvaluationParticipants';
 import '../css/Dashboard.css';
 import '../css/FacialEvaluation.css';
 import { API_BASE_URL } from '../constants/api';
+import { validateImageFile, createTemporaryObjectUrl, revokeTemporaryObjectUrl } from '../utils/mediaPreview';
 import { CAMERA_SOURCES, CAMERA_STATUS_MESSAGES, isPiCameraReachable, fetchPiSnapshotBitmap } from '../constants/piCamera';
 import {
   SCENARIOS,
@@ -264,12 +265,15 @@ const FacialEvaluation = () => {
 
   const handleUpload = (file) => {
     if (!file) return;
-    if (uploadPreviewUrl) URL.revokeObjectURL(uploadPreviewUrl);
-    const url = URL.createObjectURL(file);
-    setUploadPreviewUrl(url);
+    // Validate MIME + size before creating any preview URL; only a validated
+    // File/Blob becomes a blob: object URL.
+    const check = validateImageFile(file);
+    if (!check.ok) { setLiveError(check.error); return; }
+    revokeTemporaryObjectUrl(uploadPreviewUrl);
+    setUploadPreviewUrl(createTemporaryObjectUrl(check.file));
     const reader = new FileReader();
     reader.onload = (event) => setUploadFrame(event.target.result);
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(check.file);
   };
 
   const runLiveEvaluate = async (mode = 'camera') => {
@@ -362,8 +366,10 @@ const FacialEvaluation = () => {
 
   const handleWizardUpload = (file) => {
     if (!file) return;
-    if (wizardUploadUrl) URL.revokeObjectURL(wizardUploadUrl);
-    setWizardUploadUrl(URL.createObjectURL(file));
+    const check = validateImageFile(file);
+    if (!check.ok) { setSimMessage(check.error); return; }
+    revokeTemporaryObjectUrl(wizardUploadUrl);
+    setWizardUploadUrl(createTemporaryObjectUrl(check.file));
   };
 
   const captureWizardOrientation = () => {

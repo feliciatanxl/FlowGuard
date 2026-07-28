@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const { readLimiter } = require('../middlewares/rateLimit');
+router.use(readLimiter); // route-wide rate limiting (trusted AI service calls are skipped)
 const { IncidentLog, DetectionAlert, sequelize } = require('../models');
 const { Op } = require("sequelize");
 const axios = require('axios');
