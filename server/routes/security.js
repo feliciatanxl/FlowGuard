@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const { readLimiter } = require('../middlewares/rateLimit');
+router.use(readLimiter); // route-wide rate limiting
 const { randomUUID } = require('crypto');
 
 // Destructure BOTH sequelize (for raw queries) and SecurityLog from the auto-loader

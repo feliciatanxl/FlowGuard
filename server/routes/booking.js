@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const { readLimiter } = require('../middlewares/rateLimit');
+router.use(readLimiter); // route-wide rate limiting
 const crypto = require('crypto');
 const { Op } = require('sequelize');
 const { Booking, User } = require('../models');

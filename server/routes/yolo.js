@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const { aiProxyLimiter } = require('../middlewares/rateLimit');
+router.use(aiProxyLimiter); // high-frequency frame analysis + people-count polling
 const axios = require('axios');
 const { verifyToken, requireRole } = require('../middlewares/auth');
 const { aiServiceHeaders } = require('../services/aiServiceAuth');

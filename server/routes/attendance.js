@@ -1,5 +1,7 @@
 ﻿const express = require('express');
 const router = express.Router();
+const { readLimiter } = require('../middlewares/rateLimit');
+router.use(readLimiter); // route-wide rate limiting (trusted AI service scan is skipped)
 const { Attendance, User } = require('../models');
 const { Op } = require('sequelize');
 const { verifyToken, verifyServiceOrRole } = require('../middlewares/auth');

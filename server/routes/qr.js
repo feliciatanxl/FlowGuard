@@ -10,6 +10,8 @@
 // The frontend never calls FastAPI directly; all AI traffic goes through Node.
 const express = require('express');
 const router = express.Router();
+const { aiProxyLimiter } = require('../middlewares/rateLimit');
+router.use(aiProxyLimiter); // cloud QR fallback snapshot decoding
 const axios = require('axios');
 const { verifyToken, requireRole } = require('../middlewares/auth');
 const { aiServiceHeaders } = require('../services/aiServiceAuth');
