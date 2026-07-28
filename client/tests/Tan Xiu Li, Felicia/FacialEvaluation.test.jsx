@@ -5,7 +5,7 @@
 // CSV export, and that no raw image/vector/template data is rendered or stored.
 import React from "react";
 import { render, screen, fireEvent, within, cleanup, act } from "@testing-library/react";
-import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { MemoryRouter, Routes, Route } from "react-router";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import "@testing-library/jest-dom";
 

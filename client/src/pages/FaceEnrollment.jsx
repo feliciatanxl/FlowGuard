@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import axios from 'axios';
 import '../css/Enrollment.css';
 import { API_BASE_URL } from '../constants/api';

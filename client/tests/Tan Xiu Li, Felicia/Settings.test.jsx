@@ -3,7 +3,7 @@
 // Engine, Camera Feed Quality and Danger Zone sections are permanently removed.
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { describe, test, expect, beforeEach } from "vitest";
 
 import Settings from "../../src/pages/Settings";

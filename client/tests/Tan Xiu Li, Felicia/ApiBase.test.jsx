@@ -2,7 +2,7 @@
 // (VITE_API_BASE_URL): blank locally (Vite proxy), a deployed Node URL on Vercel.
 import React from "react";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
-import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { MemoryRouter, Routes, Route } from "react-router";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../src/components/Sidebar", () => ({ default: () => <div data-testid="sidebar" /> }));

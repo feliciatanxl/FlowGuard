@@ -1,6 +1,6 @@
 // client/src/components/Sidebar.jsx
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router';
 import LogoIcon from './LogoIcon';
 import { ROLES, roleLabel } from '../constants/roles';
 

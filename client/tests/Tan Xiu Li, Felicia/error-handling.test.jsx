@@ -2,7 +2,7 @@
 // fallback that prevents blank white screens on render crashes.
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { describe, test, expect, vi } from "vitest";
 
 import NotFound from "../../src/pages/NotFound";

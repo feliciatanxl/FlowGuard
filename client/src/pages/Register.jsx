@@ -1,5 +1,5 @@
 import React, { useState } from 'react'; 
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router';
 import axios from 'axios'; 
 import { useGoogleReCaptcha } from 'react-google-recaptcha-v3'; 
 import NavBar from '../components/NavBar';

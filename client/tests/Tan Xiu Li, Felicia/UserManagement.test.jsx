@@ -3,7 +3,7 @@ import React from "react";
 import fs from "node:fs";
 import path from "node:path";
 import { render, screen, fireEvent, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { vi, describe, test, expect, beforeEach } from "vitest";
 
 const { mockGet, mockPost } = vi.hoisted(() => ({
