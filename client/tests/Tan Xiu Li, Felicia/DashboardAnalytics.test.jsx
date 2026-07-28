@@ -1,7 +1,7 @@
 // Frontend tests — FM dashboard operational analytics panels (7-day trend + top zones).
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { vi, describe, test, expect, beforeEach } from 'vitest';
 
 const { mockGet } = vi.hoisted(() => ({ mockGet: vi.fn() }));

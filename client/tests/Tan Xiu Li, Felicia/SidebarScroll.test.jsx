@@ -1,6 +1,6 @@
 import React from "react";
 import { render, waitFor, fireEvent } from "@testing-library/react";
-import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
+import { MemoryRouter, Routes, Route, useLocation } from "react-router";
 import { describe, test, expect, beforeEach, vi } from "vitest";
 
 import Sidebar, { SIDEBAR_SCROLL_STORAGE_KEY } from "../../src/components/Sidebar";

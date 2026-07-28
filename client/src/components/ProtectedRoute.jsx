@@ -1,5 +1,5 @@
 import React from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router';
 
 // Only treats a token as expired when it positively decodes as a JWT whose exp
 // has passed; opaque tokens (e.g. test fixtures) are left for the server to judge.

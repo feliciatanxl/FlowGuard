@@ -3,7 +3,7 @@
 // scanner-side compact view, Advanced Matrix Details behind its own toggle.
 import React from "react";
 import { render, screen, fireEvent, act, cleanup, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 
 import LiveConfusionMatrixPanel from "../../src/components/LiveConfusionMatrixPanel";

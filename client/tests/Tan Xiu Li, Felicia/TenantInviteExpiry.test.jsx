@@ -1,7 +1,7 @@
 // Tenant Onboarding — pending-invite expiry countdown and status handling.
 import React from "react";
 import { render, screen, act, cleanup } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../src/components/Sidebar", () => ({ default: () => <div data-testid="sidebar" /> }));

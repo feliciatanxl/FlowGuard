@@ -3,7 +3,7 @@ import FaceRetouchingOffIcon from '@mui/icons-material/FaceRetouchingOff';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import BlockIcon from '@mui/icons-material/Block';
 import ReportProblemIcon from '@mui/icons-material/ReportProblem';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import SafeMuiIcon from './SafeMuiIcon';
 import '../css/RecognitionDecisionCard.css';
 

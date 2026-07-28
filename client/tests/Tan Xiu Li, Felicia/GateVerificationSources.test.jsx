@@ -4,7 +4,7 @@
 // snapshot via the Node /api/qr/decode proxy. Utils are mocked at the boundary.
 import React from "react";
 import { render, screen, fireEvent, act, cleanup } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { vi, describe, test, expect, beforeEach, afterEach } from "vitest";
 
 const h = vi.hoisted(() => ({

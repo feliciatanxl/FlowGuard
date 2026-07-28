@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
 import RecognitionDecisionCard, { DECISION_STATES } from '../components/RecognitionDecisionCard';

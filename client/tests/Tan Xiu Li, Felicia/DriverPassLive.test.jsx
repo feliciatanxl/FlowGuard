@@ -3,7 +3,7 @@
 // without flickering the QR, with clean teardown on unmount.
 import React from "react";
 import { render, screen, waitFor, act } from "@testing-library/react";
-import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { MemoryRouter, Routes, Route } from "react-router";
 import { vi, describe, test, expect, afterEach } from "vitest";
 
 import DriverPass from "../../src/pages/DriverPass";

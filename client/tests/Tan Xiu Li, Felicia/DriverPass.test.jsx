@@ -1,7 +1,7 @@
 // Frontend tests — Driver Pass renders booking + QR, and degrades cleanly.
 import React from "react";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { MemoryRouter, Routes, Route } from "react-router";
 import { vi, describe, test, expect, afterEach } from "vitest";
 
 import DriverPass from "../../src/pages/DriverPass";

@@ -2,7 +2,7 @@
 // in Singapore time, consistent with the Logistics table and Driver Pass.
 import React from "react";
 import { render, screen, fireEvent, waitFor, act, cleanup } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { vi, describe, test, expect, beforeEach, afterEach } from "vitest";
 
 const h = vi.hoisted(() => ({ post: vi.fn() }));

@@ -1,7 +1,7 @@
 // Frontend tests — mobile sidebar drawer open/close behaviour, Escape, scroll-lock.
 import React from 'react';
 import { render, fireEvent, screen } from '@testing-library/react';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router';
 import { describe, test, expect, beforeEach } from 'vitest';
 
 import Sidebar from '../../src/components/Sidebar';

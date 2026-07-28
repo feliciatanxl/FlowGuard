@@ -1,5 +1,5 @@
 import React from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
+import { Routes, Route, useLocation } from 'react-router';
 import Home from './pages/Home';
 import SystemHealth from './pages/SystemHealth';
 import Contact from './pages/Contact';

@@ -1,7 +1,7 @@
 // Frontend tests — Smart Logistics page renders, with loading → empty state.
 import React from "react";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { vi, describe, test, expect, beforeEach } from "vitest";
 
 const { mockGet, mockNavigate } = vi.hoisted(() => ({
@@ -12,7 +12,7 @@ vi.mock("axios", () => ({
   default: { get: mockGet, post: vi.fn(() => Promise.resolve({ data: {} })), patch: vi.fn(() => Promise.resolve({ data: {} })) },
 }));
 // Keep the real router (MemoryRouter) but capture navigation from the Gate Scan button.
-vi.mock("react-router-dom", async (importOriginal) => {
+vi.mock("react-router", async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, useNavigate: () => mockNavigate };
 });

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 import * as QRLib from "react-qr-code";
 import "../css/DriverPass.css";
 import { API_BASE_URL } from "../constants/api";
