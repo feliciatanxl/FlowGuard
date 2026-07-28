@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Link } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import { getHardwareStreamUrl, getHardwareHealthUrl, getHardwarePeopleCountUrl } from '../utils/securepiStream';
+import { validateVideoFile, createTemporaryObjectUrl, revokeTemporaryObjectUrl } from '../utils/mediaPreview';
 import '../css/Dashboard.css';
 import '../css/ObjectDetection.css';
 
@@ -452,9 +453,13 @@ const ObjectDetection = () => {
   const handleVideoUpload = (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (uploadedVideoUrl) URL.revokeObjectURL(uploadedVideoUrl);
-    setUploadedVideoUrl(URL.createObjectURL(file));
-    setUploadedVideoName(file.name);
+    // Validate MIME + size before creating any preview URL; only a validated
+    // File/Blob is ever turned into a blob: object URL (never a raw/remote URL).
+    const check = validateVideoFile(file);
+    if (!check.ok) { setWorkflowMessage(check.error); return; }
+    revokeTemporaryObjectUrl(uploadedVideoUrl);
+    setUploadedVideoUrl(createTemporaryObjectUrl(check.file));
+    setUploadedVideoName(check.file.name);
     setSourceMode('file');
     setCameraReady(false);
     setDetections([]);
