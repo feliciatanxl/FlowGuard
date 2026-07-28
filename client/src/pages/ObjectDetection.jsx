@@ -4,6 +4,7 @@ import { Link } from 'react-router';
 import Sidebar from '../components/Sidebar';
 import { getHardwareStreamUrl, getHardwareHealthUrl, getHardwarePeopleCountUrl } from '../utils/securepiStream';
 import { validateVideoFile, createTemporaryObjectUrl, revokeTemporaryObjectUrl } from '../utils/mediaPreview';
+import { buildAnalyzeFramePayload, buildBearerHeaders } from '../utils/analyzeFrame';
 import '../css/Dashboard.css';
 import '../css/ObjectDetection.css';
 
@@ -41,16 +42,9 @@ const alertTimestamp = (alert) => {
   return date.toLocaleString('en-SG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
 };
 
-// Sends the selected camera's stable id (and its zone, if assigned) so the AI service
-// loads THAT camera's Detection Setup rule instead of the legacy global-smallest-
-// threshold fallback. Exported (pure, no component state) so it's unit-testable without
-// needing a decoded <video> frame — see tests/.../ObjectDetectionSourceModes.test.jsx.
-export const buildAnalyzeFramePayload = (image, camera, source) => {
-  const payload = camera
-    ? { image, camera_id: camera.id, ...(camera.zone_id ? { zone_id: camera.zone_id } : {}) }
-    : { image };
-  return source ? { ...payload, source } : payload;
-};
+// Keep the existing page export for callers/tests while the implementation is
+// shared with CameraFeed so both surfaces obey one Node/FastAPI contract.
+export { buildAnalyzeFramePayload } from '../utils/analyzeFrame';
 
 // Canonical alert-source label per sourceMode — the AI service whitelists these before
 // forwarding them into POST /api/detection-alerts, so keep values in sync with
@@ -94,7 +88,7 @@ const ObjectDetection = () => {
   const aiHealthFailuresRef = useRef(0);
 
   const token = localStorage.getItem('accessToken');
-  const headers = { Authorization: `Bearer ${token}` };
+  const headers = buildBearerHeaders(token);
 
   const fetchZones = useCallback(() => {
     axios.get(ZONES_URL, { headers })

@@ -1,98 +1,119 @@
-# Deployment
+# FlowGuard Google Cloud deployment
 
-FlowGuard runs fully **locally for the Week 13 demo**; cloud deployment is planned. Replace all
-placeholder URLs with your live ones before submission. **Do not put real secret values here** —
-use placeholder names only.
+This document records the current repository-backed deployment design. It contains environment-variable names and placeholders only; it does not contain credentials.
 
-## Current status (local demo)
-| Tier | Local |
-|------|-------|
-| Frontend (React/Vite) | http://localhost:5173 |
-| Backend (Node/Express) | http://localhost:5001 |
-| AI service (FastAPI: InsightFace + YOLO) | http://127.0.0.1:8501 |
-| Database | local or managed PostgreSQL |
-| WhatsApp | simulated (`WHATSAPP_ENABLED=false`) |
+## Current architecture
 
-## Planned cloud deployment
-| Tier | Service | Public URL (placeholder) |
-|------|---------|--------------------------|
-| Frontend | **Vercel** | https://your-app.vercel.app |
-| Backend API | **Render** | https://your-backend.onrender.com |
-| Database | **Neon / Supabase PostgreSQL** | (internal connection string) |
-| AI service | **local / demo now**, future cloud (heavy: InsightFace + YOLO) | https://your-ai-service.example.com |
+| Tier | Google Cloud service | Access | Verified detail |
+|---|---|---|---|
+| React client | Cloud Run `flowguard-client`, Nginx static SPA/reverse proxy | Public | Repository-configured region `asia-southeast1`; staging URL below returned HTTP 200 on 28 July 2026. |
+| Node API | Cloud Run `flowguard-server` | Public through the client proxy and API URL | Direct public URL is not recorded as a verified value in the repository. |
+| FastAPI AI | Cloud Run `flowguard-ai` | **Private/authenticated** | `--no-allow-unauthenticated`; Node service account needs `roles/run.invoker`; app key remains defence in depth. No public URL is published. |
+| Database | Cloud SQL for PostgreSQL | Private application data service | Instance and database names are not verified in repository files. |
+| Secrets | Secret Manager and Cloud Run secret bindings | Runtime service identities | Real values must never enter source, images, build arguments, or `VITE_` variables. |
+| Images/build | Artifact Registry and Cloud Build | Deployment pipeline | Repository documents image tags and `gcloud builds submit`; Developer Connect/trigger names and branch filters are not checked in and remain evidence to capture from Google Cloud Console. |
 
-## Environment variables (placeholder names only — never real values)
+Repository-configured Google Cloud project/region: `flowguard-502613`, `asia-southeast1`. These values are present in `deployment/cloud-run/README.md`; the `gcloud` CLI was unavailable on the audit machine, so live console state was not queried.
 
-**Backend (Render)**
-`APP_PORT`, `APP_SECRET`, `CLIENT_URL` + `ALLOWED_ORIGINS` (CORS allowlist — set the Vercel URL;
-**required in production/staging**: with `NODE_ENV=production|staging` and no origin configured the
-server FAILS CLOSED and denies every browser origin), `FRONTEND_URL`, `TRUST_PROXY` (proxy hop count,
-Cloud Run = `1`), `RATE_LIMIT_*` (optional API rate-limit overrides — safe defaults apply if unset),
-`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`,
-`DB_PWD`, `FACE_AI_URL`, `PYTHON_AI_URL`, `AI_SERVICE_KEY`, `EDGE_SERVICE_TOKEN` (optional),
-`RECAPTCHA_SECRET_KEY`, `WHATSAPP_ENABLED`, `WHATSAPP_API_URL`, `WHATSAPP_ACCESS_TOKEN`,
-`WHATSAPP_API_KEY`, `WHATSAPP_PHONE_NUMBER_ID`
+## Verified public URLs
 
-**AI service (e.g. Cloud Run)**
-`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PWD`, `AI_SERVICE_KEY` (required in production —
-protects the face endpoints), `ALLOWED_ORIGINS`
+| Surface | URL | Audit status |
+|---|---|---|
+| Client | <https://flowguard-client-staging-590663319889.asia-southeast1.run.app> | Verified with HTTP 200 and `Google Frontend` response on 28 July 2026. |
+| Node server | Not stated | Direct service URL not independently verified; the client proxies `/api/*` and `/user/*` to Node through runtime `BACKEND_HOST`. |
+| AI service | Not published | Intentionally private; authentication is required. |
 
-**Frontend (Vercel)**
-`VITE_API_BASE_URL` (the ONE canonical Node-backend URL — facial recognition, attendance,
-security logs, Smart Logistics and the public Driver Pass all call Node through it; leave blank
-locally so the Vite proxy handles `/api`; the Vite dev proxies do not exist in production),
-`VITE_RECAPTCHA_SITE_KEY`, `VITE_PI_CAMERA_STREAM_URL`, `VITE_PI_CAMERA_SNAPSHOT_URL`
-(demo-network Pi camera). No secret values in any `VITE_` variable — they are public in the
-built bundle.
+Do not replace missing URLs with guessed Cloud Run hostnames.
 
-## Security hardening (CORS, rate limiting, proxy)
+## Request and trust flow
 
-- **CORS fails closed in production/staging.** Set `NODE_ENV=production` (or `staging`) on the
-  backend AND configure at least one of `FRONTEND_URL` / `CLIENT_URL` / `ALLOWED_ORIGINS` with the
-  exact deployed client origin (e.g. the Cloud Run/Vercel URL). If none is set in a
-  production/staging environment the server denies all browser-origin requests and logs a clear
-  error — it never falls back to a wildcard. In development (any other `NODE_ENV`) an explicit
-  localhost allowlist is used automatically.
-- **Rate limiting.** All API routes are rate-limited by `express-rate-limit`. Keying: a limiter that
-  runs after `verifyToken` keys on the **verified** `req.user.id` (per-user quota); router-wide
-  pre-auth limiters key on the client IP. Unverified JWTs are never decoded for keying. Trusted
-  `x-service-key` AI calls are exempt. Defaults are polling-safe; tune via `RATE_LIMIT_*`.
-  - **Scope caveat (staging-only):** the limiter uses `express-rate-limit`'s in-memory
-    `MemoryStore`. Counters are **per Node process / per Cloud Run instance** and are **not shared
-    across instances or cold starts** — so with autoscaling the effective limit is per-instance,
-    **not** globally enforced distributed rate limiting. This is fine for the single-instance
-    staging demo. For global enforcement, back the same limiters with a shared store
-    (e.g. `rate-limit-redis`); the factory in `middlewares/rateLimit.js` isolates that change.
-- **Trust proxy.** Behind Cloud Run/Render (one proxy hop) set `TRUST_PROXY=1` so the limiter sees
-  the real client IP from `X-Forwarded-For` without trusting arbitrary forwarded values. Adjust the
-  hop count if additional proxies sit in front; never trust all proxies.
-- **PRE-DEPLOY CHECK for the fail-closed CORS change.** Before deploying, confirm the backend env
-  contains the deployed staging client origin, e.g.
-  `FRONTEND_URL=https://flowguard-client-staging-590663319889.asia-southeast1.run.app` (or list it
-  in `ALLOWED_ORIGINS`). On boot the server logs `"[startup] CORS allowlist (production/staging): …"`
-  — verify that line shows the staging URL. If it instead logs `"[startup] CORS is FAIL-CLOSED …"`,
-  the origin is missing and every browser request will be blocked: set it before rolling out.
+1. Browser requests the public Cloud Run client.
+2. Nginx serves the React SPA and proxies `/api/*` and `/user/*` to the Node Cloud Run service.
+3. Node validates application JWT/RBAC before forwarding facial, QR, or YOLO work.
+4. Node obtains a Google ID token for the AI service audience and supplies `X-AI-Service-Key`.
+5. Private FastAPI performs transient inference. Node remains authoritative for users, bookings, gate decisions, and audit writes.
+6. Node/FastAPI use Cloud SQL PostgreSQL. SecurePi sends authenticated outbound alert events to Node.
 
-## Notes
-- **Deploy order:** database → backend → frontend (the frontend needs the backend URL; the backend
-  needs the DB).
-- **CORS:** the backend uses an environment allowlist (`CLIENT_URL` + optional comma-separated
-  `ALLOWED_ORIGINS`, e.g. LAN dev origins). If both are unset it falls back to allow-all for
-  local development — always set `CLIENT_URL` to the Vercel URL when deploying. Wildcard and
-  credentials are never combined.
-- **WhatsApp after deployment:** update `FRONTEND_URL` to the live frontend so driver-pass links in
-  WhatsApp point to the deployed `/driver-pass/:ref` page. Set `WHATSAPP_ENABLED=true` with real
-  Meta credentials only when going live; keep it `false` (simulated) for demos.
-- **AI service:** InsightFace + YOLO are memory/CPU-heavy, so the AI service runs locally for the
-  demo. Cloud hosting (a GPU/většího-memory host) is future work; the backend reaches it via
-  `FACE_AI_URL`.
-- **Database:** protected biometric templates use a native `FLOAT[]` column — **pgvector is not
-  required**. Raw enrolment photos and live snapshots are never stored (no PostgreSQL, no Google
-  Cloud Storage, no disk).
-- **Facial recognition path:** browser → Node (`/api/facial-recognition/recognize`, FM JWT or
-  edge token) → FastAPI (`X-AI-Service-Key`) → Node resolves the User by ID in PostgreSQL. The
-  frontend never calls FastAPI directly. Full details:
-  `docs/Tan Xiu Li, Felicia/facial-recognition-api-and-security.md`.
-- **Render free tier** sleeps after ~15 min idle (~30s cold start) — warn the tutor before a demo.
-- **Secrets:** all credentials come from environment variables; nothing real is committed. See each
-  tier's `.env.example` for placeholder names.
+Local browser QR detection does not leave the browser. Cloud QR fallback is Browser -> Node `/api/qr/decode` -> private FastAPI `/api/qr/decode`.
+
+## Build and trigger flow
+
+The checked-in Dockerfiles build these images:
+
+```bash
+REG=asia-southeast1-docker.pkg.dev/flowguard-502613/flowguard-containers
+docker build -t $REG/flowguard-server:<revision> server/
+docker build -t $REG/flowguard-ai:<revision> ai-service/
+docker build -t $REG/flowguard-client:<revision> client/
+```
+
+`deployment/cloud-run/README.md` also documents `gcloud builds submit` and Cloud Run deployment commands. If Developer Connect/Cloud Build triggers are used, submission evidence still needs the actual connection, repository, trigger name, branch pattern, successful build ID, and resulting Cloud Run revision screenshot/export. No trigger YAML or live trigger output is available in this repository.
+
+Suggested branch flow: merge reviewed work to the configured deployment branch -> Developer Connect/Cloud Build trigger -> build tagged images -> push to Artifact Registry -> deploy a new Cloud Run revision -> smoke test -> shift traffic. The actual trigger branch must be copied from Google Cloud, not inferred from the current local Git branch.
+
+## Environment-variable names
+
+### `flowguard-server`
+
+Plain configuration: `NODE_ENV`, `APP_PORT` (local only; Cloud Run injects `PORT`), `CLIENT_URL`, `FRONTEND_URL`, `ALLOWED_ORIGINS`, `TRUST_PROXY`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_SYNC_ALTER`, `FACE_AI_URL`, `PYTHON_AI_URL`, `AI_ID_TOKEN`, `GATE_EARLY_MINUTES`, `GATE_LATE_MINUTES`, `WHATSAPP_ENABLED`, `WHATSAPP_API_URL`, `WHATSAPP_PHONE_NUMBER_ID`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `MAIL_FROM`, and the `RATE_LIMIT_*` overrides.
+
+Secret Manager candidates: `APP_SECRET`, `DB_PWD`, `AI_SERVICE_KEY`, `RECAPTCHA_SECRET_KEY`, `SMTP_PASS`, `EDGE_INGEST_TOKEN`, `EDGE_SERVICE_TOKEN`, `WHATSAPP_ACCESS_TOKEN`, and optional `WHATSAPP_API_KEY`.
+
+### `flowguard-ai`
+
+Plain configuration: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `NODE_SERVER_URL`, `USE_SERVER_CAMERA=false`, `FACE_CTX_ID=-1`, `FACE_MODEL_NAME`, `FACE_DET_SIZE`, `TRACK_DET_SIZE`, `YOLO_IMG_SIZE`, `YOLO_CONFIDENCE`, `AI_CAMERA_LOCATION`, and optional `ALLOWED_ORIGINS` for local use.
+
+Secrets: `DB_PWD`, `AI_SERVICE_KEY`.
+
+### `flowguard-client`
+
+Runtime: `BACKEND_HOST` is a hostname without a scheme for the Nginx template. Build-time public variables include `VITE_RECAPTCHA_SITE_KEY`. `VITE_API_BASE_URL` stays empty for the same-origin Cloud Run/Nginx design. Production should leave `VITE_PI_CAMERA_*` unset unless an explicitly reachable, secure Pi gateway exists.
+
+## CORS, proxy, and rate-limit requirements
+
+- Set `NODE_ENV=production` and configure the exact client origin in `CLIENT_URL`, `FRONTEND_URL`, or `ALLOWED_ORIGINS`. Production/staging fails closed if no origin exists.
+- Set `TRUST_PROXY=1` for the single Cloud Run proxy hop unless the deployed topology proves a different hop count. Never trust every proxy.
+- The current `express-rate-limit` store is `MemoryStore`. Quotas reset on cold start and apply per Node instance; autoscaling means this is not a global distributed limit. A shared store is required for production-wide enforcement.
+- The client uses credentials with an exact-origin allowlist; do not combine credentialed CORS with a wildcard.
+
+## Storage and privacy
+
+- Facial enrolment images, recognition frames, QR images, and plate images are transient request memory/canvas data and are not permanently stored by the current PoC.
+- PostgreSQL stores the facial `FLOAT[]` embedding and audit/operational metadata.
+- Detection alerts may store `snapshot_url`/`snapshot_path` metadata; SecurePi can keep local snapshots. This is not a general Cloud Storage upload pipeline.
+- InsightFace and YOLO models are baked into the AI container image. No model download is required per request.
+- Current scope does not require persistent user-upload storage.
+
+## Local container validation
+
+Use explicit local-only tags:
+
+```bash
+docker build -t flowguard-server:local server/
+docker build -t flowguard-ai:local ai-service/
+docker build -t flowguard-client:local client/
+
+docker run --rm -p 8080:8080 -e PORT=8080 --env-file server/.env flowguard-server:local
+docker run --rm -p 8081:8081 -e PORT=8081 --env-file ai-service/.env flowguard-ai:local
+docker run --rm -p 8082:8082 -e PORT=8082 -e BACKEND_HOST=<server-host> flowguard-client:local
+```
+
+Never paste real environment values into shell history, documentation, Dockerfiles, or build arguments.
+
+## Rollback and revision handling
+
+1. Record the current serving revisions and image digests before changing traffic.
+2. Deploy with immutable revision/image tags rather than reusing `latest`.
+3. Smoke-test client deep links, Node health, login/RBAC, private AI invocation, database access, Driver Pass, and CORS.
+4. If validation fails, route traffic back to the last known-good Cloud Run revision; do not rebuild an old tag in place.
+5. Database changes require a separate rollback plan. Normal startup uses `DB_SYNC_ALTER=false`; do not use schema alteration as an automatic rollback mechanism.
+6. Keep the AI service private throughout rollback. Do not temporarily enable unauthenticated access to diagnose invocation failures.
+
+## Remaining deployment evidence
+
+- Direct Node service URL and health response.
+- Cloud SQL instance/database name, region, connectivity method, backup status, and least-privilege database user evidence.
+- Private AI IAM policy showing only the intended invoker identity.
+- Secret Manager bindings without secret values.
+- Developer Connect/Cloud Build trigger name, branch rule, recent successful build, and deployed revision mapping.
+- Rollback exercise or revision traffic-shift evidence.

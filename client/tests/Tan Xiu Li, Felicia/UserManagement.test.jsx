@@ -94,21 +94,18 @@ describe("User Management — table layout", () => {
     mockGet.mockResolvedValueOnce({ data: USERS });
   });
 
-  test("'(You)' renders as ONE inline badge beside the name — it cannot split apart", async () => {
+  test("the signed-in row has one accessible YOU marker beside the name", async () => {
     const { container } = renderUsers();
     await screen.findAllByText("Tan Xiu Li, Felicia");
 
     // Scope to the desktop table (the card list also renders a self badge).
     const table = container.querySelector(".users-table");
-    const selfTags = table.querySelectorAll(".self-tag");
-    expect(selfTags.length).toBe(1); // only the signed-in user's row
-    // The whole "(You)" string lives in a single badge element, so the old
-    // "(You" + ")" line-split cannot happen.
-    expect(selfTags[0].textContent).toBe("(You)");
-    // Badge sits inside the same name cell as the personnel name.
-    expect(selfTags[0].closest(".user-name-text")).not.toBeNull();
-    // Other rows never get the badge.
-    expect(within(table).getByText("Jane Tan").closest("tr").querySelector(".self-tag")).toBeNull();
+    const selfRow = within(table).getByText("Tan Xiu Li, Felicia").closest("tr");
+    const selfMarker = within(selfRow).getByLabelText("Currently signed-in account");
+    expect(selfMarker.textContent).toBe("YOU");
+    expect(selfMarker.closest(".user-name-line")).not.toBeNull();
+    expect(within(table).getByText("Jane Tan").closest("tr").querySelector('[aria-label="Currently signed-in account"]')).toBeNull();
+    expect(within(table).queryAllByLabelText("Currently signed-in account")).toHaveLength(1);
   });
 
   test("email and Face ID status remain visible for every row", async () => {

@@ -7,12 +7,38 @@ export const SCAN_INTERVAL_MS = 1000;
 export const TARGET_LOCK_MS = 600;
 
 // Recognition frames need enough facial detail for stable embeddings on
-// Cloud Run CPU inference. 512 px is still lightweight, but avoids the
-// over-compression/low-detail mismatch that can produce very weak similarities.
-export const CAPTURE_MAX_WIDTH = 512;
+// Cloud Run CPU inference. The defaults were raised after 352 px / 0.62 JPEG
+// produced weak similarities. Deployments may increase them within the bounded
+// range for difficult cameras, but cannot configure a lower-detail frame.
+export const DEFAULT_CAPTURE_MAX_WIDTH = 512;
+export const DEFAULT_CAPTURE_JPEG_QUALITY = 0.74;
 
-// Keep embedding-grade detail without sending full-quality webcam frames.
-export const CAPTURE_JPEG_QUALITY = 0.74;
+const configuredNumber = (raw, min, max, fallback, { integer = false } = {}) => {
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) return fallback;
+  return integer ? Math.round(parsed) : parsed;
+};
+
+export const resolveCaptureTuning = (env = {}) => ({
+  maxWidth: configuredNumber(
+    env.VITE_FACE_CAPTURE_MAX_WIDTH,
+    DEFAULT_CAPTURE_MAX_WIDTH,
+    640,
+    DEFAULT_CAPTURE_MAX_WIDTH,
+    { integer: true }
+  ),
+  jpegQuality: configuredNumber(
+    env.VITE_FACE_CAPTURE_JPEG_QUALITY,
+    DEFAULT_CAPTURE_JPEG_QUALITY,
+    0.85,
+    DEFAULT_CAPTURE_JPEG_QUALITY
+  ),
+});
+
+const captureTuning = resolveCaptureTuning(import.meta.env);
+export const CAPTURE_MAX_WIDTH = captureTuning.maxWidth;
+export const CAPTURE_JPEG_QUALITY = captureTuning.jpegQuality;
 
 // --- Lightweight tracking loop (face box + head-turn sampling) --------------
 // Independent of the full recognition loop: it calls the detection-only

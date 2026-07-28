@@ -13,7 +13,9 @@
 # The only build-time value a deployment may optionally supply is the PUBLIC
 # reCAPTCHA site key.
 
-FROM node:22-slim AS build
+# @zxing/library 0.23 declares Node >=24 for its build toolchain. Match the
+# supported engine used by local CI so the container build has no EBADENGINE gap.
+FROM node:24-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci

@@ -9,6 +9,8 @@ vi.mock('axios');
 describe('CameraFeed', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    localStorage.clear();
+    localStorage.setItem('accessToken', 'camera-test-token');
     axios.post.mockResolvedValue({ data: { detections: [] } });
     HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
       drawImage: vi.fn(),
@@ -23,6 +25,7 @@ describe('CameraFeed', () => {
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.clearAllMocks();
+    localStorage.clear();
   });
 
   it('renders an <img> for an HTTP /video_feed hardware source', () => {
@@ -52,7 +55,7 @@ describe('CameraFeed', () => {
   });
 
   it('retains analyze-frame behaviour for local mp4 sources', async () => {
-    const { container } = render(<CameraFeed cam={{ id: 'CAM-01', video: '/videos/loading.mp4' }} />);
+    const { container } = render(<CameraFeed cam={{ databaseId: 7, zoneId: 3, code: 'CAM-01', video: '/videos/loading.mp4' }} />);
 
     const video = container.querySelector('video');
     Object.defineProperty(video, 'readyState', { value: 2, configurable: true });
@@ -63,10 +66,29 @@ describe('CameraFeed', () => {
 
     expect(axios.post).toHaveBeenCalledWith(
       '/api/yolo/analyze-frame',
-      expect.objectContaining({ cam_id: 'CAM-01' }),
       expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: expect.stringContaining('Bearer') }),
+        image: 'data:image/jpeg;base64,fake',
+        source: 'Uploaded Video',
+        camera_id: 7,
+        zone_id: 3,
+      }),
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer camera-test-token' },
+        signal: expect.any(AbortSignal),
       })
     );
+  });
+
+  it('does not analyze local video without an access token', async () => {
+    localStorage.removeItem('accessToken');
+    const { container } = render(<CameraFeed cam={{ databaseId: 7, code: 'CAM-01', video: '/videos/loading.mp4' }} />);
+    const video = container.querySelector('video');
+    Object.defineProperty(video, 'readyState', { value: 2, configurable: true });
+    Object.defineProperty(video, 'videoWidth', { value: 640, configurable: true });
+    Object.defineProperty(video, 'videoHeight', { value: 480, configurable: true });
+
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(axios.post).not.toHaveBeenCalled();
   });
 });

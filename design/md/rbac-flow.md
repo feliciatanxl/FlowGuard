@@ -65,9 +65,9 @@ flowchart LR
 
 ## Notes
 
-- Enforced on **both** layers: React `ProtectedRoute` (with role allow-lists) and Express
-  `verifyToken` + `requireRole` middleware. The frontend also hides controls a role cannot use so
-  users never click into a 403.
+- Most protected operations are enforced on both React `ProtectedRoute` and Express
+  `verifyToken` + `requireRole`. Camera and zone routers apply `router.use(verifyToken)`
+  before their per-handler role gates.
 - **401** = not logged in (redirect to login). **403** = logged in but insufficient role.
 - "Staff" means a tenant/factory worker (not a security officer), so Staff are kept out of AI/security
   monitoring pages and facility-level gate control.

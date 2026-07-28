@@ -204,12 +204,11 @@ Request: `{ "status": "Acknowledged" | "Dispatched" | "Cleared" }`. `404` if not
 
 ---
 
-## F. AI frame-analysis proxy paths (unauthenticated by design — existing, unchanged)
+## F. Authenticated AI frame-analysis proxy paths
 
-`/ai/api/yolo/people-count` and `/ai/api/yolo/analyze-frame` are dev-time proxy paths straight into
-the Python `ai-service` (see `ai-service/main.py`). They carry no user auth today — this is an
-existing characteristic of the local dev setup, not something this pass changed, and is flagged
-here for completeness rather than newly introduced risk.
+The browser calls Node `/api/yolo/people-count` and `/api/yolo/analyze-frame` with an FM/Staff JWT.
+Node forwards to private FastAPI with the Cloud Run Google ID token and `X-AI-Service-Key` where
+configured. The old direct `/ai/*` browser proxy is no longer the current architecture.
 
 ---
 

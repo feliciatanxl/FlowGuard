@@ -47,15 +47,40 @@ async function findLinkedAlert(log, t) {
     }
 }
 
-// Memory storage for incoming CCTV frames
-const upload = multer({ storage: multer.memoryStorage() });
+// Incoming frames stay in memory only long enough to proxy them to the AI
+// service. Bound both type and size before allocating/forwarding the payload.
+const MAX_FRAME_BYTES = 8 * 1024 * 1024;
+const ALLOWED_FRAME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_FRAME_BYTES, files: 1 },
+    fileFilter: (_req, file, callback) => {
+        if (ALLOWED_FRAME_TYPES.has(file.mimetype)) return callback(null, true);
+        const error = new Error('Unsupported image type.');
+        error.code = 'UNSUPPORTED_IMAGE_TYPE';
+        return callback(error);
+    }
+});
+
+const acceptFrameUpload = (req, res, next) => {
+    upload.single('file')(req, res, (error) => {
+        if (!error) return next();
+        if (error.code === 'LIMIT_FILE_SIZE') {
+            return res.status(413).json({ error: 'Image frame exceeds the 8 MB limit.' });
+        }
+        if (error.code === 'UNSUPPORTED_IMAGE_TYPE') {
+            return res.status(415).json({ error: 'Image frame must be JPEG, PNG, or WebP.' });
+        }
+        return res.status(400).json({ error: 'Invalid image frame upload.' });
+    });
+};
 
 // -------------------------------------------------------------
 // AI INTEGRATION ROUTE: Scan frame and save to DB automatically
 // -------------------------------------------------------------
 // Camera bridge posts frames server-to-server with the shared AI service key;
 // FM/Staff JWTs may also call it for manual testing. Never publicly accessible.
-router.post("/scan-frame", verifyServiceOrRole('FM', 'Staff'), upload.single('file'), async (req, res) => {
+router.post("/scan-frame", verifyServiceOrRole('FM', 'Staff'), acceptFrameUpload, async (req, res) => {
     const cameraLocation = req.body.camera_location || "Unknown Sector";
 
     if (!req.file) {

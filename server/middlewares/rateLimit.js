@@ -115,9 +115,12 @@ const publicLookupLimiter = makeLimiter({
 
 // Authenticated reads + dashboard/alert polling. Busiest legitimate poller does
 // only a few requests/min per widget; 300/min/user leaves large headroom.
-const readLimiter = makeLimiter({
+const readPolicy = Object.freeze({
   windowMs: num(process.env.RATE_LIMIT_READ_WINDOW_MS, 1 * MIN),
   max: num(process.env.RATE_LIMIT_READ_MAX, 300),
+});
+const readLimiter = makeLimiter({
+  ...readPolicy,
   skipInternalService: true,
 });
 
@@ -139,9 +142,12 @@ const uploadLimiter = makeLimiter({
 // AI proxy / high-frequency recognition + QR. GateScanner runs a 250ms track
 // loop (240/min) + 1s recognition loop (60/min) → ~300/min/user at peak; the QR
 // cloud fallback is capped at ≤1/s. 1200/min/user covers peak with ~4x headroom.
-const aiProxyLimiter = makeLimiter({
+const aiProxyPolicy = Object.freeze({
   windowMs: num(process.env.RATE_LIMIT_AI_WINDOW_MS, 1 * MIN),
   max: num(process.env.RATE_LIMIT_AI_MAX, 1200),
+});
+const aiProxyLimiter = makeLimiter({
+  ...aiProxyPolicy,
   skipInternalService: true,
 });
 
@@ -170,4 +176,6 @@ module.exports = {
   writeLimiter,
   uploadLimiter,
   aiProxyLimiter,
+  readPolicy,
+  aiProxyPolicy,
 };
