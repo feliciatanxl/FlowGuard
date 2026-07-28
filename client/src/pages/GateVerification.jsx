@@ -8,13 +8,41 @@ import { normalizePlate } from '../utils/plate';
 import {
   isValidBookingRef, normalizeBookingRef,
   isSecureCameraContext, isCameraSupported, cameraErrorMessage,
-  startQrScan, startCamera,
+  startQrScan, startCamera, preloadQrScanner,
+  SCANNER_STATE, DECODER_SOURCE,
 } from '../utils/gateCamera';
+import {
+  CAMERA_SOURCE, SOURCE_LABELS, isPiConfigured,
+  fetchPiSnapshotBitmap, markPiUnavailable,
+  fallbackMessage, FALLBACK_REASON,
+} from '../utils/cameraSource';
 import { recognizePlate } from '../utils/plateOcr';
 import { formatSingaporeBookingDateTime } from '../constants/datetime';
 import '../css/Dashboard.css';
 import '../css/Booking.css';
 import '../css/GateVerification.css';
+
+// Cloud QR snapshot fallback config (Phase 5) — all optional Vite env, safe
+// defaults. Cloud decode goes through the Node /api/qr/decode proxy; it only
+// ever yields a CANDIDATE reference (gate-verification stays authoritative).
+const CLOUD_QR_ENABLED =
+  String(import.meta.env?.VITE_ENABLE_CLOUD_QR_FALLBACK ?? '').toLowerCase() !== 'false';
+const CLOUD_QR_DELAY_MS = Number(import.meta.env?.VITE_QR_CLOUD_FALLBACK_DELAY_MS) || 2500;
+const CAMERA_DEBUG = String(import.meta.env?.VITE_CAMERA_DEBUG ?? '').toLowerCase() === 'true';
+
+// Scanner service states → short inline status copy (Phase 2 scanner states).
+const SCANNER_STATE_TEXT = {
+  'loading-scanner': 'Loading scanner…',
+  'starting-camera': 'Starting camera…',
+  'camera-ready': 'Camera ready',
+  'looking': 'Looking for QR…',
+  'qr-detected': 'QR detected',
+  'local-slow': 'Local scan taking longer than expected…',
+  'cloud-trying': 'Trying cloud-assisted scan…',
+  'manual-available': 'Manual entry available',
+  'permission-denied': 'Camera permission denied',
+  'camera-unavailable': 'Camera unavailable',
+};
 
 // Frontend copy per stable server reasonCode — the UI never parses English error
 // text, it maps the machine code to its own wording.
@@ -59,6 +87,10 @@ const GateVerification = () => {
   // QR scanner
   const [scanning, setScanning] = useState(false);
   const [qrError, setQrError] = useState('');
+  const [qrSource, setQrSource] = useState(CAMERA_SOURCE.WEBCAM); // webcam | pi
+  const [scannerState, setScannerState] = useState(null);
+  const [qrMetrics, setQrMetrics] = useState(null);
+  const piConfigured = isPiConfigured();
 
   // PoC OCR
   const [plateCamActive, setPlateCamActive] = useState(false);
@@ -85,6 +117,7 @@ const GateVerification = () => {
     try { qrStopRef.current?.(); } catch { /* ignore */ }
     qrStopRef.current = null;
     setScanning(false);
+    setScannerState(null);
   };
   const stopPlateCam = () => {
     try { plateStopRef.current?.stop?.(); } catch { /* ignore */ }
@@ -94,7 +127,11 @@ const GateVerification = () => {
   const stopAllCameras = () => { stopQr(); stopPlateCam(); };
 
   // Release cameras on unmount (route navigation) and when the tab is hidden.
+  // Also warm the QR scanner (download @zxing/browser + probe BarcodeDetector)
+  // so the first "Start Scanner" doesn't wait on a module download. This never
+  // opens a camera — it only preloads code.
   useEffect(() => {
+    preloadQrScanner();
     const onVisibility = () => { if (document.hidden) stopAllCameras(); };
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
@@ -119,6 +156,19 @@ const GateVerification = () => {
   }
 
   // --- QR scanning ---
+  // Uploads a still to the Node /api/qr/decode proxy (which forwards to the
+  // FastAPI OpenCV decoder) and returns a CANDIDATE ref or null. Cold/unavailable
+  // cloud is non-fatal — local scanning + manual entry stay available. The
+  // frontend never calls FastAPI directly.
+  const decodeViaCloud = async (dataUrl, signal) => {
+    try {
+      const res = await axios.post(`${API_BASE_URL}/api/qr/decode`, { image: dataUrl }, { ...authHeader, signal });
+      return res.data?.success ? res.data.bookingRef : null;
+    } catch {
+      return null;
+    }
+  };
+
   const onQrResult = (text) => {
     const ref = normalizeBookingRef(text);
     if (!isValidBookingRef(ref)) {
@@ -128,20 +178,75 @@ const GateVerification = () => {
     setQrError('');
     setBookingRef(ref);
     stopQr();
+    setScannerState(SCANNER_STATE.QR_DETECTED);
     setStep(1);
   };
 
   const startQr = async () => {
     setQrError('');
-    if (!isSecureCameraContext()) { setQrError(cameraErrorMessage('insecure')); return; }
-    if (!isCameraSupported()) { setQrError(cameraErrorMessage('unsupported')); return; }
+    setScannerState(SCANNER_STATE.LOADING);
+    if (!isSecureCameraContext()) { setQrError(cameraErrorMessage('insecure')); setScannerState(SCANNER_STATE.UNAVAILABLE); return; }
+    if (!isCameraSupported()) { setQrError(cameraErrorMessage('unsupported')); setScannerState(SCANNER_STATE.UNAVAILABLE); return; }
     setScanning(true);
     const stop = await startQrScan({
       videoElement: qrVideoRef.current,
       onResult: onQrResult,
       onError: ({ message }) => { setQrError(message); setScanning(false); },
+      onState: setScannerState,
+      onMetrics: setQrMetrics,
+      enableCloud: CLOUD_QR_ENABLED,
+      cloudFallbackDelayMs: CLOUD_QR_DELAY_MS,
+      onCloudDecode: decodeViaCloud,
     });
     qrStopRef.current = stop;
+  };
+
+  // Raspberry Pi Camera Module 3 automatic QR: grab one fresh still and send it
+  // to the cloud decoder (a Pi MJPEG frame can't be BarcodeDetector-scanned in
+  // the browser). Falls back to the laptop webcam if the Pi is unreachable.
+  // Never persists the snapshot.
+  const captureQrFromPi = async () => {
+    setQrError('');
+    setScannerState(SCANNER_STATE.STARTING);
+    let bitmap;
+    try {
+      bitmap = await fetchPiSnapshotBitmap();
+    } catch {
+      markPiUnavailable();
+      setScannerState(SCANNER_STATE.UNAVAILABLE);
+      setQrError(`${fallbackMessage(FALLBACK_REASON.PI_UNREACHABLE)} Or use manual entry.`);
+      setQrSource(CAMERA_SOURCE.WEBCAM);
+      return;
+    }
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      canvas.getContext('2d').drawImage(bitmap, 0, 0);
+      bitmap.close?.();
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      setScannerState(SCANNER_STATE.CLOUD);
+      const ref = await decodeViaCloud(dataUrl);
+      if (ref && isValidBookingRef(ref)) {
+        setQrMetrics({ decoder: DECODER_SOURCE.PI_CAMERA_CLOUD });
+        onQrResult(ref);
+      } else {
+        setScannerState(SCANNER_STATE.MANUAL);
+        setQrError('No valid FlowGuard QR detected in the Raspberry Pi snapshot. Capture again or use manual entry.');
+      }
+    } catch {
+      setScannerState(SCANNER_STATE.UNAVAILABLE);
+      setQrError('Could not process the Raspberry Pi snapshot. Try again or use manual entry.');
+    }
+  };
+
+  const switchQrSource = (next) => {
+    if (next === qrSource) return;
+    stopQr();
+    setQrError('');
+    setScannerState(null);
+    setQrMetrics(null);
+    setQrSource(next);
   };
 
   const useTypedRef = () => {
@@ -157,6 +262,7 @@ const GateVerification = () => {
   // --- PoC OCR ---
   const startPlateCam = async () => {
     setOcrError('');
+    stopQr(); // stop QR scanning before the plate camera / heavy OCR (no dual streams)
     try {
       const controls = await startCamera(plateVideoRef.current);
       plateStopRef.current = controls;
@@ -309,6 +415,9 @@ const GateVerification = () => {
     setOverrideReason('');
     setOverrideError('');
     setSubmitError('');
+    setScannerState(null);
+    setQrMetrics(null);
+    setQrSource(CAMERA_SOURCE.WEBCAM);
     setStep(0);
   };
 
@@ -386,18 +495,65 @@ const GateVerification = () => {
                 {/* Step 1: Scan QR */}
                 <div className="gate-block">
                   <h3>1 · Scan Driver QR</h3>
-                  <div className="gate-video-wrap">
-                    <video ref={qrVideoRef} className="gate-video" muted playsInline aria-label="QR scanner preview" />
-                    {!scanning && <div className="gate-video-idle">Camera is off</div>}
-                  </div>
-                  {qrError && <div className="gate-inline-error" role="alert">⚠️ {qrError}</div>}
-                  <div className="gate-btn-row">
-                    {!scanning ? (
-                      <button type="button" className="new-booking-btn" onClick={startQr}>Start QR Scanner</button>
-                    ) : (
-                      <button type="button" className="cancel-btn" onClick={stopQr}>Stop Scanner</button>
+
+                  {/* Camera source: laptop webcam (default) or Raspberry Pi Camera Module 3. */}
+                  <div className="gate-source-select" role="group" aria-label="QR camera source">
+                    <span className="gate-source-label">Camera source:</span>
+                    <button
+                      type="button"
+                      className={`gate-source-btn ${qrSource === CAMERA_SOURCE.WEBCAM ? 'active' : ''}`}
+                      aria-pressed={qrSource === CAMERA_SOURCE.WEBCAM}
+                      onClick={() => switchQrSource(CAMERA_SOURCE.WEBCAM)}
+                    >{SOURCE_LABELS.webcam}</button>
+                    {piConfigured && (
+                      <button
+                        type="button"
+                        className={`gate-source-btn ${qrSource === CAMERA_SOURCE.PI ? 'active' : ''}`}
+                        aria-pressed={qrSource === CAMERA_SOURCE.PI}
+                        onClick={() => switchQrSource(CAMERA_SOURCE.PI)}
+                      >{SOURCE_LABELS.pi}</button>
                     )}
                   </div>
+
+                  <div className="gate-video-wrap">
+                    <video ref={qrVideoRef} className="gate-video" muted playsInline aria-label="QR scanner preview" />
+                    {qrSource === CAMERA_SOURCE.PI
+                      ? <div className="gate-video-idle">{SOURCE_LABELS.pi} — capture a snapshot to scan</div>
+                      : (!scanning && <div className="gate-video-idle">Camera is off</div>)}
+                  </div>
+
+                  {scannerState && SCANNER_STATE_TEXT[scannerState] && (
+                    <p className="gate-scanner-state" aria-live="polite">{SCANNER_STATE_TEXT[scannerState]}</p>
+                  )}
+                  {qrError && <div className="gate-inline-error" role="alert">⚠️ {qrError}</div>}
+
+                  <div className="gate-btn-row">
+                    {qrSource === CAMERA_SOURCE.WEBCAM ? (
+                      !scanning ? (
+                        <button type="button" className="new-booking-btn" onClick={startQr}>Start QR Scanner</button>
+                      ) : (
+                        <button type="button" className="cancel-btn" onClick={stopQr}>Stop Scanner</button>
+                      )
+                    ) : (
+                      <button type="button" className="new-booking-btn" onClick={captureQrFromPi}>
+                        Capture QR from {SOURCE_LABELS.pi}
+                      </button>
+                    )}
+                  </div>
+
+                  {CAMERA_DEBUG && qrMetrics && (
+                    <details className="gate-diag" open>
+                      <summary>QR timing (debug)</summary>
+                      <ul className="gate-diag-list">
+                        {qrMetrics.decoder && <li>decoder: <code>{qrMetrics.decoder}</code></li>}
+                        {qrMetrics.cameraStartupMs != null && <li>camera start: {qrMetrics.cameraStartupMs} ms</li>}
+                        {qrMetrics.firstFrameMs != null && <li>first frame: {qrMetrics.firstFrameMs} ms</li>}
+                        {qrMetrics.localDecodeMs != null && <li>local decode: {qrMetrics.localDecodeMs} ms</li>}
+                        {qrMetrics.cloudDecodeMs != null && <li>cloud decode: {qrMetrics.cloudDecodeMs} ms</li>}
+                      </ul>
+                    </details>
+                  )}
+
                   <div className="gate-fallback">
                     <label htmlFor="gate-ref">Or enter booking reference (manual fallback)</label>
                     <div className="gate-btn-row">

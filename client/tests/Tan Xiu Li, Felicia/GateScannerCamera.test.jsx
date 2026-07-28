@@ -59,7 +59,7 @@ describe("GateScanner camera source", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
     render(<GateScanner />);
 
-    expect(screen.getByRole("button", { name: "Raspberry Pi Gate Camera" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Raspberry Pi Camera Module 3" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Laptop Webcam" })).toBeTruthy();
     await waitFor(() => expect(screen.getByText("Pi Gate Camera connected")).toBeTruthy(), { timeout: 10000 });
   }, 15000); // generous budget: this file renders live-scan loops and can be slow on a loaded CI machine
@@ -124,7 +124,7 @@ describe("GateScanner operational-only interface", () => {
 
   test("camera source switching stays available", () => {
     renderScanner();
-    expect(screen.getByRole("button", { name: "Raspberry Pi Gate Camera" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Raspberry Pi Camera Module 3" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Laptop Webcam" })).toBeTruthy();
   });
 });

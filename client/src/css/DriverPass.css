@@ -77,24 +77,53 @@
   align-items: center;
 }
 
-.qr-section svg {
-  width: min(72vw, 280px);
-  height: auto;
-  max-width: 100%;
+/* White frame supplies the QR quiet zone (a real scanner needs the light
+   border). The QR itself is generated at its native resolution (~360 px) and
+   only ever scaled DOWN to fit narrow phones — never blurred or stretched up. */
+.qr-frame {
+  width: min(100%, 360px);
   background: #ffffff;         /* full-contrast quiet zone — never dimmed, keeps it scannable */
-  padding: 12px;
+  padding: 16px;
   border-radius: 14px;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  box-sizing: border-box;
+  line-height: 0;              /* no inline-descender gap under the SVG */
+}
+
+.qr-section svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  shape-rendering: crispEdges; /* keep module edges hard — no anti-alias blur */
 }
 
 .qr-fallback {
-  width: min(72vw, 280px);
+  width: 100%;
   max-width: 100%;
   background: #0b0f1a;
   border: 1px dashed #2d364f;
-  border-radius: 14px;
+  border-radius: 10px;
   padding: 28px 12px;
+  box-sizing: border-box;
 }
+
+/* Copy the short reference — manual fallback when the QR won't scan. */
+.copy-ref-btn {
+  margin-top: 12px;
+  padding: 7px 14px;
+  border: 1px solid #2d364f;
+  border-radius: 999px;
+  background: #0b0f1a;
+  color: #cbd5e1;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.copy-ref-btn:hover:not(:disabled) { border-color: #3b82f6; color: #f8fafc; }
+.copy-ref-btn:active:not(:disabled) { background: #131a2c; }
+.copy-ref-btn:disabled { opacity: 0.5; cursor: default; }
 
 .ref-text {
   margin: 14px 0 6px;

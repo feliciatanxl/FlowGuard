@@ -40,6 +40,10 @@ const dashboardRoutes = require('./routes/dashboard');
 app.use('/api/dashboard', dashboardRoutes);
 const facialRecognitionRoutes = require('./routes/facialRecognition');
 app.use('/api/facial-recognition', facialRecognitionRoutes);
+// Authenticated proxy to the AI service's Cloud QR snapshot decoder. Returns a
+// CANDIDATE booking ref only — never authoritative (gate-verification decides).
+const qrRoutes = require('./routes/qr');
+app.use('/api/qr', qrRoutes);
 const supportRoutes = require('./routes/support');
 app.use('/api/support', supportRoutes);
 // Authenticated proxy to the (private) AI service's YOLO endpoints — the

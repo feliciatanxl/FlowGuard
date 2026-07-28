@@ -67,7 +67,7 @@ const GateScanner = () => {
 
   // Camera source: Raspberry Pi Gate Camera is primary, laptop webcam is fallback
   const [cameraSource, setCameraSource] = useState(CAMERA_SOURCES.PI);
-  const [cameraStatusMsg, setCameraStatusMsg] = useState("Connecting to Pi Gate Camera...");
+  const [cameraStatusMsg, setCameraStatusMsg] = useState("Connecting to Raspberry Pi Camera Module 3…");
 
   // Last gate transaction - safe display fields only (never biometric data):
   // { identityLabel, attendanceResult, gateAction }.
@@ -607,6 +607,19 @@ const GateScanner = () => {
     changeScanState("SYSTEM_ACTIVE", "GATE TURNSTILE ONLINE // AWAITING TARGET");
   };
 
+  // Manual single-capture: force an immediate recognition pass from standby.
+  // Runs the SAME server-authoritative recognise + liveness flow — it can never
+  // grant access on its own.
+  const manualScanNow = () => {
+    const s = scanStatusRef.current;
+    if (s === "SYSTEM_ACTIVE" || s === "PRESENCE_DETECTED") {
+      changeScanState("TARGET_LOCKING", "MANUAL SCAN — LOCKING BIOMETRIC VECTORS...");
+    }
+  };
+
+  // Manual retry: clear the current outcome and return the turnstile to standby.
+  const manualRetry = () => resetTurnstileKiosk();
+
   return (
     <div className="dashboard-layout">
       <Sidebar />
@@ -628,7 +641,7 @@ const GateScanner = () => {
               background: cameraSource === CAMERA_SOURCES.PI ? '#1d4ed8' : '#1e293b', color: '#e2e8f0'
             }}
           >
-            Raspberry Pi Gate Camera
+            Raspberry Pi Camera Module 3
           </button>
           <button
             onClick={() => selectCameraSource(CAMERA_SOURCES.WEBCAM)}
@@ -639,6 +652,26 @@ const GateScanner = () => {
             }}
           >
             Laptop Webcam
+          </button>
+          <button
+            type="button"
+            onClick={manualScanNow}
+            style={{
+              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem',
+              border: '1px solid #334155', background: '#1e293b', color: '#e2e8f0'
+            }}
+          >
+            Scan Now
+          </button>
+          <button
+            type="button"
+            onClick={manualRetry}
+            style={{
+              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem',
+              border: '1px solid #334155', background: '#1e293b', color: '#e2e8f0'
+            }}
+          >
+            Reset
           </button>
           <span style={{ color: '#38bdf8', fontSize: '0.82rem' }}>{cameraStatusMsg}</span>
         </div>

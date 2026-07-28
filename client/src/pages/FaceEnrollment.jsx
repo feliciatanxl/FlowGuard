@@ -27,7 +27,7 @@ const FaceEnrollment = () => {
   // is the AUTOMATIC fallback when the Pi is unreachable. Same shared helpers
   // as Gate Scanner / V-Patrol. Enrolment photos exist only in memory.
   const [cameraSource, setCameraSource] = useState(CAMERA_SOURCES.PI);
-  const [cameraStatusMsg, setCameraStatusMsg] = useState("Connecting to Pi Camera...");
+  const [cameraStatusMsg, setCameraStatusMsg] = useState("Connecting to Raspberry Pi Camera Module 3…");
   const cameraSourceRef = useRef(CAMERA_SOURCES.PI);
   const piFailStreakRef = useRef(0);
 
@@ -293,7 +293,7 @@ const FaceEnrollment = () => {
                 background: cameraSource === CAMERA_SOURCES.PI ? '#1d4ed8' : '#1e293b', color: '#e2e8f0'
               }}
             >
-              Raspberry Pi Camera
+              Raspberry Pi Camera Module 3
             </button>
             <button
               type="button"

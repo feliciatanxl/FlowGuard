@@ -403,6 +403,154 @@ def refresh():
 
 
 # ============================================================
+# SMART LOGISTICS — CLOUD QR SNAPSHOT DECODE (candidate only)
+# ============================================================
+# Authenticated OpenCV QR decoder used as the SNAPSHOT fallback when the
+# browser/Raspberry Pi laptop-webcam scanner can't lock a QR locally. It returns
+# a CANDIDATE FlowGuard booking reference ONLY — it never verifies the booking,
+# approves entry/exit, updates booking status, writes GateAccessLog, or opens a
+# barrier. The Node gate-verification endpoint remains authoritative.
+#
+# Input: one base64 JPEG/PNG still (data-URL) via the project's existing
+# authenticated image-payload convention (same shape as /user/recognize). The
+# image is decoded in memory and never persisted to disk, the repository, or
+# Cloud Run storage; raw image bytes are never logged.
+
+import re
+
+_QR_BOOKING_REF_RE = re.compile(r"^FG-[A-Z0-9]{4,12}$")
+
+# Strict request-size cap (bytes of the decoded image). Overridable per-deploy.
+_QR_MAX_IMAGE_BYTES = int(os.getenv("QR_MAX_IMAGE_BYTES", str(6 * 1024 * 1024)))
+_QR_ALLOWED_CONTENT_TYPES = {
+    t.strip().lower()
+    for t in os.getenv("QR_ALLOWED_CONTENT_TYPES", "image/jpeg,image/jpg,image/png").split(",")
+    if t.strip()
+}
+
+
+class QRDecodeRequest(BaseModel):
+    image: str
+
+
+def _normalize_booking_ref(raw):
+    return re.sub(r"\s+", "", str(raw or "")).upper()
+
+
+def _decode_qr_candidate(img):
+    """Bounded OpenCV QR-decode sequence: original → grayscale → upscale-if-small
+    → Otsu threshold. Returns the first non-empty decoded string, or "". Stops as
+    soon as anything decodes; deliberately avoids expensive brute-forcing."""
+    detector = cv2.QRCodeDetector()
+
+    def _try(mat):
+        try:
+            data, _points, _straight = detector.detectAndDecode(mat)
+            if data:
+                return data
+            # A frame can hold more than one code — cheap multi pass as a backup.
+            ok, decoded, _pts, _straight = detector.detectAndDecodeMulti(mat)
+            if ok and decoded:
+                for d in decoded:
+                    if d:
+                        return d
+        except cv2.error:
+            return ""
+        return ""
+
+    # 1. Original colour image.
+    data = _try(img)
+    if data:
+        return data
+    # 2. Grayscale.
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    data = _try(gray)
+    if data:
+        return data
+    # 3. Upscale small stills (preserve aspect ratio) — helps a low-res webcam frame.
+    h, w = gray.shape[:2]
+    longest = max(h, w)
+    if longest and longest < 640:
+        scale = 640.0 / longest
+        resized = cv2.resize(gray, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+        data = _try(resized)
+        if data:
+            return data
+    # 4. Otsu threshold (single safe pass).
+    _t, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return _try(thresh)
+
+
+@app.post("/api/qr/decode", dependencies=[Depends(require_service_key)])
+async def decode_qr(request: QRDecodeRequest):
+    """Decode a QR still into a CANDIDATE FlowGuard booking reference. This
+    endpoint is intentionally powerless: it cannot verify a booking, grant or
+    deny access, mutate booking status, write GateAccessLog, or open a barrier —
+    it only reports what reference (if any) the image appears to contain."""
+    started = time.time()
+
+    raw = request.image or ""
+    # Reject an oversized payload before any decode work. Base64 expands bytes
+    # ~4/3, so bound the string length against the byte cap first.
+    if len(raw) > int(_QR_MAX_IMAGE_BYTES * 4 / 3) + 1024:
+        raise HTTPException(status_code=413, detail="Image exceeds the maximum allowed size.")
+
+    # Validate the declared content type when a data-URL header is present.
+    if raw.startswith("data:"):
+        try:
+            mime = raw[5:raw.index(";")].lower()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Malformed image payload.")
+        if mime not in _QR_ALLOWED_CONTENT_TYPES:
+            raise HTTPException(status_code=415, detail="Unsupported image type. Use JPEG or PNG.")
+
+    # Decode base64 → bytes. There is no supplied filename to trust.
+    try:
+        encoded = raw.split(",", 1)[1] if "," in raw else raw
+        img_bytes = base64.b64decode(encoded)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid image data.")
+
+    if not img_bytes:
+        raise HTTPException(status_code=400, detail="Invalid image data.")
+    if len(img_bytes) > _QR_MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image exceeds the maximum allowed size.")
+
+    # Decode bytes → OpenCV image; reject malformed images.
+    nparr = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(status_code=400, detail="Malformed or unreadable image.")
+
+    try:
+        raw_text = _decode_qr_candidate(img)
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Log the error class only — never the image bytes.
+        print(f"QR decode error: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to decode the QR image.")
+
+    decode_ms = int((time.time() - started) * 1000)
+    candidate = _normalize_booking_ref(raw_text)
+
+    if raw_text and _QR_BOOKING_REF_RE.match(candidate):
+        return {
+            "success": True,
+            "bookingRef": candidate,
+            "decodeMs": decode_ms,
+            "decoder": "opencv-cloud",
+        }
+    return {
+        "success": False,
+        "bookingRef": None,
+        "decodeMs": decode_ms,
+        "decoder": "opencv-cloud",
+        "message": "No valid FlowGuard QR code detected",
+    }
+
+
+# ============================================================
 # YOLO OBJECT DETECTION — Module 2
 # ============================================================
 

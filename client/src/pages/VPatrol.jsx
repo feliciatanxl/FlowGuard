@@ -14,6 +14,7 @@ import {
   markPiUnavailable,
   fetchPiSnapshotBitmap,
 } from '../constants/piCamera';
+import { SOURCE_LABELS } from '../utils/cameraSource';
 import { API_BASE_URL } from '../constants/api';
 import { clampBoxToFrame, faceBoxStyle, smoothBox } from '../constants/faceBox';
 import { describeRecognitionSubject, RECOGNITION_STATUS } from '../constants/recognition';
@@ -67,7 +68,7 @@ const VPatrol = () => {
 
   // Camera source: Raspberry Pi Gate Camera is primary, laptop webcam is fallback
   const [cameraSource, setCameraSource] = useState(CAMERA_SOURCES.PI);
-  const [cameraStatusMsg, setCameraStatusMsg] = useState("Connecting to Pi Gate Camera...");
+  const [cameraStatusMsg, setCameraStatusMsg] = useState("Connecting to Raspberry Pi Camera Module 3…");
   const cameraSourceRef = useRef(CAMERA_SOURCES.PI);
   const piFailSinceRef = useRef(0);
 
@@ -88,6 +89,9 @@ const VPatrol = () => {
   const trackingInFlightRef = useRef(false);
   const recognitionInFlightRef = useRef(createScanGate());
   const [serviceNotice, setServiceNotice] = useState('');
+  // Manual stop/restart of the automatic recognition loops (patrol control).
+  const [monitoringPaused, setMonitoringPaused] = useState(false);
+  const pausedRef = useRef(false);
   // Bumped on camera-source switch and unmount; responses from an older
   // session are stale and must be ignored.
   const scanSessionRef = useRef(0);
@@ -301,7 +305,8 @@ const VPatrol = () => {
         personnelName: verifiedUser.name,
         role: verifiedUser.role,
         confidence: verifiedUser.confidence,
-        cameraLocation: CAMERA_LOCATION
+        cameraLocation: CAMERA_LOCATION,
+        cameraSource: SOURCE_LABELS[cameraSourceRef.current] || null
       };
 
       setIncidentLogs(prev => [newLog, ...prev.slice(0, 14)]);
@@ -370,6 +375,7 @@ const VPatrol = () => {
   // at ~TRACK_INTERVAL_MS. It can never grant access by itself.
   // ------------------------------------------------------------------
   const performTrackingScan = async () => {
+    if (pausedRef.current) return; // monitoring stopped by the operator
     if (trackingInFlightRef.current) return;
     const canvas = trackCanvasRef.current;
     if (!canvas) return;
@@ -519,6 +525,7 @@ const VPatrol = () => {
   // candidate is secured it stops until the final confirmation.
   // ------------------------------------------------------------------
   const performRecognitionScan = async () => {
+    if (pausedRef.current) return; // monitoring stopped by the operator
     const gate = recognitionInFlightRef.current;
     // No overlapping requests; short backoff after a recognition-service failure.
     if (!gate.canScan()) return;
@@ -628,7 +635,8 @@ const VPatrol = () => {
           personnelName: isSuspended ? recognizedUser.name : null,
           role: isSuspended ? recognizedUser.role : null,
           confidence: recognizedUser ? recognizedUser.confidence : null,
-          cameraLocation: CAMERA_LOCATION
+          cameraLocation: CAMERA_LOCATION,
+          cameraSource: SOURCE_LABELS[cameraSourceRef.current] || null
         };
 
         setIncidentLogs(prev => [newLog, ...prev.slice(0, 14)]);
@@ -763,6 +771,48 @@ const VPatrol = () => {
     changeScanState("SYSTEM_ACTIVE");
   };
 
+  // Stop / restart the automatic recognition loops (patrol control). Stopping
+  // clears any in-progress lock and returns the gantry to idle.
+  const toggleMonitoring = () => {
+    const next = !pausedRef.current;
+    pausedRef.current = next;
+    setMonitoringPaused(next);
+    if (next) {
+      resetScanner();
+      setServiceNotice('Monitoring stopped. Use “Run Single Check” or resume.');
+    } else {
+      setServiceNotice('');
+    }
+  };
+
+  // Manual single check: identify whoever is in frame WITHOUT the access-grant /
+  // liveness flow — V-Patrol only monitors, so this just reports the current
+  // identity. Uses the shared scan gate, so it never overlaps another request.
+  const runSingleCheck = async () => {
+    const gate = recognitionInFlightRef.current;
+    if (!gate.canScan()) return;
+    gate.begin();
+    const scanSession = scanSessionRef.current;
+    try {
+      const imageBase64 = await captureFrameBase64();
+      if (!imageBase64) { setServiceNotice('No frame captured — check the camera source.'); return; }
+      const res = await axios.post(RECOGNIZE_URL,
+        { image: imageBase64, cameraLocation: CAMERA_LOCATION },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (scanSession !== scanSessionRef.current) return;
+      const user = res.data?.user;
+      const subject = describeRecognitionSubject(user);
+      const label = user ? subject.identityLabel : 'No match';
+      setIdentifiedUser(user ? subject.identityLabel : 'UNKNOWN PERSONNEL');
+      setServiceNotice(`Manual check via ${SOURCE_LABELS[cameraSourceRef.current] || 'camera'}: ${label}`);
+    } catch {
+      setServiceNotice(SERVICE_UNAVAILABLE_MSG);
+    } finally {
+      gate.end();
+    }
+  };
+
   return (
     <div className="dashboard-layout">
       <Sidebar />
@@ -784,7 +834,7 @@ const VPatrol = () => {
               background: cameraSource === CAMERA_SOURCES.PI ? '#1d4ed8' : '#1e293b', color: '#e2e8f0'
             }}
           >
-            Raspberry Pi Gate Camera
+            Raspberry Pi Camera Module 3
           </button>
           <button
             onClick={() => selectCameraSource(CAMERA_SOURCES.WEBCAM)}
@@ -797,6 +847,26 @@ const VPatrol = () => {
             Laptop Webcam
           </button>
           <span style={{ color: '#38bdf8', fontSize: '0.82rem' }}>{cameraStatusMsg}</span>
+          <button
+            type="button"
+            onClick={toggleMonitoring}
+            style={{
+              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.82rem',
+              border: '1px solid #334155', background: monitoringPaused ? '#166534' : '#1e293b', color: '#e2e8f0'
+            }}
+          >
+            {monitoringPaused ? 'Resume Monitoring' : 'Stop Monitoring'}
+          </button>
+          <button
+            type="button"
+            onClick={runSingleCheck}
+            style={{
+              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.82rem',
+              border: '1px solid #334155', background: '#1e293b', color: '#e2e8f0'
+            }}
+          >
+            Run Single Check
+          </button>
           {serviceNotice && (
             <span style={{ color: '#f59e0b', fontSize: '0.82rem', fontWeight: 600 }}>{serviceNotice}</span>
           )}
@@ -996,6 +1066,7 @@ const VPatrol = () => {
                           {timeLabel}
                           {confidencePct ? ` | ${confidencePct} confidence` : ''}
                           {log.cameraLocation ? ` | ${log.cameraLocation}` : ''}
+                          {log.cameraSource ? ` | ${log.cameraSource}` : ''}
                         </p>
                         <p className="item-desc">{log.desc}</p>
                       </div>

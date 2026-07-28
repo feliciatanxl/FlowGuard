@@ -67,7 +67,7 @@ describe("FaceEnrollment camera source (Pi primary, webcam fallback)", () => {
 
   test("manual Pi/Webcam source switch is available in camera mode", async () => {
     renderPage();
-    expect(screen.getByRole("button", { name: "Raspberry Pi Camera" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Raspberry Pi Camera Module 3" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Laptop Webcam" })).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByText(CAMERA_STATUS_MESSAGES.PI_UNAVAILABLE)).toBeInTheDocument()

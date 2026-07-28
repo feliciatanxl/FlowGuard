@@ -120,7 +120,7 @@ describe("V-Patrol operational layout", () => {
     expect(screen.getByText(/SYS_MODE \/\/ BIOMETRIC_GANTRY/)).toBeTruthy();
     expect(screen.getByText("Security Timeline")).toBeTruthy();
     // Camera source switching stays available.
-    expect(screen.getByRole("button", { name: "Raspberry Pi Gate Camera" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Raspberry Pi Camera Module 3" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Laptop Webcam" })).toBeTruthy();
   });
 
