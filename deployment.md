@@ -53,12 +53,25 @@ built bundle.
   production/staging environment the server denies all browser-origin requests and logs a clear
   error — it never falls back to a wildcard. In development (any other `NODE_ENV`) an explicit
   localhost allowlist is used automatically.
-- **Rate limiting.** All API routes are rate-limited by `express-rate-limit` (keyed per
-  authenticated user, IP fallback; trusted `x-service-key` AI calls are exempt). Defaults are
-  polling-safe; tune per environment via the `RATE_LIMIT_*` variables in `server/.env.example`.
+- **Rate limiting.** All API routes are rate-limited by `express-rate-limit`. Keying: a limiter that
+  runs after `verifyToken` keys on the **verified** `req.user.id` (per-user quota); router-wide
+  pre-auth limiters key on the client IP. Unverified JWTs are never decoded for keying. Trusted
+  `x-service-key` AI calls are exempt. Defaults are polling-safe; tune via `RATE_LIMIT_*`.
+  - **Scope caveat (staging-only):** the limiter uses `express-rate-limit`'s in-memory
+    `MemoryStore`. Counters are **per Node process / per Cloud Run instance** and are **not shared
+    across instances or cold starts** — so with autoscaling the effective limit is per-instance,
+    **not** globally enforced distributed rate limiting. This is fine for the single-instance
+    staging demo. For global enforcement, back the same limiters with a shared store
+    (e.g. `rate-limit-redis`); the factory in `middlewares/rateLimit.js` isolates that change.
 - **Trust proxy.** Behind Cloud Run/Render (one proxy hop) set `TRUST_PROXY=1` so the limiter sees
   the real client IP from `X-Forwarded-For` without trusting arbitrary forwarded values. Adjust the
   hop count if additional proxies sit in front; never trust all proxies.
+- **PRE-DEPLOY CHECK for the fail-closed CORS change.** Before deploying, confirm the backend env
+  contains the deployed staging client origin, e.g.
+  `FRONTEND_URL=https://flowguard-client-staging-590663319889.asia-southeast1.run.app` (or list it
+  in `ALLOWED_ORIGINS`). On boot the server logs `"[startup] CORS allowlist (production/staging): …"`
+  — verify that line shows the staging URL. If it instead logs `"[startup] CORS is FAIL-CLOSED …"`,
+  the origin is missing and every browser request will be blocked: set it before rolling out.
 
 ## Notes
 - **Deploy order:** database → backend → frontend (the frontend needs the backend URL; the backend

@@ -23,8 +23,12 @@ const {
   aiProxyLimiter,
 } = require("../../middlewares/rateLimit");
 const { verifyToken } = require("../../middlewares/auth");
+const { parseTrustProxy } = require("../../config/serverConfig");
 
 const bearer = (id, secret = "test-secret") => `Bearer ${jwt.sign({ id }, secret)}`;
+// A token signed with the WRONG secret — verifyToken rejects it; the limiter must
+// never treat its claims as identity.
+const forged = (id) => `Bearer ${jwt.sign({ id }, "attacker-secret")}`;
 
 const appWith = (limiter, handler) => {
   const app = express();
@@ -70,20 +74,69 @@ describe("limit enforcement + 429 contract", () => {
   });
 });
 
-describe("keying — per-user isolation and IP fallback", () => {
-  test("separate authenticated users do not consume each other's quota", async () => {
-    const app = appWith(makeLimiter({ windowMs: 60000, max: 2, keyGenerator: keyByUserOrIp }));
+describe("keying — verified-user isolation, IP fallback, and no forged-token rotation", () => {
+  // Authenticated limiter: runs AFTER verifyToken and keys on the VERIFIED id.
+  const authedApp = (limiter) => {
+    const app = express();
+    app.use(express.json());
+    app.get("/x", verifyToken, limiter, (req, res) => res.json({ ok: true, id: req.user.id }));
+    return app;
+  };
+
+  test("separate VERIFIED users do not consume each other's authenticated quota", async () => {
+    const app = authedApp(makeLimiter({ windowMs: 60000, max: 2, keyGenerator: keyByUserOrIp }));
     await request(app).get("/x").set("Authorization", bearer(1));
     await request(app).get("/x").set("Authorization", bearer(1));
     expect((await request(app).get("/x").set("Authorization", bearer(1))).status).toBe(429); // user 1 exhausted
     expect((await request(app).get("/x").set("Authorization", bearer(2))).status).toBe(200); // user 2 unaffected
   });
 
-  test("unauthenticated requests fall back to per-IP limiting", async () => {
+  test("unauthenticated (pre-auth) requests fall back to per-IP limiting", async () => {
     const app = appWith(makeLimiter({ windowMs: 60000, max: 2, keyGenerator: keyByUserOrIp }));
     await request(app).get("/x");
     await request(app).get("/x");
     expect((await request(app).get("/x")).status).toBe(429); // same IP bucket
+  });
+
+  test("a forged/unsigned JWT cannot rotate the rate-limit identity (pre-auth ⇒ one IP bucket)", async () => {
+    // Pre-auth limiter (no verifyToken): the key never reads the token, so
+    // rotating a fake `id` claim cannot mint fresh quota — every request shares
+    // the single client-IP bucket.
+    const app = appWith(makeLimiter({ windowMs: 60000, max: 2, keyGenerator: keyByUserOrIp }));
+    expect((await request(app).get("/x").set("Authorization", forged(1))).status).toBe(200);
+    expect((await request(app).get("/x").set("Authorization", forged(2))).status).toBe(200);
+    // A third request with yet another forged id is still blocked — no rotation.
+    expect((await request(app).get("/x").set("Authorization", forged(9999))).status).toBe(429);
+  });
+
+  test("post-auth: a forged JWT is rejected by verifyToken and never reaches user keying", async () => {
+    const app = authedApp(makeLimiter({ windowMs: 60000, max: 5, keyGenerator: keyByUserOrIp }));
+    const res = await request(app).get("/x").set("Authorization", forged(1));
+    expect(res.status).toBe(403); // invalid signature → rejected before the limiter keys on it
+  });
+});
+
+describe("parseTrustProxy — env string → Express trust-proxy value", () => {
+  test("undefined / empty → default single hop (Number 1)", () => {
+    expect(parseTrustProxy(undefined)).toBe(1);
+    expect(parseTrustProxy("")).toBe(1);
+    expect(parseTrustProxy("   ")).toBe(1);
+  });
+  test('numeric strings become Numbers: "0" → 0, "1" → 1, "2" → 2', () => {
+    expect(parseTrustProxy("0")).toBe(0);
+    expect(parseTrustProxy("1")).toBe(1);
+    expect(parseTrustProxy("2")).toBe(2);
+    expect(typeof parseTrustProxy("1")).toBe("number");
+  });
+  test('"true"/"false" become booleans', () => {
+    expect(parseTrustProxy("true")).toBe(true);
+    expect(parseTrustProxy("false")).toBe(false);
+  });
+  test("named presets / subnets / lists pass through as strings (never NaN)", () => {
+    expect(parseTrustProxy("loopback")).toBe("loopback");
+    expect(parseTrustProxy("10.0.0.0/8")).toBe("10.0.0.0/8");
+    expect(parseTrustProxy("127.0.0.1, 10.0.0.0/8")).toBe("127.0.0.1, 10.0.0.0/8");
+    expect(Number.isNaN(parseTrustProxy("loopback"))).toBe(false);
   });
 });
 

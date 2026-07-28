@@ -6,18 +6,30 @@ const app = express();
 
 // Trust the Cloud Run / reverse-proxy hop so req.ip is the REAL client address
 // (from X-Forwarded-For) that the rate limiters key on — configured NARROWLY
-// (a hop count, default 1), never `true`, so a client cannot spoof its address
-// by injecting extra X-Forwarded-For entries. Override with TRUST_PROXY when the
-// deployment sits behind a different number of proxies.
-app.set('trust proxy', Number(process.env.TRUST_PROXY ?? 1));
+// (a hop count, default 1), never blindly `true`, so a client cannot spoof its
+// address by injecting extra X-Forwarded-For entries. TRUST_PROXY is a string in
+// the environment; parseTrustProxy converts a numeric string to a Number and
+// leaves named presets / subnets as strings (see config/serverConfig.js).
+const { parseTrustProxy } = require('./config/serverConfig');
+app.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY));
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// Environment-based CORS allowlist (FRONTEND_URL + CLIENT_URL + ALLOWED_ORIGINS). When no
-// origins are configured it falls back to allow-all for local/LAN development -
-// configure FRONTEND_URL or CLIENT_URL (and optionally ALLOWED_ORIGINS) for any deployment.
-const { buildCorsOptions } = require('./middlewares/corsOptions');
+// Environment-based CORS allowlist (FRONTEND_URL + CLIENT_URL + ALLOWED_ORIGINS).
+// Production/staging FAILS CLOSED when nothing is configured (see corsOptions.js);
+// development uses an explicit localhost allowlist. Never a wildcard.
+const { buildCorsOptions, buildAllowedOrigins, isProductionLike } = require('./middlewares/corsOptions');
+// Startup verification: log the effective CORS posture so an operator can CONFIRM
+// the deployed client origin is present BEFORE relying on the fail-closed change.
+// (Origins only — no secrets.) In production/staging with an empty allowlist this
+// is a hard misconfiguration warning: browser requests will be denied.
+const _corsAllowed = buildAllowedOrigins();
+if (isProductionLike() && _corsAllowed.length === 0) {
+    console.error('[startup] CORS is FAIL-CLOSED: no FRONTEND_URL/CLIENT_URL/ALLOWED_ORIGINS set in production/staging. All browser origins will be DENIED — set the deployed client origin before deploying.');
+} else {
+    console.log(`[startup] CORS allowlist (${isProductionLike() ? 'production/staging' : 'development'}): ${_corsAllowed.length ? _corsAllowed.join(', ') : '(none configured → localhost dev allowlist)'}`);
+}
 app.use(cors(buildCorsOptions()));
 
 // Simple Route

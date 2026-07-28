@@ -9,8 +9,12 @@
 // Design:
 //   - One policy per risk class (auth, password-reset, public lookup,
 //     authenticated read/poll, authenticated write, upload/image, AI proxy).
-//   - Authenticated requests are keyed by user id so separate users never
-//     share a quota; unauthenticated requests fall back to the client IP.
+//   - Keying: AFTER verifyToken a limiter keys by the VERIFIED req.user.id, so
+//     separate authenticated users never share a quota. BEFORE auth (router-wide
+//     / pre-auth limiters) it keys by the client IP. We NEVER decode a Bearer
+//     token to pick a key — an unverified/forged JWT must not be able to choose
+//     or rotate a rate-limit identity; verifyToken stays the only thing that
+//     trusts a token.
 //   - Trusted internal service-to-service calls (the Python AI engine, via the
 //     shared AI_SERVICE_KEY header) are never throttled by the read/write/AI
 //     limiters.
@@ -18,11 +22,18 @@
 //     body that never echoes the key, IP or token.
 //   - Every threshold is env-tunable with generous, polling-safe defaults
 //     (see PART 2 frequency analysis in the security report).
-//   - Bounded memory: express-rate-limit's MemoryStore resets counters each
-//     window instead of retaining every client key forever.
+//
+// SCOPE / DEPLOYMENT CAVEAT: the default store is express-rate-limit's in-memory
+// MemoryStore. Counters live in a SINGLE Node process and are NOT shared across
+// instances. On Cloud Run each instance (and each cold start) keeps its own
+// counters, so the effective limit is per-instance, not global — this is
+// suitable for STAGING / single-instance use only. It is NOT distributed rate
+// limiting. For globally-enforced limits across autoscaled instances, back these
+// same limiters with a shared store (e.g. rate-limit-redis) — the factory below
+// already isolates that as a one-line change. MemoryStore resets counters each
+// window, so it does not retain every client key forever.
 
 const { rateLimit } = require('express-rate-limit');
-const jwt = require('jsonwebtoken');
 
 const MIN = 60 * 1000;
 
@@ -52,24 +63,14 @@ const isInternalService = (req) => {
   return Boolean(key && process.env.AI_SERVICE_KEY && key === process.env.AI_SERVICE_KEY);
 };
 
-// Best-effort user id from the Bearer token for BUCKETING ONLY. This can run
-// before verifyToken, so we only decode (never trust) the token to pick a key.
-// A forged id merely lands in its own bucket — it never grants access, because
-// verifyToken still checks the signature and the database. Falls back to IP.
-const keyByUserOrIp = (req) => {
-  if (req.user && req.user.id != null) return `u:${req.user.id}`;
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  if (token) {
-    try {
-      const decoded = jwt.decode(token);
-      if (decoded && decoded.id != null) return `u:${decoded.id}`;
-    } catch {
-      /* fall through to IP */
-    }
-  }
-  return ipKey(req);
-};
+// Rate-limit key. When a limiter runs AFTER verifyToken, req.user.id is the
+// VERIFIED account id and each authenticated user gets its own bucket. When it
+// runs before auth (router-wide / pre-auth limiters), req.user is unset and we
+// key by the client IP. We deliberately do NOT read or decode the Authorization
+// header here: an unverified/forged JWT must never be able to select or rotate a
+// rate-limit identity. Only verifyToken trusts tokens.
+const keyByUserOrIp = (req) =>
+  (req.user && req.user.id != null) ? `u:${req.user.id}` : ipKey(req);
 
 // Factory. Every limiter shares the same handler/headers so the 429 path is
 // identical everywhere. `validate: false` silences express-rate-limit's dev
