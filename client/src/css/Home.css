@@ -460,11 +460,11 @@
   padding: 110px 0;
 }
 
-#technology {
+#capabilities {
   position: relative;
 }
 
-#technology::before {
+#capabilities::before {
   position: absolute;
   z-index: -1;
   inset: 0 calc(50% - 50vw);
@@ -561,6 +561,29 @@
   border-radius: 50%;
   background: var(--home-green);
   content: "";
+}
+
+.feature-link {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 22px;
+  color: var(--home-blue);
+  font-size: 0.84rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.feature-link:hover,
+.feature-link:focus-visible {
+  color: #bfdbfe;
+}
+
+.feature-link:focus-visible {
+  outline: 3px solid rgba(96, 165, 250, 0.5);
+  outline-offset: 4px;
 }
 
 /* Facility journey */

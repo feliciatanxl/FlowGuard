@@ -41,11 +41,28 @@ describe('public FlowGuard website PoC positioning', () => {
     renderPublic(<Home />);
 
     const hero = within(screen.getByTestId('homepage-hero'));
-    expect(hero.getByRole('link', { name: /Explore the Platform/i })).toHaveAttribute('href', '/#technology');
+    expect(hero.getByRole('link', { name: /Explore the Platform/i })).toHaveAttribute('href', '/innovation');
     expect(hero.getByRole('link', { name: /Client Login/i })).toHaveAttribute('href', '/login');
 
     const nav = within(screen.getByRole('navigation', { name: /Primary navigation/i }));
     expect(nav.getByRole('link', { name: /Client Login/i })).toHaveAttribute('href', '/login');
+  });
+
+  test('homepage public platform links use Innovation and the canonical capability hash', () => {
+    renderPublic(<Home />);
+
+    const nav = within(screen.getByRole('navigation', { name: /Primary navigation/i }));
+    expect(nav.getByRole('link', { name: 'Solutions' })).toHaveAttribute('href', '/innovation');
+    expect(nav.getByRole('link', { name: 'Capabilities' })).toHaveAttribute('href', '/#capabilities');
+
+    const cta = within(screen.getByRole('region', { name: /See connected factory operations in action/i }));
+    expect(cta.getByRole('link', { name: 'Launch Demo' })).toHaveAttribute('href', '/innovation');
+    expect(cta.getByRole('link', { name: /View Capabilities/i })).toHaveAttribute('href', '/#capabilities');
+    expect(cta.getByRole('link', { name: 'Client Login' })).toHaveAttribute('href', '/login');
+
+    const assetCard = screen.getAllByTestId('module-card').find((card) => within(card).queryByRole('heading', { name: 'Asset and Space Monitoring' }));
+    expect(within(assetCard).getByRole('link', { name: /Explore AI Monitoring/i })).toHaveAttribute('href', '/innovation');
+    expect(screen.queryByRole('link', { name: /Explore AI Monitoring/i })).not.toHaveAttribute('href', '/object-detection');
   });
 
   test('homepage CSS defines four-two-one responsive grids for public cards', () => {
@@ -95,7 +112,20 @@ describe('public FlowGuard website PoC positioning', () => {
     expect(screen.getAllByText(/Object & Zone Monitoring/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/Operational Response/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Illustrative PoC View/i).length).toBe(2);
+    expect(screen.getByRole('link', { name: /Launch Facial Recognition Demo/i })).toHaveAttribute('href', '/facial-evaluation');
+    expect(screen.getByRole('link', { name: /Launch Object Detection Demo/i })).toHaveAttribute('href', '/object-detection');
     expect(document.body.textContent).not.toMatch(/PPE Compliant|Spill Detected|Production Line PPE|128\+/i);
+  });
+
+  test('Innovation demo destinations remain protected by FM-only routes', () => {
+    const appSource = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
+    const objectRoute = appSource.slice(appSource.indexOf('path="/object-detection"'), appSource.indexOf('path="/detection-settings"'));
+    const facialRoute = appSource.slice(appSource.indexOf('path="/facial-evaluation"'), appSource.indexOf('path="/incidents"'));
+
+    expect(objectRoute).toContain('<ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>');
+    expect(objectRoute).toContain('<ObjectDetection />');
+    expect(facialRoute).toContain('<ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>');
+    expect(facialRoute).toContain('<FacialEvaluation />');
   });
 
   test('system health route is a platform overview without fake uptime or diagnostics links', () => {

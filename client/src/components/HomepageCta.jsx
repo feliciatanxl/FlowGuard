@@ -16,9 +16,9 @@ const HomepageCta = () => (
         <p>Explore the public capability overview or enter the authenticated proof-of-concept platform.</p>
       </div>
       <div className="cta-actions">
-        <Link to="/dashboard" className="button button-primary">Launch Demo</Link>
+        <Link to="/innovation" className="button button-primary">Launch Demo</Link>
         <Link to="/login" className="button button-secondary">Client Login</Link>
-        <Link to="/#technology" className="button button-text">View Capabilities <span aria-hidden="true">→</span></Link>
+        <Link to="/#capabilities" className="button button-text">View Capabilities <span aria-hidden="true">→</span></Link>
       </div>
     </section>
   </>

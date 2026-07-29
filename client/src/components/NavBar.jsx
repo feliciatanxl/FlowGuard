@@ -10,8 +10,8 @@ const NavBar = () => {
       </Link>
       <div className="nav-right-section">
         <div className="nav-links">
-          <Link to="/#mission">Solutions</Link>
-          <Link to="/#technology">Capabilities</Link>
+          <Link to="/innovation">Solutions</Link>
+          <Link to="/#capabilities">Capabilities</Link>
           <Link to="/#how-it-works">How It Works</Link>
           <Link to="/#poc-status">PoC Status</Link>
         </div>

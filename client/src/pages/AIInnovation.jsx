@@ -1,4 +1,3 @@
-import React from 'react';
 import { Link } from 'react-router';
 import NavBar from '../components/NavBar';
 import Footer from '../components/Footer';
@@ -46,7 +45,10 @@ const AIInnovation = () => {
         <section className="ai-cta-section">
           <h2>Ready to see it in action?</h2>
           <p>Access the authenticated proof-of-concept portal for role-protected operational workflows.</p>
-          <Link to="/login" className="cta-button">Launch Client Portal ?</Link>
+          <div className="ai-cta-actions">
+            <Link to="/facial-evaluation" className="cta-button">Launch Facial Recognition Demo</Link>
+            <Link to="/object-detection" className="cta-button">Launch Object Detection Demo</Link>
+          </div>
         </section>
       </main>
       <Footer />

@@ -14,8 +14,8 @@ const Footer = () => {
         </div>
         <nav className="footer-column footer-nav" aria-label="Footer navigation">
           <ul>
-            <li><Link to="/#mission">Solutions</Link></li>
-            <li><Link to="/#technology">Capabilities</Link></li>
+            <li><Link to="/innovation">Solutions</Link></li>
+            <li><Link to="/#capabilities">Capabilities</Link></li>
             <li><Link to="/#how-it-works">How It Works</Link></li>
             <li><Link to="/login">Client Login</Link></li>
           </ul>

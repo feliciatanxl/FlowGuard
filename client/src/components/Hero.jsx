@@ -12,7 +12,7 @@ const Hero = () => {
           operations more efficiently.
         </p>
         <div className="hero-actions">
-          <Link to="/#technology" className="button button-primary">
+          <Link to="/innovation" className="button button-primary">
             Explore the Platform
             <svg className="button-icon" aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round">
               <line x1="5" y1="12" x2="19" y2="12" />

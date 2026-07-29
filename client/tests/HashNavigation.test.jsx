@@ -14,7 +14,7 @@ const HomeFixture = () => (
     <NavBar />
     <section id="mission">Mission</section>
     <section id="how-it-works">How it works</section>
-    <section id="technology">Technology</section>
+    <section id="capabilities">Capabilities</section>
     <section id="poc-status">PoC status</section>
   </>
 );
@@ -82,15 +82,14 @@ describe('hash navigation', () => {
     }
   });
 
-  test('clicking Solutions on the home page scrolls to mission', async () => {
+  test('clicking Solutions opens the public Innovation page', async () => {
     renderNavigation('/');
 
     fireEvent.click(screen.getByRole('link', { name: 'Solutions' }));
 
     await waitFor(() => {
-      expect(screen.getByTestId('location').textContent).toBe('/#mission');
-      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
-      expect(scrollIntoView.mock.instances).toContain(document.getElementById('mission'));
+      expect(screen.getByTestId('location').textContent).toBe('/innovation');
+      expect(scrollIntoView).not.toHaveBeenCalled();
     });
   });
 
@@ -106,12 +105,34 @@ describe('hash navigation', () => {
     });
   });
 
-  test('direct /#technology navigation scrolls to the correct section', async () => {
+  test('direct /#capabilities navigation scrolls to the canonical section', async () => {
+    renderNavigation('/#capabilities');
+
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+      expect(scrollIntoView.mock.instances).toContain(document.getElementById('capabilities'));
+    });
+  });
+
+  test('legacy /#technology navigation scrolls to capabilities', async () => {
     renderNavigation('/#technology');
 
     await waitFor(() => {
       expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
-      expect(scrollIntoView.mock.instances).toContain(document.getElementById('technology'));
+      expect(scrollIntoView.mock.instances).toContain(document.getElementById('capabilities'));
+    });
+  });
+
+  test('clicking the current capability hash scrolls again', async () => {
+    renderNavigation('/#capabilities');
+    scrollIntoView.mockClear();
+
+    fireEvent.click(screen.getByRole('link', { name: 'Capabilities' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/#capabilities');
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+      expect(scrollIntoView.mock.instances).toContain(document.getElementById('capabilities'));
     });
   });
 
@@ -125,9 +146,9 @@ describe('hash navigation', () => {
   test('navigation links preserve their labels and destinations', () => {
     renderNavigation('/');
 
-    expect(screen.getByRole('link', { name: 'Solutions' }).getAttribute('href')).toBe('/#mission');
+    expect(screen.getByRole('link', { name: 'Solutions' }).getAttribute('href')).toBe('/innovation');
     expect(screen.getByRole('link', { name: 'How It Works' }).getAttribute('href')).toBe('/#how-it-works');
-    expect(screen.getByRole('link', { name: 'Capabilities' }).getAttribute('href')).toBe('/#technology');
+    expect(screen.getByRole('link', { name: 'Capabilities' }).getAttribute('href')).toBe('/#capabilities');
     expect(screen.getByRole('link', { name: 'PoC Status' }).getAttribute('href')).toBe('/#poc-status');
   });
 });

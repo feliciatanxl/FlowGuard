@@ -203,6 +203,13 @@
   background-color: #2563eb;
 }
 
+.ai-cta-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
 /* Responsive Design */
 @media (max-width: 900px) {
   .vision-container, .ai-feature-grid {

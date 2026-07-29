@@ -1,3 +1,5 @@
+import { Link } from 'react-router';
+
 const FeatureCards = () => {
   const features = [
     {
@@ -10,7 +12,8 @@ const FeatureCards = () => {
       number: "02",
       title: "Asset and Space Monitoring",
       description: "Use configured cameras and zones to surface supported events that need human attention.",
-      items: ["Camera zones", "People counting", "Unattended-item alerts", "AI-linked incidents"]
+      items: ["Camera zones", "People counting", "Unattended-item alerts", "AI-linked incidents"],
+      link: { label: "Explore AI Monitoring", to: "/innovation" }
     },
     {
       number: "03",
@@ -27,7 +30,7 @@ const FeatureCards = () => {
   ];
 
   return (
-    <section id="technology" className="features-section">
+    <section id="capabilities" className="features-section">
       <div className="features-header">
         <span className="eyebrow">Platform capabilities</span>
         <h2 className="section-title">One platform for factory access, monitoring and response</h2>
@@ -42,6 +45,7 @@ const FeatureCards = () => {
             <ul className="feature-list">
               {f.items.map((item) => <li key={item}>{item}</li>)}
             </ul>
+            {f.link && <Link className="feature-link" to={f.link.to}>{f.link.label} <span aria-hidden="true">→</span></Link>}
           </div>
         ))}
       </div>
