@@ -1,157 +1,96 @@
-/* Sticky Navigation Bar */
 .navbar-container {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 15px 60px;
-  background-color: #0f172a;
-  border-bottom: 1px solid #1e293b;
   position: sticky;
-  top: 0;
   z-index: 1000;
+  top: 0;
+  display: flex;
   width: 100%;
-  box-sizing: border-box;
-}
-
-/* Brand Logo Styling */
-.nav-logo {
-  display: flex;
+  min-height: 72px;
   align-items: center;
-  gap: 12px;
-  font-weight: 800; 
-  font-size: 1.5rem;
-  color: #f8fafc;
-  text-decoration: none; 
-  letter-spacing: -0.5px; 
-}
-
-.logo-icon {
-  width: 30px;
-  height: 30px;
-  background: linear-gradient(135deg, #60a5fa, #2563eb); 
-  border-radius: 8px;
-  box-shadow: 0 0 12px rgba(59, 130, 246, 0.4); 
-  display: flex;
-  justify-content: center;
-  align-items: center;
-}
-
-/* Adds a glowing "sensor eye" to the middle of the box */
-.logo-icon::after {
-  content: '';
-  width: 10px;
-  height: 10px;
-  background-color: #ffffff;
-  border-radius: 50%;
-  box-shadow: 0 0 6px rgba(255, 255, 255, 0.9);
-}
-
-/* Right Section: Links, Status, and Button */
-.nav-right-section {
-  display: flex;
-  align-items: center;
+  justify-content: space-between;
   gap: 30px;
+  padding: 12px max(28px, calc((100vw - 1200px) / 2));
+  border-bottom: 1px solid rgba(148, 163, 184, 0.13);
+  background: rgba(9, 18, 33, 0.88);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
 }
 
+.nav-logo {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 11px;
+  color: #f8fafc;
+  font-size: 1.17rem;
+  font-weight: 780;
+  letter-spacing: -0.035em;
+  text-decoration: none;
+}
+
+.nav-logo svg {
+  filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.34));
+}
+
+.nav-right-section,
 .nav-links {
   display: flex;
-  gap: 25px;
+  align-items: center;
 }
+
+.nav-right-section { gap: 29px; }
+.nav-links { gap: 27px; }
 
 .nav-links a {
-  color: #94a3b8;
-  text-decoration: none;
-  font-size: 0.95rem;
-  font-weight: 500;
-  transition: color 0.2s ease;
-}
-
-.nav-links a:hover {
-  color: #60a5fa;
-}
-
-/* System Active Pill */
-.nav-status-pill {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 14px;
-  background: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.2);
-  border-radius: 20px;
-}
-
-.status-dot {
-  width: 7px;
-  height: 7px;
-  background: #10b981;
-  border-radius: 50%;
-  box-shadow: 0 0 8px #10b981;
-}
-
-.status-text {
-  font-size: 0.7rem;
-  color: #10b981;
-  font-weight: 800;
-  letter-spacing: 1px;
-}
-
-.nav-login-btn {
-  padding: 10px 24px;
-  border-radius: 8px;
-  border: none;
-  background: #1e293b;
-  color: white;
+  color: #8fa0b6;
+  font-size: 0.82rem;
   font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s;
+  text-decoration: none;
+  transition: color 160ms ease;
 }
 
-.nav-login-btn:hover {
-  background: #334155;
-}
-
-@media (max-width: 768px) {
-  .navbar-container {
-    padding: 15px 20px; 
-  }
-
-  .nav-links {
-    display: none; 
-  }
-
-  .nav-status-pill {
-    padding: 6px 10px;
-  }
-
-  .status-text {
-    display: none;
-  }
-
-  .nav-right-section {
-    gap: 15px;
-  }
+.nav-links a:hover,
+.nav-links a:focus-visible {
+  color: #dbeafe;
 }
 
 .nav-login-btn {
-  text-decoration: none;
-  color: #ffffff; 
-  
   display: inline-flex;
+  min-height: 40px;
   align-items: center;
   justify-content: center;
-  
-  background-color: #1e293b; 
-  padding: 10px 24px;
-  border-radius: 12px;
-  font-weight: 600;
-  transition: all 0.3s ease;
-  border: 1px solid transparent;
-  cursor: pointer;
+  padding: 9px 18px;
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.1);
+  color: #bfdbfe;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-decoration: none;
+  transition: background 160ms ease, border-color 160ms ease;
 }
 
-.nav-login-btn:hover {
-  text-decoration: none;
-  background-color: #334155;
+.nav-login-btn:hover,
+.nav-login-btn:focus-visible {
+  border-color: rgba(96, 165, 250, 0.62);
+  background: rgba(59, 130, 246, 0.19);
   color: #ffffff;
+}
+
+.nav-logo:focus-visible,
+.nav-links a:focus-visible,
+.nav-login-btn:focus-visible {
+  outline: 3px solid rgba(96, 165, 250, 0.5);
+  outline-offset: 4px;
+}
+
+@media (max-width: 850px) {
+  .navbar-container { padding-inline: 20px; }
+  .nav-links { display: none; }
+}
+
+@media (max-width: 420px) {
+  .navbar-container { min-height: 66px; }
+  .nav-logo { font-size: 1.05rem; }
+  .nav-logo svg { width: 28px; height: 28px; }
+  .nav-login-btn { min-height: 38px; padding-inline: 13px; }
 }

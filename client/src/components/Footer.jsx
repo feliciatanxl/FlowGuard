@@ -1,4 +1,3 @@
-import React from 'react';
 import { Link } from 'react-router';
 import LogoIcon from './LogoIcon';
 
@@ -11,34 +10,22 @@ const Footer = () => {
             <LogoIcon size={32} />
             <span>FlowGuard</span>
           </div>
-          <p className="footer-desc">FlowGuard - AI-assisted access, asset and operational monitoring.</p>
+          <p className="footer-desc">AI-assisted access, monitoring and response for connected factory operations.</p>
         </div>
-        <div className="footer-column">
-          <h4>Solutions</h4>
+        <nav className="footer-column footer-nav" aria-label="Footer navigation">
           <ul>
-            <li><Link to="/innovation">Access Management</Link></li>
-            <li><Link to="/innovation">Object & Zone Monitoring</Link></li>
-            <li><Link to="/innovation">Smart Logistics</Link></li>
-            <li><Link to="/innovation">Operational Support</Link></li>
+            <li><Link to="/#mission">Solutions</Link></li>
+            <li><Link to="/#technology">Capabilities</Link></li>
+            <li><Link to="/#how-it-works">How It Works</Link></li>
+            <li><Link to="/login">Client Login</Link></li>
           </ul>
-        </div>
+        </nav>
         <div className="footer-column">
-          <h4>Company</h4>
-          <ul>
-            <li><Link to="/">Overview</Link></li>
-            <li><Link to="/innovation">Capabilities</Link></li>
-            <li><Link to="/system-health">Platform Overview</Link></li>
-          </ul>
-        </div>
-        <div className="footer-column">
-          <h4>Status</h4>
-          <p className="contact-text">Academic Proof of Concept</p>
-          <p className="contact-text">Integrated demo modules</p>
-          <p className="contact-sub">Human review preserved</p>
+          <Link className="footer-status" to="/#poc-status"><span aria-hidden="true" />Academic PoC status</Link>
         </div>
       </div>
       <div className="footer-bottom">
-        <p>(c) 2026 FlowGuard. Academic Proof of Concept.</p>
+        <p>© 2026 FlowGuard · Academic industry proof of concept</p>
       </div>
     </footer>
   );

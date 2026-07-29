@@ -1,4 +1,4 @@
-import React from 'react';
+/* global process */
 import '@testing-library/jest-dom/vitest';
 import { describe, expect, test, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
@@ -11,7 +11,7 @@ import SystemHealth from '../src/pages/SystemHealth';
 import Contact from '../src/pages/Contact';
 
 const renderPublic = (ui) => render(<MemoryRouter>{ui}</MemoryRouter>);
-const forbiddenClaims = /128\+|PPE|Spill|pest|HVAC|temperature|humidity|99\.8|40%|70%|NexusCloud|OptiTemp|AeroNode|Sentinel Security|Available TOL 2027|Opening Soon/i;
+const forbiddenClaims = /128\+|PPE|Spill|HVAC|temperature|humidity|99\.8|40%|70%|NexusCloud|OptiTemp|AeroNode|Sentinel Security|Available TOL 2027|Opening Soon/i;
 const internalData = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}|\\+65\\s?\\d{4}\\s?\\d{4}|192\\.168\\.|10\\.0\\.|SG[A-Z0-9]{6,}|faceVector|passwordResetTokenHash/i;
 
 describe('public FlowGuard website PoC positioning', () => {
@@ -21,10 +21,10 @@ describe('public FlowGuard website PoC positioning', () => {
     const moduleCards = screen.getAllByTestId('module-card');
     expect(moduleCards).toHaveLength(4);
     expect(moduleCards.map((card) => within(card).getByRole('heading').textContent)).toEqual([
-      'Facial Recognition & Access Management',
-      'Object Detection & Space Management',
-      'Smart Logistics & Loading-Bay Management',
-      'AI Helpdesk & Incident Support'
+      'Secure Access Management',
+      'Asset and Space Monitoring',
+      'Smart Logistics',
+      'Incident and Operational Support'
     ]);
 
     const workflowSteps = screen.getAllByTestId('workflow-step');
@@ -32,19 +32,19 @@ describe('public FlowGuard website PoC positioning', () => {
     expect(workflowSteps.map((card) => within(card).getByRole('heading').textContent)).toEqual([
       'Configure',
       'Monitor',
-      'Respond',
+      'Verify and Respond',
       'Review'
     ]);
   });
 
-  test('homepage hero has one capabilities CTA while navbar keeps Client Login', () => {
+  test('homepage hero has platform and client-login actions', () => {
     renderPublic(<Home />);
 
     const hero = within(screen.getByTestId('homepage-hero'));
-    expect(hero.getByRole('link', { name: /Explore Capabilities/i })).toHaveAttribute('href', '/innovation');
-    expect(hero.queryByRole('link', { name: /Client Login/i })).toBeNull();
+    expect(hero.getByRole('link', { name: /Explore the Platform/i })).toHaveAttribute('href', '/#technology');
+    expect(hero.getByRole('link', { name: /Client Login/i })).toHaveAttribute('href', '/login');
 
-    const nav = within(screen.getByRole('navigation'));
+    const nav = within(screen.getByRole('navigation', { name: /Primary navigation/i }));
     expect(nav.getByRole('link', { name: /Client Login/i })).toHaveAttribute('href', '/login');
   });
 
@@ -62,17 +62,29 @@ describe('public FlowGuard website PoC positioning', () => {
   test('homepage shows academic PoC positioning, four real modules and no fake telemetry claims', () => {
     renderPublic(<Home />);
 
-    expect(screen.getAllByText(/Academic Proof of Concept/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Facial Recognition & Access Management/i)).toBeInTheDocument();
-    expect(screen.getByText(/Object Detection & Space Management/i)).toBeInTheDocument();
-    expect(screen.getByText(/Smart Logistics & Loading-Bay Management/i)).toBeInTheDocument();
-    expect(screen.getByText(/AI Helpdesk & Incident Support/i)).toBeInTheDocument();
-    expect(screen.getByText(/PoC Capability Snapshot/i)).toBeInTheDocument();
-    expect(screen.getByText(/How FlowGuard Works/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Academic Industry Proof of Concept/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Operational challenges FlowGuard addresses/i)).toBeInTheDocument();
+    expect(screen.getByText(/Secure Access Management/i)).toBeInTheDocument();
+    expect(screen.getByText(/Asset and Space Monitoring/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/^Smart Logistics$/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Incident and Operational Support/i)).toBeInTheDocument();
+    expect(screen.getByText(/FlowGuard across the facility/i)).toBeInTheDocument();
+    expect(screen.getByText(/How FlowGuard works/i)).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /Client Login/i }).some((link) => link.getAttribute('href') === '/login')).toBe(true);
     expect(document.body.textContent).not.toMatch(forbiddenClaims);
     expect(document.body.textContent).not.toMatch(/System Active|REAL-TIME FEED|Live Facility Telemetry|achieved|automation results/i);
     expect(document.body.textContent).not.toMatch(internalData);
+  });
+
+  test('homepage separates implemented PoC scope from future research', () => {
+    renderPublic(<Home />);
+
+    expect(screen.getByRole('heading', { name: /Implemented PoC scope/i })).toBeInTheDocument();
+    expect(screen.getByText(/Object and unattended-item monitoring for supported classes/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Not implemented in the current PoC/i })).toBeInTheDocument();
+    expect(screen.getByText(/Pest and animal detection/i)).toBeInTheDocument();
+    expect(screen.getByText(/Multi-camera person re-identification/i)).toBeInTheDocument();
+    expect(screen.getByText(/support, rather than replace, human operational and security decisions/i)).toBeInTheDocument();
   });
 
   test('innovation page shows actual AI-monitoring capabilities and illustrative labels', () => {

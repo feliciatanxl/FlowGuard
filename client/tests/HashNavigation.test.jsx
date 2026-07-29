@@ -15,6 +15,7 @@ const HomeFixture = () => (
     <section id="mission">Mission</section>
     <section id="how-it-works">How it works</section>
     <section id="technology">Technology</section>
+    <section id="poc-status">PoC status</section>
   </>
 );
 
@@ -81,10 +82,10 @@ describe('hash navigation', () => {
     }
   });
 
-  test('clicking Overview on the home page scrolls to mission', async () => {
+  test('clicking Solutions on the home page scrolls to mission', async () => {
     renderNavigation('/');
 
-    fireEvent.click(screen.getByRole('link', { name: 'Overview' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Solutions' }));
 
     await waitFor(() => {
       expect(screen.getByTestId('location').textContent).toBe('/#mission');
@@ -124,8 +125,9 @@ describe('hash navigation', () => {
   test('navigation links preserve their labels and destinations', () => {
     renderNavigation('/');
 
-    expect(screen.getByRole('link', { name: 'Overview' }).getAttribute('href')).toBe('/#mission');
+    expect(screen.getByRole('link', { name: 'Solutions' }).getAttribute('href')).toBe('/#mission');
     expect(screen.getByRole('link', { name: 'How It Works' }).getAttribute('href')).toBe('/#how-it-works');
-    expect(screen.getByRole('link', { name: 'Technology' }).getAttribute('href')).toBe('/#technology');
+    expect(screen.getByRole('link', { name: 'Capabilities' }).getAttribute('href')).toBe('/#technology');
+    expect(screen.getByRole('link', { name: 'PoC Status' }).getAttribute('href')).toBe('/#poc-status');
   });
 });
