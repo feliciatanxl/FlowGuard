@@ -54,7 +54,8 @@ Both pages have a **Camera Source** bar:
 
 - **Pi source**: each scan tick fetches `/snapshot`, decodes the JPEG blob into
   an `ImageBitmap`, draws it onto the existing hidden capture canvas (scaled to
-  ≤420 px wide), and sends the compressed base64 JPEG to the **Node backend**
+  512 px wide by default (configurable only within 512-640), and sends a JPEG
+  at the shared 0.74 default quality to the **Node backend**
   (`POST /api/facial-recognition/recognize`). Because the bitmap is blob-backed
   the canvas is not tainted. Three consecutive snapshot failures trigger
   automatic fallback to the webcam.
@@ -73,8 +74,9 @@ both paths produce the same canvas-scaled base64 frame.
 
 - **Local PoC**: Pi live preview (`<img>` MJPEG) + `/snapshot` capture on the
   browser kiosk, laptop webcam fallback, all services on the demo LAN.
-- **Deployment**: Vercel frontend → cloud Node backend (`VITE_API_BASE_URL`) →
-  secured FastAPI (`FACE_AI_URL` + `X-AI-Service-Key`) → PostgreSQL.
+- **Deployment**: Cloud Run React/Nginx client → Cloud Run Node backend →
+  private authenticated Cloud Run FastAPI (`FACE_AI_URL`, Google ID token and
+  `X-AI-Service-Key`) → Cloud SQL PostgreSQL.
 - **Production direction**: the Pi edge node posts temporary frames directly to
   `POST /api/facial-recognition/recognize` using the `x-edge-token`
   (`EDGE_SERVICE_TOKEN`) — raw camera feeds and biometric templates are never

@@ -102,7 +102,7 @@ were modified.
 | **Enhanced capability** | Webcam **and** manual-upload enrolment, 3-angle averaged embedding, head-turn liveness, automatic logging, FM manual-review triage workflow. |
 | **Security** | JWT on all user/security/attendance routes; role-gated routes (`ProtectedRoute` + server-side `req.user.role` checks); FM-only review/management; reCAPTCHA on login/register; bcrypt; timing-safe login. |
 | **Usability** | Guided 3-step enrolment, live HUD feedback, audio cues, toast notifications, confirmation modals, status badges, review filter. |
-| **Performance** | Frames downscaled to ~420px + JPEG q0.3 before AI calls; scan throttling/locking; capped log queries (`limit≤200`); embeddings cached in-memory in the AI service. |
+| **Performance** | Recognition frames use the shared 512 px/JPEG 0.74 accuracy default (bounded deployment overrides: 512-640 and 0.74-0.85); tracking frames remain smaller; scan throttling/locking, capped log queries (`limit≤200`), and AI embedding caching remain. |
 | **Testing** | 13 frontend (Vitest) + 11 backend (Jest) tests, all passing; build verified. |
 | **AI usage documentation** | `flowguard-ai/Tan Xiu Li, Felicia/ai-logs/` + `ai-reflection.md` + this report. |
 

@@ -1,6 +1,6 @@
 # FlowGuard — Object Detection / SecurePi Database Documentation
 
-Scope: this document covers the database entities that back the **Object Detection** and **SecurePi** feature — `Camera`, `DetectionAlert`, `MonitoringZone`, `IncidentLog`, and the relevant ownership/audit fields on `User`. It is derived directly from the current implementation (models, routes, sync logic, seed data, and tests) as of branch `feature/object-detection-space`. It does not cover unrelated domains (Attendance, Booking, ChatTranscript, KnowledgeBase, SupportTicket, SecurityLogs, Invite, Staff) except where `User` fields are shared infrastructure.
+Scope: this document covers the database entities that back the **Object Detection** and **SecurePi** feature — `Camera`, `DetectionAlert`, `MonitoringZone`, `IncidentLog`, and the relevant ownership/audit fields on `User`. It was re-audited directly against the current models, routes, sync logic, seed data, and tests on 2026-07-28, branch `feature/facial-smart-logistics`. It does not cover unrelated domains (Attendance, Booking, ChatTranscript, KnowledgeBase, SupportTicket, SecurityLogs, Invite, Staff) except where `User` fields are shared infrastructure.
 
 ---
 
@@ -11,15 +11,15 @@ FlowGuard uses a single relational database to store facility-management data. F
 - **`monitoring_zones`** — configurable physical/logical zones (e.g. "Loading Bay") with detection thresholds and severity defaults.
 - **`cameras`** — camera inventory, each optionally assigned to a zone.
 - **`detection_alerts`** — alerts raised by the Python AI engine or a SecurePi edge device when an unattended object (or other detection event) is observed. Alerts carry free-text zone/camera identifiers plus best-effort resolved foreign keys.
-- **`incident_logs`** — a general incident ledger (originally built for facial recognition) that Object Detection alerts are also mirrored into for a unified incident view. It has **no foreign keys** linking it back to `detection_alerts`.
+- **`incident_logs`** — a general incident ledger linked from current object-detection alerts through nullable `detection_alerts.incident_log_id`.
 - **`users`** — referenced only for authentication/role checks (`FM`, `Staff`, `Tenant`) that gate every route in this feature; no direct FK relationship to the four tables above.
 
 ## 2. Database Technology and ORM
 
-- **Database:** PostgreSQL (per `server/.env.example` comment: "PostgreSQL (Neon / Supabase / Render)").
+- **Database:** PostgreSQL; the current cloud architecture targets Cloud SQL.
 - **ORM:** Sequelize, using the `pg` driver. Dialect is hardcoded as `'postgres'` in `server/models/index.js` — it is not configurable via environment variable.
 - **Connection config** (`server/.env.example`): `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PWD`. (Values are illustrative placeholders only; actual secrets live in `.env`, which was not read.)
-- **Schema management:** There are **no migration files** and **no `.sql` schema files** anywhere in the repo. `server/index.js` calls `db[modelName].sync({ alter: true })` **once per model** at server startup (not a single `sequelize.sync()`), logging progress and isolating failures per model so one bad model doesn't prevent the rest of the server from starting. This means the Sequelize model definitions are the sole source of truth for the schema — there is no independent migration history to diff against.
+- **Schema management:** Sequelize models are the runtime source of truth. `server/index.js` syncs each model with `alter` controlled by `DB_SYNC_ALTER` (default false). `server/migrations/20260714_sync_object_detection_schema.sql` is the checked-in object-detection migration/reference; it is not an automated migration framework.
 - **Auto-loading:** every file in `server/models/` (except `index.js`) is loaded automatically and its `associate(models)` function (if present) is invoked to wire up associations.
 
 ## 3. Entity Relationship Diagram
@@ -76,6 +76,7 @@ erDiagram
         datetime occurred_at
         int camera_id FK "nullable, best-effort resolved"
         int zone_id FK "nullable, best-effort resolved"
+        int incident_log_id FK "nullable, -> incident_logs.id"
         datetime createdAt
         datetime updatedAt
         datetime deletedAt "paranoid soft-delete"
@@ -108,13 +109,14 @@ erDiagram
         int tokenVersion "default 0"
     }
 
-    MONITORING_ZONE ||--o{ CAMERA : "zone_id (nullable FK)"
-    MONITORING_ZONE ||--o{ DETECTION_ALERT : "zone_id (nullable, best-effort resolved)"
-    CAMERA ||--o{ DETECTION_ALERT : "camera_id (nullable, best-effort resolved)"
-    USER ||--o{ USER : "managerId (self-referencing)"
+    MONITORING_ZONE o|--o{ CAMERA : "zone_id (nullable FK)"
+    MONITORING_ZONE o|--o{ DETECTION_ALERT : "zone_id (nullable, best-effort resolved)"
+    CAMERA o|--o{ DETECTION_ALERT : "camera_id (nullable, best-effort resolved)"
+    INCIDENT_LOG o|--o{ DETECTION_ALERT : "incident_log_id (nullable, not unique)"
+    USER o|--o{ USER : "managerId (nullable self-reference)"
 ```
 
-**Not shown as a real relationship:** `DETECTION_ALERT` and `INCIDENT_LOG` are linked only by application logic (see §6), not by a database foreign key. There is no line between them in the ERD because none exists in the schema.
+`DETECTION_ALERT.incident_log_id` is the current nullable foreign-key link to `INCIDENT_LOG.id`; older alerts may have no linked incident. No unique constraint exists, so the schema permits multiple alerts to reference one incident even though current ingest creates one pair.
 
 ## 4. Table-by-Table Data Dictionary
 
@@ -173,6 +175,7 @@ All four feature tables use Sequelize's default implicit `id` (`INTEGER`, auto-i
 | `occurred_at` | DATE | Yes | — | Accepts either `timestamp` or `occurred_at` from the request body. |
 | `camera_id` | INTEGER | Yes | — | FK → `cameras.id`. Best-effort resolved server-side from `camera_location` (see §5) — never required by the client. |
 | `zone_id` | INTEGER | Yes | — | FK → `monitoring_zones.id`. Best-effort resolved server-side from `zone_name`. |
+| `incident_log_id` | INTEGER | Yes | — | FK → `incident_logs.id`. Set after the incident is created in the same transaction. |
 | `createdAt` / `updatedAt` / `deletedAt` | DATE | — | — | Paranoid soft-delete for normal deletes; a nightly purge job (see §6) hard-deletes alerts older than 30 days with `force: true`. |
 
 ### 4.4 `incident_logs` (model: `IncidentLog`, file: `server/models/IncidentLog.js`)
@@ -190,7 +193,7 @@ All four feature tables use Sequelize's default implicit `id` (`INTEGER`, auto-i
 | `notes` | TEXT | Yes | `''` | For bridged rows: `"[Object Detection] Zone: <zone_name>"`. |
 | `createdAt` / `updatedAt` / `deletedAt` | DATE | — | — | Paranoid soft-delete. |
 
-**No `associate()` method exists on this model** — it has zero foreign keys of any kind.
+`IncidentLog` declares no reverse association method, but `DetectionAlert.belongsTo(IncidentLog, { foreignKey: 'incident_log_id', as: 'incident' })` creates the database link from the alert side.
 
 ### 4.5 `users` (model: `User`, file: `server/models/User.js`) — fields relevant to this feature only
 
@@ -213,17 +216,18 @@ All four feature tables use Sequelize's default implicit `id` (`INTEGER`, auto-i
   - `cameras.zone_id → monitoring_zones.id` (`Camera.belongsTo(MonitoringZone, { foreignKey: 'zone_id', as: 'zone' })`, reverse: `MonitoringZone.hasMany(Camera, { foreignKey: 'zone_id', as: 'cameras' })`).
   - `detection_alerts.camera_id → cameras.id` (`DetectionAlert.belongsTo(Camera, { foreignKey: 'camera_id', as: 'camera' })`).
   - `detection_alerts.zone_id → monitoring_zones.id` (`DetectionAlert.belongsTo(MonitoringZone, { foreignKey: 'zone_id', as: 'zone' })`).
+  - `detection_alerts.incident_log_id → incident_logs.id` (`DetectionAlert.belongsTo(IncidentLog, { foreignKey: 'incident_log_id', as: 'incident' })`).
   - `users.managerId → users.id` (self-referencing, unrelated to this feature but on the same table used for role checks).
-- **None of these FK declarations specify `onDelete`/`onUpdate`** — Sequelize/Postgres default referential behavior applies (effectively `NO ACTION`/`RESTRICT` at the DB level unless Postgres defaults otherwise, since no explicit cascade is configured). There is no code in this repo that cleans up `cameras.zone_id` or `detection_alerts.zone_id`/`camera_id` when the referenced zone/camera is deleted — because those tables are `paranoid: true`, deletes are normally soft (row remains, FK stays valid), but a hard delete or the 30-day alert purge could leave a dangling reference in principle if a zone/camera were hard-deleted (no route currently hard-deletes Camera or MonitoringZone).
+- **Nullable `belongsTo` FKs use Sequelize defaults:** runtime association metadata resolves `onDelete: SET NULL` and `onUpdate: CASCADE` for camera/zone/incident links and `users.managerId`. Normal Camera/MonitoringZone/IncidentLog deletes are paranoid soft deletes, so referenced rows remain present; a later hard parent delete would null the corresponding nullable FK rather than leave a dangling reference.
 - **`detection_alerts.zone_id`/`camera_id` are populated by application code, not by the client.** `resolveLinks()` (duplicated in `server/routes/detectionAlerts.js` and `server/routes/edgeDetectionAlerts.js`) looks up `MonitoringZone.findOne({ where: { zone_name } })` and `Camera.findOne({ where: { [Op.or]: [{ camera_name: camera_location }, { location: camera_location }] } })` at alert-creation time. If no match is found, the FK columns stay `null` — the alert is still created successfully using only the free-text `zone_name`/`camera_location` fields. This is a **best-effort, name-matching enrichment**, not enforced referential integrity.
-- **`incident_logs` has no foreign keys at all.**
+- `incident_logs` is the referenced table; the foreign-key column resides on `detection_alerts`.
 
 ## 6. Relationship Explanation
 
 - **MonitoringZone → Camera (one-to-many):** a zone can have many cameras (`zone.cameras`); a camera belongs to at most one zone (`camera.zone`), and `zone_id` is nullable — a camera can exist unassigned.
 - **MonitoringZone → DetectionAlert (one-to-many, soft):** resolved by matching the alert's free-text `zone_name` against `monitoring_zones.zone_name`. Multiple zones could theoretically share a name (no unique constraint on `zone_name`), in which case `findOne` picks the first match non-deterministically from the DB's perspective.
 - **Camera → DetectionAlert (one-to-many, soft):** resolved by matching the alert's free-text `camera_location` against either `cameras.camera_name` OR `cameras.location`. Same caveat — no uniqueness guarantee on either column.
-- **DetectionAlert ↔ IncidentLog (application-level bridge, not a DB relationship):** in `server/routes/detectionAlerts.js` (lines 130–142), immediately after a `DetectionAlert` is created and the HTTP response is sent, the route fire-and-forgets an `IncidentLog.create(...)` call populated from the same request data (mapped/transformed per §4.4). This call is **not awaited before responding** and its failure is only logged (`console.error`), never surfaced to the caller or retried. There is **no shared ID** between the resulting `detection_alerts` row and `incident_logs` row — they cannot be joined in SQL; the only correlation is the human-readable zone name embedded in `incident_logs.notes` and best-effort matching `camera_location`/timestamp proximity.
+- **DetectionAlert ↔ IncidentLog:** both standard and edge alert routes create the alert and incident in a managed transaction, then store `DetectionAlert.incident_log_id`. Alert updates mirror status/severity/person to the linked incident; incident updates mirror the same fields back; deleting either soft-deletes its linked counterpart. Older nullable/unlinked rows remain valid.
 - **User → Camera/MonitoringZone/DetectionAlert/IncidentLog:** no direct relationship. Access control is entirely role-based (`requireRole('FM')`, `requireRole('FM','Staff')`) applied per-route, not ownership-based.
 
 ## 7. CRUD Mapping
@@ -252,7 +256,7 @@ All four feature tables use Sequelize's default implicit `id` (`INTEGER`, auto-i
 | Method | Path | Auth | Operation |
 |---|---|---|---|
 | GET | `/` | `verifyToken` + FM/Staff | List up to 50 alerts, optional `status` filter, ordered by `createdAt` desc |
-| POST | `/` | `verifyServiceOrRole('FM','Staff')` (AI engine service key **or** FM/Staff JWT) | Create — validates required `zone_name`/`camera_location`, `status`/`severity` enums; resolves `zone_id`/`camera_id`; **also fire-and-forget creates an `incident_logs` row** |
+| POST | `/` | `verifyServiceOrRole('FM','Staff')` (AI engine service key **or** FM/Staff JWT) | Atomically create DetectionAlert + IncidentLog and set `incident_log_id` |
 | PUT | `/:id` | `verifyToken` + FM/Staff | Update — only `status`, validated against the fixed list |
 | *(no DELETE route)* | — | — | A background job (`purgeStaleLogs`, runs at startup +20s and every 24h) hard-deletes (`force: true`) alerts with `createdAt` older than 30 days |
 
@@ -260,9 +264,9 @@ All four feature tables use Sequelize's default implicit `id` (`INTEGER`, auto-i
 
 | Method | Path | Auth | Operation |
 |---|---|---|---|
-| POST | `/detection-alerts` | Bearer token compared to `EDGE_INGEST_TOKEN` env var (distinct secret from the AI service key; no JWT/user role involved) | Create — same shape/validation as above, but defaults `object_class`→`'package-like object'`, `alert_type`→`'Unattended Object'`, `source`→`'SecurePi Edge Node'` when omitted. **Does not bridge to `incident_logs`** — only the JWT/service-key route does. |
+| POST | `/detection-alerts` | Bearer token compared to `EDGE_INGEST_TOKEN` env var | Create with SecurePi defaults; atomically create/link IncidentLog like the standard path |
 
-`incident_logs` itself has **no dedicated CRUD routes** in the areas inspected — the only writes observed are the fire-and-forget bridge from `POST /api/detection-alerts`.
+`incident_logs` has dedicated FM CRUD routes under `/api/incident`; those routes also synchronise linked alerts.
 
 ## 8. Validation and Integrity Rules
 
@@ -285,13 +289,13 @@ All four feature tables use Sequelize's default implicit `id` (`INTEGER`, auto-i
 
 ## 10. Known Limitations or Schema Inconsistencies
 
-- **No migrations or schema files exist.** The only schema-evolution mechanism is `sync({ alter: true })` per model at every server boot, which can silently apply column alterations in a shared/production database with no reviewable migration history and no rollback path.
-- **`incident_logs` is structurally disconnected from `detection_alerts`.** It has no FK, no shared identifier, and no dedicated CRUD routes visible in this inspection — the only write path is a fire-and-forget side effect of alert creation, whose failures are swallowed (logged only). If this bridge call throws, the `IncidentLog` row is silently never created while the `DetectionAlert` still succeeds — the two ledgers can drift out of sync with no reconciliation.
+- **Migration coverage is limited.** One object-detection SQL migration/reference exists, while most runtime schema handling still relies on per-model sync; `DB_SYNC_ALTER` is opt-in and defaults false.
+- **Older alerts may be unlinked.** `incident_log_id` is nullable for backward compatibility, so bidirectional synchronisation is a no-op for historical alerts without a linked incident.
 - **`detection_alerts.status` is a free-form STRING, not an ENUM**, unlike `severity`/`Camera.status`/`MonitoringZone.severity`, which are true Postgres ENUMs. This is an inconsistency in how "closed set of values" fields are modeled across the schema.
 - **`Camera.camera_code` has no DB-level uniqueness** despite functioning as a business key; enforcement is entirely dependent on every write path going through the `cameras.js` route handlers.
 - **No `onDelete`/`onUpdate` cascade behavior is declared on any association.** Combined with `paranoid: true` on all four tables, orphaned FK values are unlikely in normal operation (nothing hard-deletes a zone or camera), but the 30-day alert purge and any manual hard-delete of a zone/camera would not clean up dependent rows.
 - **Best-effort FK resolution by name matching** (`zone_name`/`camera_location` → `zone_id`/`camera_id`) means `detection_alerts.zone_id`/`camera_id` can be `null` even when a "matching" zone/camera exists, if the free-text values don't exactly match `zone_name`/`camera_name`/`location` (case-sensitive, no fuzzy matching), and can resolve to the wrong row if names are duplicated.
-- **Two near-duplicate implementations of `resolveLinks()` and the create-alert validation logic** exist independently in `server/routes/detectionAlerts.js` and `server/routes/edgeDetectionAlerts.js` — any future change to alert validation rules must be applied in both places or the two ingestion paths will diverge (the edge-ingest path already differs slightly in its default field values and does not bridge to `IncidentLog`).
+- **Two near-duplicate implementations of `resolveLinks()` and alert validation** exist in the standard and edge routes. They both create linked incidents now, but validation/default changes must still be kept aligned.
 - **`server/seed.js` seeds only a `User` row** (an FM admin account) — no seed data exists for `cameras`, `monitoring_zones`, or `detection_alerts`, so a fresh environment starts with empty tables for this feature.
 - **`MonitoringZone.monitored_classes` is stored as a JSON-encoded string in a `TEXT` column** rather than a native array or JSON/JSONB column, requiring manual `JSON.parse`/`JSON.stringify` in route code on every read/write and offering no DB-level query support over its contents.
 - **`MonitoringZone.time_threshold` (legacy, minutes) and `unattended_threshold_seconds` (current, seconds) coexist** with precedence logic living in the external Python AI service rather than in the Node model/route layer, making the effective threshold non-obvious from the schema alone.

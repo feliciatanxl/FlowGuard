@@ -29,7 +29,7 @@ flowguard-server (JWT/RBAC first) ──► flowguard-ai (PRIVATE)
                        X-AI-Service-Key: <shared secret>            (defence in depth)
 
 flowguard-ai ──► flowguard-server (detection alerts, x-service-key)
-Both         ──► PostgreSQL (external: Neon/Supabase/Cloud SQL)
+Both         ──► Cloud SQL PostgreSQL
 SecurePi (LAN) ──► flowguard-server /api/edge/detection-alerts (Bearer EDGE_INGEST_TOKEN)
 ```
 

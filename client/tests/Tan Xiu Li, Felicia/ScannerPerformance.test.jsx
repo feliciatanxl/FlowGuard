@@ -42,8 +42,8 @@ describe("frame capture optimisation", () => {
   });
 
   test("JPEG quality is reduced (never full quality) and shared by both scanners", () => {
-    expect(CAPTURE_JPEG_QUALITY).toBeGreaterThanOrEqual(0.55);
-    expect(CAPTURE_JPEG_QUALITY).toBeLessThanOrEqual(0.7);
+    expect(CAPTURE_JPEG_QUALITY).toBeGreaterThanOrEqual(0.74);
+    expect(CAPTURE_JPEG_QUALITY).toBeLessThanOrEqual(0.85);
     for (const page of ["VPatrol.jsx", "GateScanner.jsx"]) {
       const source = readPage(page);
       // The shared capture helper is parameterized; recognition passes the

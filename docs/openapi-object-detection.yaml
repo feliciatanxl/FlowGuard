@@ -4,16 +4,13 @@ info:
   description: >
     JSON REST endpoints for Camera Inventory, Monitoring Zones (Detection Setup),
     Detection Alerts, and the SecurePi edge-ingest route. Derived from
-    server/routes/*.js and ai-service/main.py as implemented on
-    branch feature/object-detection-space (2026-07-11).
+    current server/routes/*.js and ai-service/main.py, audited 2026-07-28.
     MJPEG endpoints (SecurePi /video_feed, AI Service /api/yolo/stream) are
     intentionally excluded — they are not JSON REST responses.
   version: "1.0.0"
 servers:
   - url: http://localhost:5001
     description: FlowGuard Node.js backend (dev)
-  - url: http://localhost:8501
-    description: FlowGuard AI Service (FastAPI, dev) - reached by the frontend via the Vite "/ai" proxy
 
 tags:
   - name: Zones
@@ -194,7 +191,20 @@ components:
       properties:
         image:
           type: string
-          description: Base64-encoded (data URL or raw) JPEG frame captured from the browser camera or an uploaded video.
+          maxLength: 8388608
+          pattern: '^data:image/(jpeg|png|webp);base64,'
+          description: JPEG, PNG, or WebP base64 data URL captured from the browser camera or an uploaded video.
+        camera_id:
+          type: integer
+          minimum: 1
+          description: Optional Camera database identifier.
+        zone_id:
+          type: integer
+          minimum: 1
+          description: Optional MonitoringZone database identifier.
+        source:
+          type: string
+          description: Optional user-visible capture source label.
     AnalyzeFrameResult:
       type: object
       properties:
@@ -522,28 +532,28 @@ paths:
       tags: [AIService]
       summary: Poll current people count from the AI service's YOLO loop
       description: >
-        Served by the FastAPI AI Service (ai-service/main.py), reached by the
-        frontend via the Vite dev proxy at /ai/api/yolo/people-count. No
-        authentication is enforced by this service.
-      servers:
-        - url: http://localhost:8501
+        Node JWT/RBAC proxy to the private FastAPI people-count endpoint. Node
+        adds the service credentials; the browser never calls FastAPI directly.
+      security: [{ bearerJwt: [] }]
       responses:
         '200':
           description: Current people count and detection state
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PeopleCount' }
+        '401': { description: Missing JWT }
+        '403': { description: Invalid JWT or role is not FM/Staff }
+        '429': { description: AI proxy rate limit exceeded }
+        '502': { description: AI service returned an error }
+        '503': { description: AI service unavailable }
 
   /api/yolo/analyze-frame:
     post:
       tags: [AIService]
       summary: Analyze one browser-camera or uploaded-video frame
       description: >
-        Served by the FastAPI AI Service, reached by the frontend via the Vite
-        dev proxy at /ai/api/yolo/analyze-frame. No authentication is enforced
-        by this service.
-      servers:
-        - url: http://localhost:8501
+        Node JWT/RBAC proxy to the private FastAPI frame-analysis endpoint.
+      security: [{ bearerJwt: [] }]
       requestBody:
         required: true
         content:
@@ -556,7 +566,13 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AnalyzeFrameResult' }
         '400':
-          description: Invalid/undecodable image data
+          description: Missing/invalid data-URL image or AI rejected the image
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/FastApiError' }
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { description: Missing JWT }
+        '403': { description: Invalid JWT or role is not FM/Staff }
+        '413': { description: Image payload too large }
+        '429': { description: AI proxy rate limit exceeded }
+        '502': { description: AI service returned an error }
+        '503': { description: AI service unavailable }

@@ -16,6 +16,15 @@ const FACE_AI_URL = () => process.env.FACE_AI_URL || 'http://127.0.0.1:8501';
 // Base64 data-URL frames are ~1.33x the JPEG size; same ceiling as the
 // facial-recognition routes.
 const MAX_IMAGE_CHARS = 8 * 1024 * 1024;
+const ALLOWED_IMAGE_DATA_URL = /^data:image\/(?:jpeg|png|webp);base64,/i;
+
+const optionalPositiveInteger = (value) => {
+  if (value === undefined || value === null || value === '') return { supplied: false };
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0
+    ? { supplied: true, value: parsed }
+    : { supplied: true, invalid: true };
+};
 
 // Same audience as the Object Detection dashboard's other data (zones,
 // cameras, detection alerts): FM and Staff.
@@ -55,16 +64,22 @@ router.get('/people-count', ...allowDetectionRoles, async (_req, res) => {
 // through as-is (it contains no identity data — see ai-service/main.py).
 router.post('/analyze-frame', ...allowDetectionRoles, async (req, res) => {
   const { image, camera_id, zone_id, source } = req.body || {};
-  if (typeof image !== 'string' || !image.startsWith('data:image/')) {
-    return res.status(400).json({ error: 'A base64 data-URL image is required.' });
+  if (typeof image !== 'string' || !ALLOWED_IMAGE_DATA_URL.test(image)) {
+    return res.status(400).json({ error: 'A JPEG, PNG, or WebP base64 data-URL image is required.' });
   }
   if (image.length > MAX_IMAGE_CHARS) {
     return res.status(413).json({ error: 'Image payload too large.' });
   }
 
+  const cameraId = optionalPositiveInteger(camera_id);
+  const zoneId = optionalPositiveInteger(zone_id);
+  if (cameraId.invalid || zoneId.invalid) {
+    return res.status(400).json({ error: 'camera_id and zone_id must be positive integers when provided.' });
+  }
+
   const payload = { image };
-  if (camera_id !== undefined && camera_id !== null && camera_id !== '') payload.camera_id = Number(camera_id);
-  if (zone_id !== undefined && zone_id !== null && zone_id !== '') payload.zone_id = Number(zone_id);
+  if (cameraId.supplied) payload.camera_id = cameraId.value;
+  if (zoneId.supplied) payload.zone_id = zoneId.value;
   if (typeof source === 'string' && source) payload.source = source;
 
   try {

@@ -1,6 +1,6 @@
 # FlowGuard — Object Detection / SecurePi Use-Case Documentation
 
-Scope: this document describes the **implemented** Object Detection and SecurePi workflow only — camera inventory management, live camera/AI-inference viewing, zone-based detection configuration, and the unattended-object alert lifecycle (creation via AI engine or SecurePi edge device, review, and resolution by Facilities Managers/Staff). It is derived directly from the frontend pages, route guards, backend routes/middleware, and the SecurePi edge scripts as currently implemented on `feature/object-detection-space`. No feature or actor is included unless it is traceable to code.
+Scope: this document describes the **implemented** Object Detection and SecurePi workflow only — camera inventory management, live camera/AI-inference viewing, zone-based detection configuration, and the unattended-object alert lifecycle (creation via AI engine or SecurePi edge device, review, and resolution by Facilities Managers/Staff). It was re-audited against the frontend pages, route guards, backend routes/middleware, and SecurePi edge scripts on 2026-07-28, branch `feature/facial-smart-logistics`. No feature or actor is included unless it is traceable to code.
 
 ---
 
@@ -9,7 +9,7 @@ Scope: this document describes the **implemented** Object Detection and SecurePi
 The feature spans three cooperating subsystems:
 
 1. **FlowGuard web app (React frontend + Express/Sequelize backend)** — lets Facilities Managers configure cameras and monitoring zones, view live feeds with AI bounding-box overlays, and manage detection alerts through a status lifecycle.
-2. **Python AI engine** — a separate service the frontend calls directly for browser/uploaded-video inference (`/ai/api/yolo/people-count`, `/ai/api/yolo/analyze-frame`) and which can also create alerts server-to-server via a shared service key.
+2. **Python AI engine** — a private service reached through Node's authenticated `/api/yolo/people-count` and `/api/yolo/analyze-frame` proxies for browser/uploaded-video inference; it can also create alerts server-to-server via a shared service key.
 3. **SecurePi edge node (Raspberry Pi + IMX500)** — runs local object detection on-device, exposes an MJPEG video stream and a health endpoint, tracks unattended packages against nearby people, and pushes alerts to FlowGuard over HTTP when an object is judged unattended.
 
 Out of scope: facial recognition, attendance, booking, chat, and every other FlowGuard module not touching Camera/MonitoringZone/DetectionAlert/IncidentLog data or the pages listed above.
@@ -23,7 +23,7 @@ Only actors backed by actual code (role constants, middleware checks, or a disti
 | **Facilities Manager (FM)** | `ROLES.FM` (`client/src/constants/roles.js`, `server/middlewares/auth.js`) | Highest internal access. Only role permitted on `/cameras` and `/object-detection`; can also use `/camera-inventory` and `/detection-settings`. Full CRUD on cameras, zones, and alert status transitions. |
 | **Security/Operational Staff** | `ROLES.STAFF` | Can view and act on `/camera-inventory` (read-only in the UI) and `/detection-settings`, and can view + transition `DetectionAlert.status` via the API (`requireRole('FM','Staff')`). Has no route access to `/cameras` or `/object-detection` (blocked by `ACCESS.FM_ONLY` route guards) and no nav link to any of these pages in the sidebar. |
 | **Tenant** | `ROLES.TENANT` | Explicitly excluded from every Camera/Zone/DetectionAlert route and page in this feature (`ACCESS.FM_ONLY` / `ACCESS.FM_STAFF` never include `TENANT`); confirmed blocked (403) from alert status changes in `server/tests/.../detection-alerts.test.js`. |
-| **AI Engine (Python YOLO service)** | `verifyServiceOrRole` + `x-service-key` header matched against `AI_SERVICE_KEY` (`server/middlewares/auth.js` lines 83-89) | A trusted internal service that can create `DetectionAlert` rows via `POST /api/detection-alerts` without a user JWT. Also the target of direct frontend calls for people-count and frame analysis (not itself a data-writing actor for those calls). |
+| **AI Engine (Python YOLO service)** | `verifyServiceOrRole` + `x-service-key` header matched against `AI_SERVICE_KEY` (`server/middlewares/auth.js`) | A trusted private service that can create `DetectionAlert` rows via `POST /api/detection-alerts` without a user JWT. Browser people-count and frame-analysis calls first pass through Node JWT/RBAC, Google ID-token, and service-key handling. |
 | **SecurePi Edge Node** | Bearer token compared to `EDGE_INGEST_TOKEN` (`server/routes/edgeDetectionAlerts.js` lines 35-45) | A physical/simulated Raspberry Pi + IMX500 device that performs its own on-device detection/tracking and pushes alerts to `POST /api/edge/detection-alerts` using a static shared bearer token distinct from the AI engine's service key. Also serves an MJPEG stream and `/health` endpoint that the FlowGuard frontend consumes directly (browser-to-Pi, not through the Node backend). |
 | **Browser Camera User** | `sourceMode === 'camera'` in `ObjectDetection.jsx` | Not a distinct account/role — this is an FM user who selects the "Browser Camera" video source (their own device webcam via `getUserMedia`) instead of a hardware/SecurePi feed or an uploaded file. Included here only because the prompt's candidate actor list names it and it is a genuine, code-backed mode of interacting with the system, not because it is a separate authentication identity. |
 
@@ -86,7 +86,7 @@ flowchart LR
 | UC1 | Manage Camera Inventory (create, edit, deactivate) | FM (full), Staff (view-only) | `client/src/pages/CameraInventory.jsx` → `/api/cameras` |
 | UC2 | Configure Monitoring Zone (thresholds, monitored classes, severity) | FM (full), Staff (route-permitted) | `client/src/pages/DetectionSettings` (route `/detection-settings`) → `/api/zones` |
 | UC3 | View Live Camera Wall | FM only | `client/src/pages/Cameras.jsx` (`/cameras`) |
-| UC4 | Run Browser/Upload YOLO Inference | FM only | `client/src/pages/ObjectDetection.jsx`, `CameraFeed.jsx` → AI engine `/ai/api/yolo/*` |
+| UC4 | Run Browser/Upload YOLO Inference | FM only | `client/src/pages/ObjectDetection.jsx`, `CameraFeed.jsx` → Node `/api/yolo/*` → private FastAPI `/api/yolo/*` |
 | UC5 | View SecurePi MJPEG Stream | FM only | `ObjectDetection.jsx` (hardware mode), `CameraFeed.jsx` → SecurePi `/video_feed` |
 | UC6 | Monitor SecurePi Health | FM only | `ObjectDetection.jsx` → SecurePi `/health` |
 | UC7 | Create Detection Alert | AI Engine, SecurePi Edge Node, (FM/Staff manual test alert) | `POST /api/detection-alerts`, `POST /api/edge/detection-alerts` |
@@ -96,7 +96,7 @@ flowchart LR
 | UC11 | Escalate Alert | FM (UI only exposes this on `ObjectDetection.jsx`) | `PUT /api/detection-alerts/:id` |
 | UC12 | Clear / Resolve Alert | FM, Staff | `PUT /api/detection-alerts/:id` |
 | UC13 | Auto-Purge Stale Alerts | FlowGuard System (background job) | `server/routes/detectionAlerts.js` `purgeStaleLogs()` |
-| UC14 | Mirror Alert to Incident Log | FlowGuard System (side effect of UC7) | fire-and-forget bridge in `POST /api/detection-alerts` |
+| UC14 | Create and link Incident Log | FlowGuard System (atomic side effect of UC7) | both alert-ingest routes create `IncidentLog`, then set `DetectionAlert.incident_log_id` in one transaction |
 
 ## 5. Detailed Use-Case Specifications
 
@@ -141,9 +141,9 @@ flowchart LR
 - **Trigger:** FM selects the "Browser Camera" or "Upload File" source mode on the Object Detection page.
 - **Preconditions:** Authenticated; role FM; browser grants camera permission for the webcam mode.
 - **Main flow:**
-  1. Frontend captures a video frame every ~2.2s (Object Detection page) or 2s (`CameraFeed.jsx` tile), encodes it as base64 JPEG, and `POST`s to the AI engine's `/ai/api/yolo/analyze-frame` with `{ image, cam_id }`.
+  1. Frontend captures a video frame every ~2.2s (Object Detection page) or 2s (`CameraFeed.jsx` tile), encodes it as a base64 JPEG data URL, and `POST`s to Node `/api/yolo/analyze-frame` with `{ image, source, camera_id?, zone_id? }` and the user JWT.
   2. AI engine returns bounding boxes/classes/confidences; frontend draws them, filtering by a confidence threshold per class (e.g. person ≥0.45, food_item ≥0.3) and a fixed allow-list of relevant classes.
-  3. A separate poll to `/ai/api/yolo/people-count` every 5s feeds the "Detections Today" counter.
+  3. A separate authenticated poll to Node `/api/yolo/people-count` every 5s feeds the people-count state; Node calls private FastAPI.
 - **Postconditions:** No database writes occur directly from this flow — it is a display-only inference loop; any resulting alert would come from the AI engine independently calling `POST /api/detection-alerts` (UC7), not from this analyze-frame call itself as inspected.
 - **Exception flow:** After 3 consecutive `people-count` failures, the page shows an "AI engine offline" banner.
 
@@ -171,8 +171,8 @@ flowchart LR
   2. Server validates `status` (if given) against the fixed list and `severity` against `Low/Medium/High/Critical`.
   3. Server best-effort resolves `zone_id` (exact match on `MonitoringZone.zone_name`) and `camera_id` (exact match on `Camera.camera_name` or `Camera.location`) — leaves them `null` if no match.
   4. `DetectionAlert` row created (default `status:'Active'`, default `severity:'High'`; edge route additionally defaults `object_class`→`'package-like object'`, `alert_type`→`'Unattended Object'`, `source`→`'SecurePi Edge Node'`).
-  5. Only the `/api/detection-alerts` (non-edge) path also triggers UC14 (mirror to Incident Log).
-- **Postconditions:** New `detection_alerts` row; `201` returned with the created alert.
+  5. Both standard and edge paths create a matching `IncidentLog` and set `DetectionAlert.incident_log_id` inside the same transaction.
+- **Postconditions:** Linked `detection_alerts` and `incident_logs` rows; `201` returns the created alert. If either create/link step fails, the transaction rolls back.
 - **Alternate/Exception flows:**
   - Missing `zone_name`/`camera_location` → `400`.
   - Invalid `status`/`severity` → `400`.
@@ -214,12 +214,12 @@ flowchart LR
 - **Main flow:** `DetectionAlert.destroy({ where: { createdAt: { [Op.lt]: now-30days } }, force: true })` — a **hard** delete (bypasses the `paranoid` soft-delete) of any alert older than 30 days regardless of its status.
 - **Postconditions:** Matching rows are permanently removed; count logged to server console.
 
-### UC14 — Mirror Alert to Incident Log
-- **Actor:** FlowGuard System (side effect of UC7, JWT/service-key path only — not the edge-ingest path)
-- **Trigger:** Immediately after a `DetectionAlert` is successfully created via `POST /api/detection-alerts` and the `201` response has already been sent to the caller.
-- **Main flow:** Server fire-and-forgets `IncidentLog.create({ camera_location, status:'UNATTENDED_OBJECT', source:'Object Detection', severity: severityFromDuration(duration_seconds), person_name, resolutionStatus:'Active', notes: "[Object Detection] Zone: <zone_name>" })`.
-- **Postconditions:** A new `incident_logs` row is created **with no foreign key or shared ID** linking it back to the `detection_alerts` row — the two records can drift out of sync if this call fails.
-- **Exception flow:** If `IncidentLog.create` throws, the error is only `console.error`-logged; the caller has already received `201` and is never informed the mirror failed.
+### UC14 — Create and link Incident Log
+- **Actor:** FlowGuard System (side effect of either UC7 ingest path).
+- **Trigger:** During `POST /api/detection-alerts` or `POST /api/edge/detection-alerts`.
+- **Main flow:** Inside one managed transaction the server creates `DetectionAlert`, maps the detection/zone to an incident type, creates `IncidentLog`, and updates `DetectionAlert.incident_log_id` with the incident primary key.
+- **Postconditions:** `detection_alerts.incident_log_id` links to `incident_logs.id`. Alert/incident status, severity, person, and soft deletion are synchronised by the respective update/delete routes.
+- **Exception flow:** Any create/link failure returns 500 and rolls back the transaction; old rows predating the nullable link remain supported without synchronisation.
 
 ## 6. Alternate and Exception Flows (Cross-Cutting)
 
@@ -251,8 +251,8 @@ flowchart LR
 |---|---|---|---|
 | `cameras` row | FM via Camera Inventory | Unique `camera_code`; if `zone_id` given, zone must exist | Row persisted; `last_active_at` stamped |
 | `monitoring_zones` row | FM/Staff via Detection Setup | `zone_name`, `location`, positive `time_threshold` required | Row persisted |
-| `detection_alerts` row | AI Engine, SecurePi Edge Node, or FM/Staff manual call | Valid service key / edge token / JWT+role; `zone_name` and `camera_location` present; valid `status`/`severity` if given | Row persisted with `status` defaulting to `Active`; `zone_id`/`camera_id` best-effort resolved; (JWT/service-key path only) an `incident_logs` row is also attempted |
-| `incident_logs` row (Object-Detection-originated) | FlowGuard System, as a side effect of alert creation (non-edge path only) | The triggering `DetectionAlert.create` must have succeeded | Row persisted with `status:'UNATTENDED_OBJECT'`; no link back to the alert |
+| `detection_alerts` row | AI Engine, SecurePi Edge Node, or FM/Staff manual call | Valid service key / edge token / JWT+role; `zone_name` and `camera_location` present; valid `status`/`severity` if given | Row persisted with `status` defaulting to `Active`; IDs best-effort resolved; `incident_log_id` links the atomically created incident |
+| `incident_logs` row (Object-Detection-originated) | FlowGuard System, as a side effect of either alert path | Same transaction as DetectionAlert | Row persisted with mapped incident type and linked from `DetectionAlert.incident_log_id` |
 
 ## 9. Traceability to Pages, Routes, and Database Entities
 
@@ -260,11 +260,11 @@ flowchart LR
 |---|---|---|
 | `client/src/pages/CameraInventory.jsx` | `GET/POST/PUT /api/cameras`, `GET /api/zones` | `cameras`, `monitoring_zones` (read-only, for zone dropdown) |
 | `client/src/pages/Cameras.jsx` | `GET /api/cameras` (implied inventory load), `GET/PUT /api/detection-alerts` | `cameras`, `detection_alerts` |
-| `client/src/pages/ObjectDetection.jsx` | `GET /api/zones`, `GET /api/cameras`, `GET/PUT /api/detection-alerts`, AI engine `/ai/api/yolo/people-count` + `/ai/api/yolo/analyze-frame`, SecurePi `/video_feed` + `/health` | `monitoring_zones`, `cameras`, `detection_alerts` |
-| `client/src/pages/CameraFeed.jsx` (embedded in Cameras.jsx) | SecurePi `/video_feed` (hardware mode) or AI engine `/ai/api/yolo/analyze-frame` (local video mode) | none directly |
+| `client/src/pages/ObjectDetection.jsx` | `GET /api/zones`, `GET /api/cameras`, `GET/PUT /api/detection-alerts`, Node `/api/yolo/people-count` + `/api/yolo/analyze-frame`, SecurePi `/video_feed` + `/health` | `monitoring_zones`, `cameras`, `detection_alerts`, linked `incident_logs` |
+| `client/src/pages/CameraFeed.jsx` (embedded in Cameras.jsx) | SecurePi `/video_feed` (hardware mode) or Node `/api/yolo/analyze-frame` (local video mode) | none directly |
 | `server/routes/cameras.js` | — | `cameras`, `monitoring_zones` (existence check only) |
 | `server/routes/zones.js` | — | `monitoring_zones` |
-| `server/routes/detectionAlerts.js` | — | `detection_alerts`, `monitoring_zones` (lookup), `cameras` (lookup), `incident_logs` (fire-and-forget create) |
+| `server/routes/detectionAlerts.js` | — | `detection_alerts`, `monitoring_zones`/`cameras` lookup, `incident_logs` atomic create/link and bidirectional sync |
 | `server/routes/edgeDetectionAlerts.js` | — | `detection_alerts`, `monitoring_zones` (lookup), `cameras` (lookup) |
 | `edge/securepi/upstream/securePi.py` | Serves `/video_feed`, `/health`; calls FlowGuard `POST /api/edge/detection-alerts` | `detection_alerts` (via the above route) |
 
@@ -273,8 +273,8 @@ flowchart LR
 - **No admin/system-administrator role exists** — all access control collapses to the three roles `FM`/`Staff`/`Tenant`; there is no dedicated super-user or audit role for this feature.
 - **Client-side route guarding (`ProtectedRoute.jsx`) trusts `localStorage` values with no signature check** — it is a UX convenience only; the real authorization boundary is entirely server-side (`verifyToken`/`requireRole`), which is correctly enforced independently.
 - **Sidebar navigation and route permissions are inconsistent for Staff** — Staff can reach `/camera-inventory` and `/detection-settings` by direct URL but has no menu entry to them, which may confuse users about what they're allowed to do.
-- **`DetectionAlert` and `IncidentLog` are not relationally linked** — the mirror in UC14 is a best-effort, unawaited side effect with no shared identifier; a failure there is silent and unrecoverable from the caller's perspective.
-- **Two independent implementations of alert validation/link-resolution logic** exist (`server/routes/detectionAlerts.js` and `server/routes/edgeDetectionAlerts.js`) — they can drift apart, and already differ in default field values and in whether they trigger the Incident Log mirror.
+- **`DetectionAlert.incident_log_id` is nullable and not unique.** Current standard and edge ingestion create one linked alert/incident pair atomically, but older alerts can remain unlinked and the database does not enforce one-to-one cardinality.
+- **Two independent implementations of alert validation/link-resolution logic** exist (`server/routes/detectionAlerts.js` and `server/routes/edgeDetectionAlerts.js`) — both now create/link incidents transactionally, but duplicated validation/default mapping can still drift.
 - **Zone/camera link resolution for alerts depends on exact, case-sensitive string matches** against non-unique `zone_name`/`camera_name`/`location` fields — duplicate names can cause an alert to link to the wrong zone/camera, or none at all.
 - **The fallback edge script (`edge/securepi/securepi_edge.py`) has no working OpenCV detector and no MJPEG/health server** — only the "upstream" script (`edge/securepi/upstream/securePi.py`) provides the full streaming + detection experience the frontend is built to consume; the fallback exists only as bridge/demo plumbing per its own README.
 - **No use-case in this system exposes camera-stream authentication** — the SecurePi `/video_feed` and `/health` endpoints are fetched directly by the browser with no token, relying solely on network placement/firewalling for protection.

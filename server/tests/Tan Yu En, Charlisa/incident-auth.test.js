@@ -171,4 +171,28 @@ describe("POST /api/incident/scan-frame authorization", () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/frame/i);
   });
+
+  test("service-key upload rejects unsupported frame MIME types before AI forwarding", async () => {
+    const res = await request(app)
+      .post("/api/incident/scan-frame")
+      .set("x-service-key", "test-service-key")
+      .attach("file", Buffer.from("not an image"), {
+        filename: "frame.txt",
+        contentType: "text/plain",
+      });
+    expect(res.status).toBe(415);
+    expect(res.body.error).toMatch(/JPEG, PNG, or WebP/i);
+  });
+
+  test("service-key upload rejects frames over 8 MB", async () => {
+    const res = await request(app)
+      .post("/api/incident/scan-frame")
+      .set("x-service-key", "test-service-key")
+      .attach("file", Buffer.alloc(8 * 1024 * 1024 + 1), {
+        filename: "frame.jpg",
+        contentType: "image/jpeg",
+      });
+    expect(res.status).toBe(413);
+    expect(res.body.error).toMatch(/8 MB/i);
+  });
 });

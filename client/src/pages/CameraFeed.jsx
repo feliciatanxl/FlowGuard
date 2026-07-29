@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
+import { buildAnalyzeFramePayload, buildBearerHeaders } from '../utils/analyzeFrame';
 import '../css/CameraFeed.css';
 
 const HARDWARE_STREAM_PATTERN = /video_feed|mjpeg|mjpg/i;
@@ -30,9 +31,13 @@ export default function CameraFeed({ cam }) {
     if (isHardware) return undefined;
 
     let cancelled = false;
+    let activeController = null;
 
     const analyzeFrame = async () => {
       if (processingRef.current || cancelled) return;
+
+      const headers = buildBearerHeaders(localStorage.getItem('accessToken'));
+      if (!headers) return;
 
       const video = videoRef.current;
       if (!video || video.readyState < 2 || video.videoWidth === 0) return;
@@ -55,23 +60,14 @@ export default function CameraFeed({ cam }) {
         // compression and remain visible to YOLO.
         const image = captureCanvas.toDataURL('image/jpeg', 0.72);
 
-        const payload = {
-          image,
-          source: 'Uploaded Video',
-        };
-
-        // The Node proxy expects camera_id, not cam_id. Use the database ID
-        // when available so the correct zone/detection rule is applied.
-        if (Number.isInteger(Number(cam.databaseId))) {
-          payload.camera_id = Number(cam.databaseId);
-        }
-        if (Number.isInteger(Number(cam.zoneId))) {
-          payload.zone_id = Number(cam.zoneId);
-        }
+        const payload = buildAnalyzeFramePayload(image, cam, 'Uploaded Video');
+        const controller = new AbortController();
+        activeController = controller;
 
         const response = await axios.post('/api/yolo/analyze-frame', payload, {
           timeout: 20000,
-          headers: { Authorization: `Bearer ${localStorage.getItem('accessToken')}` },
+          headers,
+          signal: controller.signal,
         });
 
         if (!cancelled) drawDetections(response.data);
@@ -80,6 +76,7 @@ export default function CameraFeed({ cam }) {
           console.error(`${cam.code || cam.id} detection error`, err);
         }
       } finally {
+        activeController = null;
         processingRef.current = false;
       }
     };
@@ -98,6 +95,9 @@ export default function CameraFeed({ cam }) {
       cancelled = true;
       clearInterval(interval);
       video?.removeEventListener('loadeddata', handleReady);
+      activeController?.abort();
+      activeController = null;
+      processingRef.current = false;
     };
   }, [isHardware, cam.video, cam.databaseId, cam.zoneId]);
 

@@ -96,6 +96,31 @@ describe("POST /api/yolo/analyze-frame - validation & forwarding", () => {
     expect(mockAxios.post).not.toHaveBeenCalled();
   });
 
+  test("non-raster and malformed image data URLs -> 400, AI never called", async () => {
+    for (const image of ["data:image/svg+xml;base64,PHN2Zy8+", "data:image/jpeg,not-base64"]) {
+      const res = await request(app)
+        .post("/api/yolo/analyze-frame")
+        .set("Authorization", `Bearer ${fmToken}`)
+        .send({ image });
+      expect(res.status).toBe(400);
+    }
+    expect(mockAxios.post).not.toHaveBeenCalled();
+  });
+
+  test("invalid camera or zone identifiers -> 400, AI never called", async () => {
+    for (const body of [
+      { image: FRAME, camera_id: 0 },
+      { image: FRAME, zone_id: "not-an-id" },
+    ]) {
+      const res = await request(app)
+        .post("/api/yolo/analyze-frame")
+        .set("Authorization", `Bearer ${fmToken}`)
+        .send(body);
+      expect(res.status).toBe(400);
+    }
+    expect(mockAxios.post).not.toHaveBeenCalled();
+  });
+
   test("forwards ONLY whitelisted fields (image/camera_id/zone_id/source)", async () => {
     mockAxios.post.mockResolvedValue({ data: { count: 1, detections: [] } });
     await request(app)
