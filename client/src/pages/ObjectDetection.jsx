@@ -25,14 +25,57 @@ const SECUREPI_PEOPLE_COUNT_POLL_MS = 3000;
 const Icon = ({ name }) => <span className={`od-icon od-icon-${name}`} aria-hidden="true" />;
 
 const alertSource = (alert) => alert?.source || 'Object Detection';
-const isCrowdAlert = (alert) => /crowd/i.test(alert?.alert_type || '');
-const isUnattendedAlert = (alert) => /unattended/i.test(`${alert?.alert_type || ''} ${alert?.object_class || ''}`);
+
+// Readable titles for every alert family, including the SecurePi edge types
+// (pest / restricted-zone motion / forgotten belonging / item movement). The key
+// is resolved from alert_type first, then a text heuristic on alert_type+object_class.
+const ALERT_TYPE_LABELS = {
+  PEST_DETECTION: 'Pest detected',
+  UNATTENDED_OBJECT: 'Unattended pallet/object detected',
+  FORGOTTEN_BELONGING: 'Forgotten belonging detected',
+  RESTRICTED_MOTION: 'Restricted-zone motion detected',
+  ITEM_PICKED_UP: 'Item picked up',
+  ITEM_SET_DOWN: 'Item set down',
+  ITEM_MOVEMENT: 'Item movement detected',
+  OVERCROWDING: 'Crowd density threshold exceeded',
+};
+const normalizeAlertKey = (value) => String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+const alertTypeKey = (alert) => {
+  const key = normalizeAlertKey(alert?.alert_type);
+  if (key === 'RESTRICTED_ZONE_MOTION') return 'RESTRICTED_MOTION';
+  if (ALERT_TYPE_LABELS[key]) return key;
+  const hay = `${alert?.alert_type || ''} ${alert?.object_class || ''}`.toLowerCase();
+  if (/\b(rat|mouse|mice|rodent|pest)\b/.test(hay)) return 'PEST_DETECTION';
+  if (/motion/.test(hay) && /(restricted|after|night)/.test(hay)) return 'RESTRICTED_MOTION';
+  if (/forgotten|belonging/.test(hay)) return 'FORGOTTEN_BELONGING';
+  if (/picked up|set down|item mov/.test(hay)) return 'ITEM_MOVEMENT';
+  if (/crowd/.test(hay)) return 'OVERCROWDING';
+  if (/unattended/.test(hay)) return 'UNATTENDED_OBJECT';
+  return '';
+};
 const alertTitle = (alert) => {
   if (!alert) return '';
-  if (isCrowdAlert(alert)) return 'Crowd density threshold exceeded';
-  if (isUnattendedAlert(alert)) return 'Unattended pallet/object detected';
+  const key = alertTypeKey(alert);
+  if (key && ALERT_TYPE_LABELS[key]) return ALERT_TYPE_LABELS[key];
   const rawTitle = String(alert.object_class || alert.alert_type || 'Detection Alert').replace(/^(Critical|Warning):\s*/i, '');
   return /detect/i.test(rawTitle) ? rawTitle : `${rawTitle} Detected`;
+};
+
+// Only a valid remote http(s) URL is safe to render as a clickable snapshot link.
+// A Raspberry Pi local path (runtime/snapshots/...) must NEVER be turned into an
+// href — it isn't reachable from a browser and could be a misleading dead link.
+const isRemoteSnapshot = (url) => typeof url === 'string' && /^https?:\/\//i.test(url.trim());
+
+// WhatsApp security-alert notification status (persisted on the alert by the edge route).
+const whatsappStatusOf = (alert) => alert?.whatsapp_status || 'Not Requested';
+const whatsappStatusClass = (status) => `od-wa-pill od-wa-${String(status || 'Not Requested').replace(/\s+/g, '-').toLowerCase()}`;
+
+// Confidence may arrive as a 0–1 float or an already-scaled percentage.
+const confidencePercent = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  if (Number.isNaN(n)) return null;
+  return Math.round(n <= 1 ? n * 100 : n);
 };
 const alertTimestamp = (alert) => {
   const raw = alert?.occurred_at || alert?.createdAt || alert?.timestamp;
@@ -68,6 +111,8 @@ const ObjectDetection = () => {
   const [alertActionBusy, setAlertActionBusy] = useState(false);
   const [selectedAlertId, setSelectedAlertId] = useState(null);
   const [alertsRefreshing, setAlertsRefreshing] = useState(false);
+  const [alertTypeFilter, setAlertTypeFilter] = useState('all');
+  const [alertSeverityFilter, setAlertSeverityFilter] = useState('all');
 
   const [streamError, setStreamError] = useState(false);
   const [aiOffline, setAiOffline] = useState(false);
@@ -706,16 +751,25 @@ const ObjectDetection = () => {
                       <span>Object <strong>{displayedAlert.object_class || 'Package-like object'}</strong></span>
                       <span>Source <strong>{alertSource(displayedAlert)}</strong></span>
                       <span>Severity <strong>{displayedAlert.severity || 'High'}</strong></span>
+                      {confidencePercent(displayedAlert.confidence) != null && (
+                        <span>Confidence <strong>{confidencePercent(displayedAlert.confidence)}%</strong></span>
+                      )}
+                      {displayedAlert.device_id && (
+                        <span>Device <strong>{displayedAlert.device_id}</strong></span>
+                      )}
                       <span>Timestamp <strong>{alertTimestamp(displayedAlert)}</strong></span>
                       {displayedAlert.duration_seconds != null && (
                         <span>Duration <strong>{displayedAlert.duration_seconds}s</strong></span>
                       )}
+                      <span>WhatsApp <strong className={whatsappStatusClass(whatsappStatusOf(displayedAlert))}>{whatsappStatusOf(displayedAlert)}</strong></span>
                     </div>
-                    {displayedAlert.snapshot_url && (
+                    {isRemoteSnapshot(displayedAlert.snapshot_url) ? (
                       <a className="od-snapshot-link" href={displayedAlert.snapshot_url} target="_blank" rel="noreferrer">
                         View edge snapshot
                       </a>
-                    )}
+                    ) : displayedAlert.snapshot_url ? (
+                      <p className="od-snapshot-note">Snapshot captured on the edge device; remote upload unavailable.</p>
+                    ) : null}
                   </div>
 
                   <div className="od-resolution-actions">
@@ -769,6 +823,32 @@ const ObjectDetection = () => {
                   <h2>Latest Detection Alerts</h2>
                 </div>
                 <div className="od-alert-heading-actions">
+                  <select
+                    className="od-alert-filter"
+                    aria-label="Filter by alert type"
+                    value={alertTypeFilter}
+                    onChange={(e) => setAlertTypeFilter(e.target.value)}
+                  >
+                    <option value="all">All types</option>
+                    <option value="PEST_DETECTION">Pest</option>
+                    <option value="UNATTENDED_OBJECT">Unattended object</option>
+                    <option value="FORGOTTEN_BELONGING">Forgotten belonging</option>
+                    <option value="RESTRICTED_MOTION">Restricted-zone motion</option>
+                    <option value="ITEM_MOVEMENT">Item movement</option>
+                    <option value="OVERCROWDING">Overcrowding</option>
+                  </select>
+                  <select
+                    className="od-alert-filter"
+                    aria-label="Filter by severity"
+                    value={alertSeverityFilter}
+                    onChange={(e) => setAlertSeverityFilter(e.target.value)}
+                  >
+                    <option value="all">All severities</option>
+                    <option value="Critical">Critical</option>
+                    <option value="High">High</option>
+                    <option value="Medium">Medium</option>
+                    <option value="Low">Low</option>
+                  </select>
                   <button
                     type="button"
                     className="od-refresh-btn"
@@ -789,7 +869,11 @@ const ObjectDetection = () => {
                 </div>
               </div>
               <div className="od-live-alert-list">
-                {alerts.filter((alert) => OPEN_ALERT_STATUSES.includes(alert.status)).map((alert) => (
+                {alerts
+                  .filter((alert) => OPEN_ALERT_STATUSES.includes(alert.status))
+                  .filter((alert) => alertTypeFilter === 'all' || alertTypeKey(alert) === alertTypeFilter)
+                  .filter((alert) => alertSeverityFilter === 'all' || alert.severity === alertSeverityFilter)
+                  .map((alert) => (
                   <button
                     key={alert.id}
                     type="button"
@@ -800,6 +884,7 @@ const ObjectDetection = () => {
                     <strong>{alert.status}</strong>
                     <small>{alert.zone_name} - {alert.camera_location}</small>
                     <small>{alertSource(alert)}{alert.severity ? ` - ${alert.severity}` : ''}</small>
+                    <small className={whatsappStatusClass(whatsappStatusOf(alert))}>WhatsApp: {whatsappStatusOf(alert)}</small>
                   </button>
                 ))}
                 {activeAlertCount === 0 && <p>No active alerts from Object Detection.</p>}
