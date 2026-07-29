@@ -1,10 +1,14 @@
 const express = require('express');
 const router = express.Router();
+const { readLimiter } = require('../middlewares/rateLimit');
+router.use(readLimiter); // route-wide rate limiting
 const crypto = require('crypto');
 const { Op } = require('sequelize');
 const { Booking, User } = require('../models');
 const { verifyToken, requireRole } = require('../middlewares/auth');
 const whatsapp = require('../services/whatsappService');
+const { verifyGate } = require('../services/gateVerification');
+const { normalizeSlots, parseBookingDateTime } = require('../utils/bookingDateTime');
 
 const STATUSES = ['Pending', 'Confirmed', 'Arrived', 'Completed', 'Cancelled'];
 
@@ -44,17 +48,26 @@ router.post('/create', verifyToken, requireRole('FM', 'Tenant', 'Staff'), async 
             return res.status(400).json({ error: 'driver_phone is not a valid phone number.' });
         }
 
+        // Normalise slot times to absolute UTC instants BEFORE any validation,
+        // conflict check or persistence. A timezone-less datetime-local value
+        // (e.g. "2026-07-27T18:01") is interpreted as Singapore wall-clock time,
+        // never re-parsed with the host machine's timezone (Cloud Run = UTC).
+        const slots = normalizeSlots({ slot_start, slot_end });
+        if (slots.error) return res.status(400).json({ error: slots.error });
+        const startAt = slots.slot_start;
+        const endAt = slots.slot_end;
+
         // Optional slot-conflict guard (409) when a time window is supplied.
-        if (slot_start && slot_end) {
-            if (new Date(slot_end) <= new Date(slot_start)) {
+        if (startAt && endAt) {
+            if (endAt <= startAt) {
                 return res.status(400).json({ error: 'slot_end must be after slot_start.' });
             }
             const clash = await Booking.findOne({
                 where: {
                     loading_bay,
                     status: { [Op.ne]: 'Cancelled' },
-                    slot_start: { [Op.lt]: new Date(slot_end) },
-                    slot_end: { [Op.gt]: new Date(slot_start) }
+                    slot_start: { [Op.lt]: endAt },
+                    slot_end: { [Op.gt]: startAt }
                 }
             });
             if (clash) {
@@ -73,8 +86,8 @@ router.post('/create', verifyToken, requireRole('FM', 'Tenant', 'Staff'), async 
             driver_phone,
             loading_bay,
             driver_name: driver_name || null,
-            slot_start: slot_start || null,
-            slot_end: slot_end || null,
+            slot_start: startAt,
+            slot_end: endAt,
             notes: notes || null,
             tenant_name: tenant_name || null,
             tenantId,
@@ -217,12 +230,29 @@ router.patch('/:id', verifyToken, requireRole('FM', 'Tenant'), async (req, res) 
             return res.status(400).json({ error: 'driver_phone is not a valid phone number.' });
         }
 
-        // Slot-conflict validation on the resulting time window/bay.
+        // Normalise any edited slot times to absolute UTC instants (same
+        // Singapore wall-clock contract as create) before validation/persistence.
+        if ('slot_start' in updates) {
+            const parsed = parseBookingDateTime(updates.slot_start);
+            if (!parsed.ok) return res.status(400).json({ error: 'slot_start is not a valid date/time.' });
+            updates.slot_start = parsed.date;
+        }
+        if ('slot_end' in updates) {
+            const parsed = parseBookingDateTime(updates.slot_end);
+            if (!parsed.ok) return res.status(400).json({ error: 'slot_end is not a valid date/time.' });
+            updates.slot_end = parsed.date;
+        }
+
+        // Slot-conflict validation on the resulting time window/bay. Existing
+        // values from the DB are already absolute instants; coerce both sides to
+        // Date so the comparison never depends on string parsing.
         const newStart = 'slot_start' in updates ? updates.slot_start : booking.slot_start;
         const newEnd = 'slot_end' in updates ? updates.slot_end : booking.slot_end;
         const newBay = 'loading_bay' in updates ? updates.loading_bay : booking.loading_bay;
         if (newStart && newEnd) {
-            if (new Date(newEnd) <= new Date(newStart)) {
+            const startAt = newStart instanceof Date ? newStart : new Date(newStart);
+            const endAt = newEnd instanceof Date ? newEnd : new Date(newEnd);
+            if (endAt <= startAt) {
                 return res.status(400).json({ error: 'slot_end must be after slot_start.' });
             }
             const clash = await Booking.findOne({
@@ -230,8 +260,8 @@ router.patch('/:id', verifyToken, requireRole('FM', 'Tenant'), async (req, res) 
                     id: { [Op.ne]: booking.id }, // ignore the booking being edited
                     loading_bay: newBay,
                     status: { [Op.ne]: 'Cancelled' },
-                    slot_start: { [Op.lt]: new Date(newEnd) },
-                    slot_end: { [Op.gt]: new Date(newStart) }
+                    slot_start: { [Op.lt]: endAt },
+                    slot_end: { [Op.gt]: startAt }
                 }
             });
             if (clash) {
@@ -262,7 +292,15 @@ router.patch('/:id/cancel', verifyToken, async (req, res) => {
         }
 
         await booking.update({ status: 'Cancelled' });
-        const whatsappResult = await whatsapp.sendBookingCancelled(booking);
+
+        // WhatsApp is non-fatal — a notify failure must never fail the cancel.
+        let whatsappResult = null;
+        try {
+            whatsappResult = await whatsapp.sendBookingCancelled(booking);
+        } catch (waErr) {
+            console.error('WhatsApp notify failed (non-fatal):', waErr.message);
+        }
+
         res.status(200).json({ message: 'Booking cancelled.', booking, whatsapp: whatsappResult });
     } catch (err) {
         console.error('Booking cancel error:', err);
@@ -344,11 +382,39 @@ router.patch('/:ref/gate-scan', verifyToken, requireRole('FM'), async (req, res)
 });
 
 // ---------------------------------------------------------------------------
+// GATE VERIFICATION — FM only: dual-mode (automatic QR+plate / manual) loading-bay
+// gate decision. Delegates ALL rules + audit to the stateless gateVerification
+// service (booking is re-read from PostgreSQL with a row lock on every call).
+//   body: { action, bookingRef, observedPlate, verificationMode, plateSource,
+//           plateConfidence, manualOverride, overrideReason }
+// Returns a stable decision keyed by reasonCode (200 = decision made; 400 = bad
+// request; 500 = server/audit failure — access NOT granted). This is additive:
+// the legacy PATCH /:ref/gate-scan route above is left untouched for compatibility.
+// ---------------------------------------------------------------------------
+router.post('/gate-verification', verifyToken, requireRole('FM'), async (req, res) => {
+    try {
+        const { http, body } = await verifyGate(req.body || {}, req.user);
+        return res.status(http).json(body);
+    } catch (err) {
+        console.error('Gate verification error:', err);
+        return res.status(500).json({ access: 'DENIED', reasonCode: 'AUDIT_FAILED', message: 'Could not process gate verification.' });
+    }
+});
+
+// ---------------------------------------------------------------------------
 // PUBLIC — driver pass lookup by booking_ref. NO auth (driver has no login).
 // MUST stay last so it doesn't shadow '/all' or '/'.
 // ---------------------------------------------------------------------------
 router.get('/:ref', async (req, res) => {
     try {
+        // The driver pass polls this route while it stays open, so it must never
+        // serve a stale cached copy after an FM edits/cancels the booking.
+        res.set({
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+        });
+
         const booking = await Booking.findOne({ where: { booking_ref: req.params.ref } });
         if (!booking) return res.status(404).json({ message: 'Booking not found' });
 

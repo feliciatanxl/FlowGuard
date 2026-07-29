@@ -16,17 +16,19 @@
     "@googleapis/gmail": "^16.1.1",
     "@mui/icons-material": "^5.18.0",
     "@mui/material": "^5.18.0",
-    "axios": "^1.15.2",
+    "@zxing/browser": "^0.2.1",
+    "@zxing/library": "^0.23.0",
+    "axios": "^1.18.0",
     "dayjs": "^1.11.20",
     "dotenv": "^17.4.2",
     "formik": "^2.4.9",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "react-google-recaptcha": "^3.1.0",
     "react-google-recaptcha-v3": "^1.11.0",
     "react-qr-code": "^2.0.21",
-    "react-router-dom": "^7.14.2",
-    "react-router-hash-link": "^2.4.3",
+    "react-router": "8.3.0",
+    "tesseract.js": "^7.0.0",
     "yup": "^1.7.1"
   },
   "devDependencies": {
@@ -43,7 +45,13 @@
     "globals": "^17.5.0",
     "jest": "^30.4.2",
     "jsdom": "^29.1.1",
-    "vite": "^8.0.10",
+    "vite": "^8.1.5",
     "vitest": "^4.1.9"
+  },
+  "//overrides": "Dev/build-toolchain-only transitives (never in the shipped Vite bundle). Each is pinned to the smallest API-compatible PATCHED version so Dependabot clears without an uncontrolled parent upgrade: js-yaml stays on the v3 API @istanbuljs/load-nyc-config needs; brace-expansion has a stable single-function API; @babel/core is a 7.x patch. `npm audit fix` was rejected because it bumped the jest chain and INCREASED total advisories.",
+  "overrides": {
+    "@babel/core": "^7.29.7",
+    "js-yaml": "3.15.0",
+    "brace-expansion": "5.0.8"
   }
 }

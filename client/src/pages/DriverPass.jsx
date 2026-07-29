@@ -1,8 +1,12 @@
-import React, { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import React, { useEffect, useRef, useState } from "react";
+import { useParams } from "react-router";
 import * as QRLib from "react-qr-code";
 import "../css/DriverPass.css";
 import { API_BASE_URL } from "../constants/api";
+import { formatSingaporeBookingDateTime } from "../constants/datetime";
+
+// Background refresh cadence while the pass stays open (ms).
+const REFRESH_INTERVAL_MS = 12000;
 
 // Resolve the QR component across CJS/ESM interop shapes. Under Vite/React 19 the
 // CommonJS module can be wrapped so `QRLib.default` is the module object (an object,
@@ -23,17 +27,57 @@ if (import.meta.env?.DEV) {
     console.log("[DriverPass] QR export type:", typeof QRCodeComponent, "canRender:", canRenderQr);
 }
 
-const fmt = (v) => {
-    if (!v) return "—";
-    try { return new Date(v).toLocaleString("en-SG", { dateStyle: "medium", timeStyle: "short" }); }
-    catch { return String(v); }
-};
+// Render size for the QR (device pixels). Larger than the old ~180 px so a
+// low-resolution laptop webcam at the gate can lock on quickly. react-qr-code
+// emits an SVG, so this renders at its true resolution and stays razor-sharp
+// when CSS scales it down on small phones (never upscaled past this size).
+const QR_RENDER_SIZE = 360;
+
+// Memoised so the QR SVG is NOT re-generated on every background poll/refresh
+// (the pass re-renders ~every 12 s). It only re-paints when the encoded
+// reference actually changes. Pure black on pure white with the library's
+// default quiet zone keeps edges crisp — no blur, transparency or overlays.
+const PassQrCode = React.memo(function PassQrCode({ value }) {
+    if (!canRenderQr || !value) {
+        return (
+            <div
+                className="qr-fallback"
+                style={{ color: "#94a3b8", fontSize: "0.9rem", textAlign: "center", padding: "8px 0" }}
+            >
+                QR unavailable — use booking reference at gate
+            </div>
+        );
+    }
+    return (
+        <QRCodeComponent
+            value={value}
+            size={QR_RENDER_SIZE}
+            bgColor="#FFFFFF"
+            fgColor="#000000"
+            level="M"
+        />
+    );
+});
+
+// Slot times always render in Singapore time, regardless of the driver's phone
+// timezone (the stored value is an absolute UTC instant).
+const fmt = (v) => formatSingaporeBookingDateTime(v);
 
 const DriverPass = () => {
     const { ref } = useParams(); // booking_ref from /driver-pass/:ref
     const [booking, setBooking] = useState(null);
     const [loading, setLoading] = useState(true);
     const [notFound, setNotFound] = useState(false);
+    const [copied, setCopied] = useState(false);
+    const [refCopied, setRefCopied] = useState(false);
+
+    // Refs coordinate the background refresh without re-rendering:
+    //   alive     — block state updates after unmount
+    //   inFlight  — prevent overlapping requests
+    //   stopped   — stop polling for good once the pass is permanently gone (404)
+    const aliveRef = useRef(true);
+    const inFlightRef = useRef(false);
+    const stoppedRef = useRef(false);
 
     // Tag the body so global floating widgets (reCAPTCHA badge) can be hidden on the pass.
     useEffect(() => {
@@ -42,29 +86,115 @@ const DriverPass = () => {
     }, []);
 
     useEffect(() => {
+        aliveRef.current = true;
+        stoppedRef.current = false;
+
         // Guard: don't call /api/bookings/ with an empty ref.
         if (!ref) { setNotFound(true); setLoading(false); return; }
-        const fetchBooking = async () => {
+
+        // A single reusable loader. `background` refreshes never show the
+        // full-page loader and never wipe a good pass on a transient failure —
+        // that keeps the QR steady and avoids flicker while polling.
+        const load = async ({ background = false } = {}) => {
+            if (stoppedRef.current || inFlightRef.current) return;
+            inFlightRef.current = true;
             try {
-                // Public pass — works on Vercel via VITE_API_BASE_URL (blank locally → Vite proxy).
-                const res = await fetch(`${API_BASE_URL}/api/bookings/${encodeURIComponent(ref)}`);
+                // cache: "no-store" so an already-open pass always sees the latest
+                // status/slot after an FM edits or cancels the booking.
+                const res = await fetch(
+                    `${API_BASE_URL}/api/bookings/${encodeURIComponent(ref)}`,
+                    { cache: "no-store" }
+                );
                 const payload = await res.json().catch(() => null);
                 // Support both shapes: a direct booking object OR a { booking } envelope.
-                const loadedBooking = payload && (payload.booking || payload);
-                if (!res.ok || !loadedBooking || !(loadedBooking.booking_ref || loadedBooking.reference)) {
+                const loaded = payload && (payload.booking || payload);
+                if (!aliveRef.current) return;
+
+                if (res.status === 404) {
+                    stoppedRef.current = true;   // gone for good — stop polling
                     setNotFound(true);
+                } else if (!res.ok || !loaded || !(loaded.booking_ref || loaded.reference)) {
+                    if (!background) setNotFound(true); // keep last-good data on a background blip
                 } else {
-                    setBooking(loadedBooking);
+                    setBooking(loaded);
+                    setNotFound(false);
                 }
             } catch (err) {
-                console.error("Error fetching pass:", err);
-                setNotFound(true);
+                if (!aliveRef.current) return;
+                if (!background) {
+                    console.error("Error fetching pass:", err);
+                    setNotFound(true);
+                }
             } finally {
-                setLoading(false);
+                inFlightRef.current = false;
+                if (!background && aliveRef.current) setLoading(false);
             }
         };
-        fetchBooking();
+
+        // Initial load (foreground), then keep the open pass live.
+        load({ background: false });
+
+        const refresh = () => load({ background: true });
+        const onFocus = () => refresh();
+        const onVisibility = () => { if (document.visibilityState === "visible") refresh(); };
+        window.addEventListener("focus", onFocus);
+        document.addEventListener("visibilitychange", onVisibility);
+        const interval = setInterval(() => {
+            if (document.visibilityState !== "hidden") refresh();
+        }, REFRESH_INTERVAL_MS);
+
+        return () => {
+            aliveRef.current = false;
+            clearInterval(interval);
+            window.removeEventListener("focus", onFocus);
+            document.removeEventListener("visibilitychange", onVisibility);
+        };
     }, [ref]);
+
+    // Copy arbitrary text with a graceful fallback for insecure/older contexts
+    // that lack the async clipboard API. Returns true on success.
+    const copyText = async (text) => {
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+            } else {
+                const ta = document.createElement("textarea");
+                ta.value = text;
+                ta.setAttribute("readonly", "");
+                ta.style.position = "absolute";
+                ta.style.left = "-9999px";
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand("copy");
+                document.body.removeChild(ta);
+            }
+            return true;
+        } catch {
+            return false;
+        }
+    };
+
+    // Copy the link to THIS pass using whatever host the browser is on:
+    //   localhost → localhost link, 172.x LAN → LAN link, Cloud Run → HTTPS link.
+    // No host is ever hardcoded here.
+    const copyPassLink = async () => {
+        const url = window.location.origin + window.location.pathname;
+        const ok = await copyText(url);
+        if (!ok) return;
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
+    // Copy just the booking reference — the manual fallback an FM types at the
+    // gate when the QR won't scan.
+    const copyReference = async () => {
+        const bref = booking?.booking_ref || booking?.reference || ref || "";
+        if (!bref) return;
+        const ok = await copyText(bref);
+        if (!ok) return;
+        setRefCopied(true);
+        setTimeout(() => setRefCopied(false), 2000);
+    };
 
     if (loading) return <div className="driver-container"><div className="loader">Loading your pass…</div></div>;
     if (notFound || !booking) return <div className="driver-container"><div className="pass-card"><div className="error">Pass not found or expired.</div></div></div>;
@@ -102,12 +232,19 @@ const DriverPass = () => {
                 )}
 
                 <div className="qr-section">
-                    {canRenderQr && qrValue
-                        ? <QRCodeComponent value={qrValue} size={180} />
-                        : <div className="qr-fallback" style={{ color: "#94a3b8", fontSize: "0.9rem", textAlign: "center", padding: "8px 0" }}>
-                            QR unavailable — use booking reference at gate
-                          </div>}
+                    <div className="qr-frame">
+                        <PassQrCode value={qrValue} />
+                    </div>
                     <p className="ref-text">{bookingRef || "—"}</p>
+                    <button
+                        type="button"
+                        className="copy-ref-btn"
+                        onClick={copyReference}
+                        disabled={!bookingRef}
+                        aria-label="Copy booking reference"
+                    >
+                        {refCopied ? "✓ Reference copied" : "⧉ Copy Reference"}
+                    </button>
                     <span style={{
                         display: "inline-block", marginTop: 8, padding: "4px 12px", borderRadius: 999,
                         background: `${statusColor}22`, color: statusColor, fontWeight: 700, fontSize: "0.8rem"
@@ -142,6 +279,15 @@ const DriverPass = () => {
                         <p>{fmt(booking.slot_end)}</p>
                     </div>
                 </div>
+
+                <button
+                    type="button"
+                    className="copy-pass-btn"
+                    onClick={copyPassLink}
+                    aria-label="Copy driver pass link"
+                >
+                    {copied ? "✓ Link copied" : "🔗 Copy Driver Pass Link"}
+                </button>
 
                 <footer>
                     <p>Show this QR code at the loading bay gate. Please do not arrive before your slot.</p>

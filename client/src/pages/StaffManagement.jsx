@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
 import PasswordInput from '../components/PasswordInput';
@@ -245,7 +245,7 @@ const StaffManagement = () => {
           </div>
 
           <div className="table-container">
-            <table className="management-table">
+            <table className="management-table staff-table">
               <thead>
                 <tr>
                   <th>PERSONNEL</th>
@@ -268,12 +268,12 @@ const StaffManagement = () => {
                     <td data-label="Email">{member.email}</td>
                     <td data-label="Face ID">
                       {/* Safe boolean flag only — enrolment status, never template data */}
-                      <span className={`status-badge ${member.isEnrolled ? 'active' : ''}`}
-                            style={member.isEnrolled ? undefined : { background: '#334155', color: '#cbd5e1' }}>
-                        {member.isEnrolled ? '✅ Enrolled' : '❌ Not Enrolled'}
+                      <span className={`staff-face-badge ${member.isEnrolled ? 'is-enrolled' : 'not-enrolled'}`}>
+                        <span aria-hidden="true">{member.isEnrolled ? '✓' : '✕'}</span>
+                        <span>{member.isEnrolled ? 'Enrolled' : 'Not enrolled'}</span>
                       </span>
                     </td>
-                    <td data-label="Status"><span className="status-badge active">On-Site</span></td>
+                    <td data-label="Status"><span className="staff-presence-badge">On-Site</span></td>
                     <td data-label="Joined">{new Date(member.createdAt).toLocaleDateString('en-SG')}</td>
                     <td data-label="Actions">
                       <button className="edit-btn" onClick={() => navigate(`/user-logs/${member.id}`)}>

@@ -42,7 +42,7 @@ class SecurePiBridgeTests(unittest.TestCase):
     def test_unattended_timer_resets_when_owner_returns(self):
         tracker = UnattendedTracker(unattended_seconds=10, proximity_px=40)
         bag = Detection("suitcase", 0.9, (100, 100, 140, 140))
-        owner_nearby = Detection("person", 0.9, (125, 120, 180, 220))
+        owner_nearby = Detection("person", 0.9, (115, 105, 145, 145))
 
         alert, duration = tracker.update([bag], now=0)
         self.assertIsNone(alert)
@@ -55,6 +55,17 @@ class SecurePiBridgeTests(unittest.TestCase):
         alert, duration = tracker.update([bag, owner_nearby], now=12)
         self.assertIsNone(alert)
         self.assertEqual(duration, 0)
+
+    def test_person_outside_proximity_does_not_reset_unattended_timer(self):
+        tracker = UnattendedTracker(unattended_seconds=10, proximity_px=40)
+        bag = Detection("suitcase", 0.9, (100, 100, 140, 140))
+        person_far = Detection("person", 0.9, (180, 180, 220, 260))
+
+        tracker.update([bag], now=0)
+        alert, duration = tracker.update([bag, person_far], now=11)
+
+        self.assertEqual(alert, bag)
+        self.assertEqual(duration, 11)
 
 
 if __name__ == "__main__":

@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import Sidebar from '../components/Sidebar';
 import { getHardwareStreamUrl, getHardwareHealthUrl, getHardwarePeopleCountUrl } from '../utils/securepiStream';
+import { validateVideoFile, createTemporaryObjectUrl, revokeTemporaryObjectUrl } from '../utils/mediaPreview';
+import { buildAnalyzeFramePayload, buildBearerHeaders } from '../utils/analyzeFrame';
 import '../css/Dashboard.css';
 import '../css/ObjectDetection.css';
 
 const ZONES_URL = '/api/zones';
 const CAMERAS_URL = '/api/cameras';
 const ALERTS_URL = '/api/detection-alerts';
-const PEOPLE_URL = '/ai/api/yolo/people-count';
-const ANALYZE_FRAME_URL = '/ai/api/yolo/analyze-frame';
+// YOLO endpoints are served by the Node backend, which proxies to the PRIVATE
+// AI service with service-to-service auth — the browser never calls FastAPI
+// directly (the old '/ai/...' Vite/Nginx passthrough is gone).
+const PEOPLE_URL = '/api/yolo/people-count';
+const ANALYZE_FRAME_URL = '/api/yolo/analyze-frame';
 const OPEN_ALERT_STATUSES = ['Active', 'Acknowledged', 'Investigating', 'Escalated', 'Dispatched'];
 const SECUREPI_STREAM_URL = import.meta.env.VITE_SECUREPI_STREAM_URL || '';
 const SECUREPI_HEALTH_URL = import.meta.env.VITE_SECUREPI_HEALTH_URL || '';
@@ -37,16 +42,9 @@ const alertTimestamp = (alert) => {
   return date.toLocaleString('en-SG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
 };
 
-// Sends the selected camera's stable id (and its zone, if assigned) so the AI service
-// loads THAT camera's Detection Setup rule instead of the legacy global-smallest-
-// threshold fallback. Exported (pure, no component state) so it's unit-testable without
-// needing a decoded <video> frame — see tests/.../ObjectDetectionSourceModes.test.jsx.
-export const buildAnalyzeFramePayload = (image, camera, source) => {
-  const payload = camera
-    ? { image, camera_id: camera.id, ...(camera.zone_id ? { zone_id: camera.zone_id } : {}) }
-    : { image };
-  return source ? { ...payload, source } : payload;
-};
+// Keep the existing page export for callers/tests while the implementation is
+// shared with CameraFeed so both surfaces obey one Node/FastAPI contract.
+export { buildAnalyzeFramePayload } from '../utils/analyzeFrame';
 
 // Canonical alert-source label per sourceMode — the AI service whitelists these before
 // forwarding them into POST /api/detection-alerts, so keep values in sync with
@@ -90,7 +88,7 @@ const ObjectDetection = () => {
   const aiHealthFailuresRef = useRef(0);
 
   const token = localStorage.getItem('accessToken');
-  const headers = { Authorization: `Bearer ${token}` };
+  const headers = buildBearerHeaders(token);
 
   const fetchZones = useCallback(() => {
     axios.get(ZONES_URL, { headers })
@@ -133,7 +131,7 @@ const ObjectDetection = () => {
 
   const fetchPeopleCount = useCallback(() => {
     if (sourceModeRef.current === 'hardware') return;
-    axios.get(PEOPLE_URL, { timeout: 8000 })
+    axios.get(PEOPLE_URL, { timeout: 8000, headers })
       .then(res => {
         aiHealthFailuresRef.current = 0;
         setPeopleCount(res.data.count ?? 0);
@@ -212,16 +210,20 @@ const ObjectDetection = () => {
 
       processingFrameRef.current = true;
       const context = canvas.getContext('2d');
-      const maxWidth = 960;
+      // Preserve smaller objects in uploaded/CCTV footage. The previous
+      // 0.35 JPEG quality removed detail from monitors, bottles, chairs and
+      // other small COCO objects before YOLO received the frame.
+      const maxWidth = sourceMode === 'file' ? 1280 : 960;
+      const jpegQuality = sourceMode === 'file' ? 0.72 : 0.62;
       const scale = Math.min(1, maxWidth / video.videoWidth);
       canvas.width = Math.round(video.videoWidth * scale);
       canvas.height = Math.round(video.videoHeight * scale);
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const image = canvas.toDataURL('image/jpeg', 0.35);
+      const image = canvas.toDataURL('image/jpeg', jpegQuality);
       const payload = buildAnalyzeFramePayload(image, monitoredCameraRef.current, resolveAlertSource(sourceMode));
 
       try {
-        const res = await axios.post(ANALYZE_FRAME_URL, payload, { timeout: 10000 });
+        const res = await axios.post(ANALYZE_FRAME_URL, payload, { timeout: 20000, headers });
         setDetections(res.data.detections ?? []);
         setPeopleCount(res.data.count ?? 0);
         setDetectionActive(res.data.detection_active ?? false);
@@ -445,9 +447,13 @@ const ObjectDetection = () => {
   const handleVideoUpload = (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (uploadedVideoUrl) URL.revokeObjectURL(uploadedVideoUrl);
-    setUploadedVideoUrl(URL.createObjectURL(file));
-    setUploadedVideoName(file.name);
+    // Validate MIME + size before creating any preview URL; only a validated
+    // File/Blob is ever turned into a blob: object URL (never a raw/remote URL).
+    const check = validateVideoFile(file);
+    if (!check.ok) { setWorkflowMessage(check.error); return; }
+    revokeTemporaryObjectUrl(uploadedVideoUrl);
+    setUploadedVideoUrl(createTemporaryObjectUrl(check.file));
+    setUploadedVideoName(check.file.name);
     setSourceMode('file');
     setCameraReady(false);
     setDetections([]);
@@ -610,7 +616,10 @@ const ObjectDetection = () => {
                 Python AI service offline - start ai-service to enable stream
               </div>
             ) : (
-              <div className={`od-video-stage ${sourceMode === 'hardware' ? 'od-video-stage-hardware' : ''}`}>
+              <div
+                className={`od-video-stage ${sourceMode === 'hardware' ? 'od-video-stage-hardware' : ''}`}
+                style={sourceMode === 'hardware' ? undefined : { aspectRatio: `${frameSize.width} / ${frameSize.height}` }}
+              >
                 {sourceMode === 'hardware' ? (
                   <img
                     key={hardwareReloadKey}

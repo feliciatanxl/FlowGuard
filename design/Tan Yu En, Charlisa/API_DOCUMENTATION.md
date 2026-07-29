@@ -3,7 +3,7 @@
 **Scope:** Camera Inventory, Monitoring Zones (Detection Setup), Detection Alerts,
 SecurePi edge-ingest, and the Object Detection page's supporting AI-service calls.
 
-**Derived from source code on:** 2026-07-11, branch `feature/object-detection-space`.
+**Re-audited against source on:** 2026-07-28, branch `feature/facial-smart-logistics`.
 All endpoints below were confirmed to exist in the current implementation — nothing
 here is inferred from filenames alone. Where behaviour had to be inferred from
 non-obvious code paths, it is explicitly marked **(Inferred)**.
@@ -18,12 +18,12 @@ Three separate runtimes are involved in this feature, and only one of them is th
 | System | Technology | Port (dev) | Role |
 |---|---|---|---|
 | **FlowGuard Backend** | Node.js / Express / Sequelize | 5001 | Owns Camera Inventory, Monitoring Zones, Detection Alerts. Source of truth in Postgres. |
-| **FlowGuard AI Service** | Python / FastAPI | 8501 | Runs YOLO inference on browser-camera/uploaded-video frames for the *browser camera* and *upload video* modes on the Object Detection page. Proxied by Vite dev server at `/ai/*` → `http://localhost:8501/*`. |
+| **FlowGuard AI Service** | Python / FastAPI | 8501 | Runs YOLO inference. The browser calls Node `/api/yolo/*`; Node calls the private AI service with service-to-service credentials. |
 | **SecurePi Edge Node** | Python, runs on Raspberry Pi | 8001 (stream), calls out to backend | Independent process (`edge/securepi/securepi_edge.py`). Streams MJPEG video directly to the browser and POSTs detection alerts to the FlowGuard backend over the LAN/hotspot. |
 
-The Object Detection page (`client/src/pages/ObjectDetection.jsx`) talks to **all
-three**: it reads/writes Camera/Zone/Alert data on the Node backend, it optionally
-calls the AI Service directly for browser-camera inference, and it optionally loads
+The Object Detection page (`client/src/pages/ObjectDetection.jsx`) uses Node for
+Camera/Zone/Alert data and browser-camera inference. Node proxies YOLO calls to the
+private AI service. The page can also load
 the SecurePi MJPEG stream/health check directly from the Pi's IP (bypassing the
 Node backend entirely for those two calls).
 
@@ -46,8 +46,8 @@ Node backend entirely for those two calls).
 | POST | `/api/detection-alerts` | Create a detection alert | JWT (FM, Staff) **or** `x-service-key` (AI engine) | AI engine (Python YOLO service-to-service); manual test alerts by FM/Staff |
 | PUT | `/api/detection-alerts/:id` | Update alert status (Acknowledge / Investigate / Escalate / Clear) | JWT (FM, Staff) | Object Detection (incident action buttons) |
 | POST | `/api/edge/detection-alerts` | SecurePi edge-device alert ingest | Bearer token (`EDGE_INGEST_TOKEN`) | SecurePi edge node (`securepi_edge.py`) |
-| GET | `/ai/api/yolo/people-count` *(AI Service, not Node backend)* | Poll current people count from the AI service's background YOLO loop | None | Object Detection (5s poll) |
-| POST | `/ai/api/yolo/analyze-frame` *(AI Service, not Node backend)* | Analyze one browser/upload frame and return detections | None | Object Detection (browser camera / uploaded video modes) |
+| GET | `/api/yolo/people-count` | Authenticated Node proxy to private FastAPI people count | JWT (FM, Staff) | Object Detection (5s poll) |
+| POST | `/api/yolo/analyze-frame` | Authenticated Node proxy for one browser/upload frame | JWT (FM, Staff) | Object Detection / CameraFeed |
 | GET | `http://<pi-ip>:8001/health` *(SecurePi device, not a FlowGuard endpoint)* | Health probe of the SecurePi stream server | None | Object Detection (SecurePi hardware mode, 10s poll) |
 | GET | `http://<pi-ip>:8001/video_feed` *(SecurePi device, not a FlowGuard endpoint)* | MJPEG live video stream | None | Object Detection (SecurePi hardware mode, `<img>` tag) |
 
@@ -364,11 +364,9 @@ by the AI engine and by the backend's own test suite
 | `device_id` | string | No | |
 | `timestamp` / `occurred_at` | string (ISO date) | No | Either key accepted; invalid dates become `null` |
 
-**Success — 201:** created alert object. As a side effect, the route also
-fire-and-forgets a matching `IncidentLog.create()` row (status
-`UNATTENDED_OBJECT`, source `Object Detection`) so the alert also appears on the
-Incident Dashboard — this does not block or affect the 201 response even if it
-fails.
+**Success — 201:** created alert object with `incident_log_id`. The route creates
+the alert and mapped IncidentLog atomically, then links them. The edge-ingest route
+does the same. A failure rolls the transaction back and returns 500.
 
 **Errors:** 400 (`zone_name`/`camera_location` missing, invalid `status`, invalid
 `severity`), 401 (no service key and no/invalid JWT), 403 (JWT valid but role not
@@ -563,19 +561,18 @@ route's, since this route only understands the bearer token).
 
 ---
 
-## 4. AI Service Endpoints Used by Object Detection (not part of the Node backend)
+## 4. Authenticated Node proxies to the private AI service
 
-`ai-service/main.py` is a separate FastAPI process (default port 8501). The Vite
-dev server proxies frontend calls to `/ai/*` through to this service, stripping the
-`/ai` prefix (`client/vite.config.js:20-26`). These two endpoints have **no
-authentication** — unlike every FlowGuard backend route above, no JWT or token is
-checked.
+`ai-service/main.py` is a separate FastAPI process (default port 8501 locally and
+private Cloud Run in deployment). Browser calls go to Node `/api/yolo/*`, which
+requires an FM/Staff JWT and adds the Google ID token plus `X-AI-Service-Key` when
+calling FastAPI.
 
-### GET `/ai/api/yolo/people-count` → FastAPI `/api/yolo/people-count`
+### GET `/api/yolo/people-count` → private FastAPI `/api/yolo/people-count`
 | | |
 |---|---|
 | **Purpose** | Poll the current people count from the AI service's background YOLO detection loop (runs against its own local camera/video source independent of the browser). |
-| **Auth** | None |
+| **Auth** | FlowGuard JWT; FM or Staff. Private FastAPI credentials are added by Node. |
 | **Used by** | `ObjectDetection.jsx` — polled every 5 seconds (`fetchPeopleCount`) |
 | **Source** | `ai-service/main.py:880-887` |
 
@@ -587,14 +584,14 @@ No documented error responses in code beyond a generic 500 on an unhandled
 exception; the frontend treats any request failure (including a timeout) as "AI
 Engine: Offline" after 3 consecutive failures.
 
-### POST `/ai/api/yolo/analyze-frame` → FastAPI `/api/yolo/analyze-frame`
+### POST `/api/yolo/analyze-frame` → private FastAPI `/api/yolo/analyze-frame`
 | | |
 |---|---|
 | **Purpose** | Analyze a single frame captured from the browser camera or an uploaded video file and return YOLO detections for overlay boxes. |
-| **Auth** | None |
-| **Body** | `{ "image": "<base64 data URL or raw base64 JPEG>" }` — `image` is required |
-| **Used by** | `ObjectDetection.jsx` — called every ~2.2s while `sourceMode` is `camera` or `file` |
-| **Source** | `ai-service/main.py:851-877` |
+| **Auth** | FlowGuard JWT; FM or Staff. |
+| **Body** | `{ "image": "data:image/jpeg;base64,...", "source": "Uploaded Video", "camera_id": 7, "zone_id": 3 }`. `image` is required; JPEG, PNG, and WebP data URLs are accepted up to 8 MiB. The IDs are optional positive integers. |
+| **Used by** | `ObjectDetection.jsx` — called every ~2.2s while `sourceMode` is `camera` or `file`; `CameraFeed.jsx` — called every ~1.8s for local-video tiles. Both use the shared canonical payload helper. |
+| **Source** | Node contract: `server/routes/yolo.js`; private inference: `ai-service/main.py` |
 
 **Success — 200**
 ```json
@@ -609,16 +606,16 @@ Engine: Offline" after 3 consecutive failures.
   "camera_status": "browser_camera"
 }
 ```
-**Error:** `400` `{ "detail": "Invalid image data" }` when the `image` field cannot
-be decoded (FastAPI's standard `HTTPException` envelope, different shape from the
-Node backend's `{ "error": ... }` convention).
+**Errors:** Node returns `400` `{ "error": "..." }` for a missing/malformed or
+unsupported data URL and for non-positive `camera_id`/`zone_id`, `401`/`403` for
+JWT/RBAC failure, `413` for an image over 8 MiB, `429` for the AI-proxy rate
+limit, `502` for an upstream error, and `503` when the private AI service is
+offline. The browser never calls this private FastAPI route directly.
 
-**Frontend↔backend behaviour note (inferred):** this proxy path only exists in the
-Vite **dev-server** config (`client/vite.config.js`). No equivalent rewrite was
-found in the codebase for a production build, so in a deployed (non-Vite-dev)
-environment `/ai/*` calls from the built frontend would need an explicit reverse
-proxy or a different base URL — this is a potential deployment gap, not something
-present in the current dev-only proxy config.
+**Frontend↔backend behaviour:** the browser calls same-origin `/api/yolo/*`.
+Vite proxies `/api` to Node in development, while the production client container
+proxies `/api/*` to the configured Node service. Node then calls private FastAPI;
+there is no browser `/ai/*` dependency.
 
 ---
 
@@ -668,7 +665,8 @@ own Node/Python services. Treat the request/response shapes below as the
 | User JWT | `Authorization: Bearer <token>` | `/api/zones`, `/api/cameras`, `/api/detection-alerts` (GET/PUT, and POST as a fallback) | `APP_SECRET`; DB re-check of `User` row + `tokenVersion` on every request (`verifyToken`) |
 | AI-service shared key | `x-service-key: <value>` | `POST /api/detection-alerts` (service path) | `process.env.AI_SERVICE_KEY` |
 | Edge device bearer token | `Authorization: Bearer <value>` | `POST /api/edge/detection-alerts` | `process.env.EDGE_INGEST_TOKEN` (separate secret from `AI_SERVICE_KEY` and from user JWTs) |
-| None | — | AI Service `/api/yolo/*`, SecurePi `/health`, `/video_feed` | n/a — no credential is checked |
+| Node AI proxy | JWT plus server-side Google ID token/service key | Browser `/api/yolo/*` -> private FastAPI | JWT/RBAC at Node; IAM and app key at AI service |
+| None | — | LAN-only SecurePi `/health`, `/video_feed` | No application credential; PoC network limitation |
 
 Role gate (`requireRole`, applies only after a JWT is verified):
 
@@ -694,13 +692,10 @@ Role gate (`requireRole`, applies only after a JWT is verified):
    (`EDGE_INGEST_TOKEN`) for `/api/edge/detection-alerts`. They are deliberately
    kept independent per the comments in `server/.env.example`; a caller with only
    an edge token cannot use the service-key path and vice versa.
-3. **The AI Service and SecurePi device endpoints have zero authentication**,
-   unlike every Node backend route. For the browser-camera/upload-video AI Service
-   calls this is mitigated by the calls only being reachable through the local dev
-   proxy; for the SecurePi stream/health endpoints, the mitigation is physical/LAN
-   isolation (same hotspot network), not an application-level control. Any hardening
-   work should treat this as a known prototype limitation, not an oversight to
-   silently work around.
+3. **The browser no longer calls the AI service directly.** Node applies JWT/RBAC
+   and private-service credentials. SecurePi stream/health endpoints remain
+   unauthenticated LAN PoC surfaces and require a secure relay/auth layer before
+   internet exposure.
 4. **Error response shape is inconsistent across systems**: the Node backend
    returns `{ "error": "..." }` (mostly) or `{ "message": "..." }` (auth
    middleware specifically), the AI Service (FastAPI) returns `{ "detail": "..." }`,
@@ -724,10 +719,9 @@ integration feature per the requested scope:
 - `POST /api/incident`, `GET /api/incident`, `PATCH /api/incident/:id`, `DELETE
   /api/incident/:id`, `POST /api/incident/scan-frame` (`server/routes/incident.js`)
   — this is the **Facial Recognition / Incident Dashboard** module. It is only
-  related to Object Detection indirectly: `POST /api/detection-alerts` fire-and-forgets
-  an `IncidentLog.create()` as a side effect so unattended-object alerts also show up
-  on the Incident Dashboard, but the Object Detection page itself never calls any
-  `/api/incident/*` route.
+  related to Object Detection through atomic linked incident creation and
+  bidirectional status/severity/person/delete synchronisation. The Object Detection
+  page itself does not call `/api/incident/*`.
 - `/api/facial-recognition/*`, `/api/attendance/*`, `/api/bookings/*`,
   `/api/security/*`, `/api/support/*`, `/user/*` — unrelated FlowGuard modules
   (facial recognition, staff attendance, driver/tenant bookings, security logs,

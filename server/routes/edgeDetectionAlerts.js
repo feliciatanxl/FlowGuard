@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const { aiProxyLimiter } = require('../middlewares/rateLimit');
+router.use(aiProxyLimiter); // high-frequency edge ingest — generous per-client policy
 const { DetectionAlert, IncidentLog, MonitoringZone, Camera, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { resolveIncidentType } = require('../utils/detectionAlertBridge');

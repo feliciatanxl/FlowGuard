@@ -1,43 +1,25 @@
-import React from 'react';
-import { useNavigate } from 'react-router-dom'; 
-
 const ImpactStats = () => {
-  const navigate = useNavigate();
-
-  const handleStatusClick = () => {
-    navigate('/system-health');
-  };
+  const outcomes = [
+    "Reduce repetitive manual checks",
+    "Improve visibility across access points and monitored zones",
+    "Create consistent and searchable audit records",
+    "Coordinate logistics and security workflows",
+    "Preserve human review for important security decisions"
+  ];
 
   return (
-    <section className="stats-container" id="mission">
-      <div className="impact-header">
-        <h2 className="section-title">Our Strategic Mission</h2>
-        <p className="section-subtitle">Optimizing Harrison Food Factory operations through AI-driven insights.</p>
+    <section className="value-section section-shell">
+      <div className="value-intro">
+        <span className="eyebrow">Business value</span>
+        <h2 className="section-title">Why FlowGuard</h2>
+        <p className="section-subtitle">
+          Bring key facility workflows together so operations and security teams can act on
+          clearer, connected information without removing human judgement.
+        </p>
       </div>
-
-      <div className="stats-grid">
-        <div className="stat-card">
-          <div className="stat-value">40%</div>
-          <div className="stat-label">Manpower Reduction</div>
-          <div className="stat-subtext">Target for shift work</div>
-        </div>
-
-        <div className="stat-card status-card" onClick={handleStatusClick}>
-          <div className="status-indicator">
-            <div className="pulse-dot"></div>
-            <span className="status-text">SYSTEM ACTIVE</span>
-          </div>
-          <div className="stat-label">Node Network Health</div>
-          <div className="stat-subtext">Click to view active sensors</div>
-          <button className="more-info-btn">View Nodes →</button>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-value">70%</div>
-          <div className="stat-label">Monitoring Efficiency</div>
-          <div className="stat-subtext">AI automation results</div>
-        </div>
-      </div>
+      <ul className="value-list">
+        {outcomes.map((outcome) => <li key={outcome}><span aria-hidden="true">✓</span>{outcome}</li>)}
+      </ul>
     </section>
   );
 };

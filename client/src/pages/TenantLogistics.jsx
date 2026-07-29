@@ -1,10 +1,18 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
 import '../css/Dashboard.css';
 import '../css/Management.css';
 import '../css/Booking.css';
 import { API_BASE_URL } from '../constants/api';
+import {
+  singaporeLocalInputToIso,
+  isoToSingaporeLocalInput,
+  formatSingaporeBookingDateTime,
+  singaporeDateKey,
+  getSingaporeTodayDateKey,
+} from '../constants/datetime';
 
 const BAYS = ['Bay A', 'Bay B'];
 const STATUSES = ['Pending', 'Confirmed', 'Arrived', 'Completed', 'Cancelled'];
@@ -17,6 +25,7 @@ const emptyForm = {
 };
 
 const TenantLogistics = () => {
+  const navigate = useNavigate();
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -32,14 +41,9 @@ const TenantLogistics = () => {
   const [searchText, setSearchText] = useState('');
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterBay, setFilterBay] = useState('All');
-  const [filterDate, setFilterDate] = useState(''); // YYYY-MM-DD; empty = all dates
-
-  // Gate Scan (FM/Staff) — verify a driver pass by booking ref at the loading bay.
-  const [gateOpen, setGateOpen] = useState(false);
-  const [gateRef, setGateRef] = useState('');
-  const [gatePlate, setGatePlate] = useState('');
-  const [gateBusy, setGateBusy] = useState(false);
-  const [gateError, setGateError] = useState('');
+  // Default to TODAY in Singapore so FMs land on the day's schedule; '' = All
+  // dates (full history). Re-initialised to the current SG day on every mount.
+  const [filterDate, setFilterDate] = useState(() => getSingaporeTodayDateKey()); // YYYY-MM-DD; empty = all dates
 
   const token = localStorage.getItem('accessToken');
   const role = localStorage.getItem('userRole');
@@ -77,15 +81,6 @@ const TenantLogistics = () => {
   const openForm = () => { setError(''); setForm(emptyForm); setEditingId(null); setIsFormOpen(true); };
   const closeForm = () => { setIsFormOpen(false); setEditingId(null); };
 
-  // ISO/DB timestamp → value accepted by <input type="datetime-local">.
-  const toLocalInput = (v) => {
-    if (!v) return '';
-    const d = new Date(v);
-    if (isNaN(d.getTime())) return '';
-    const p = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-  };
-
   const openEdit = (b) => {
     setError('');
     setForm({
@@ -94,8 +89,10 @@ const TenantLogistics = () => {
       driver_phone: b.driver_phone || '',
       driver_name: b.driver_name || '',
       loading_bay: b.loading_bay || '',
-      slot_start: toLocalInput(b.slot_start),
-      slot_end: toLocalInput(b.slot_end),
+      // Stored UTC instant → the Singapore wall-clock value the driver booked
+      // (never the browser's local time via getHours()/getDate()).
+      slot_start: isoToSingaporeLocalInput(b.slot_start),
+      slot_end: isoToSingaporeLocalInput(b.slot_end),
       notes: b.notes || ''
     });
     setEditingId(b.id);
@@ -113,12 +110,20 @@ const TenantLogistics = () => {
     setSubmitting(true);
     setError('');
     try {
+      // Convert the Singapore wall-clock datetime-local inputs into explicit UTC
+      // ISO instants so the stored time can never be re-interpreted by the
+      // server's timezone. The backend also normalises defensively.
+      const payload = {
+        ...form,
+        slot_start: form.slot_start ? singaporeLocalInputToIso(form.slot_start) : '',
+        slot_end: form.slot_end ? singaporeLocalInputToIso(form.slot_end) : '',
+      };
       if (editingId) {
         // Manual UPDATE — editable fields only; server enforces ownership + slot conflicts.
-        await axios.patch(`${API_BASE_URL}/api/bookings/${editingId}`, form, authHeader);
+        await axios.patch(`${API_BASE_URL}/api/bookings/${editingId}`, payload, authHeader);
         setNotice('Booking updated.');
       } else {
-        const res = await axios.post(`${API_BASE_URL}/api/bookings/create`, form, authHeader);
+        const res = await axios.post(`${API_BASE_URL}/api/bookings/create`, payload, authHeader);
         setNotice(`Booking created (status: Pending).${describeWhatsapp(res.data?.whatsapp)}`);
       }
       setForm(emptyForm);
@@ -153,52 +158,16 @@ const TenantLogistics = () => {
     }
   };
 
-  const openGate = () => { setGateError(''); setGateRef(''); setGatePlate(''); setGateOpen(true); };
-  const closeGate = () => setGateOpen(false);
+  // Booking slot shown in Singapore time regardless of the viewer's device zone.
+  const fmtSlot = (b) => formatSingaporeBookingDateTime(b.slot_start);
 
-  const gateScan = async (action) => {
-    const ref = gateRef.trim();
-    if (!ref) { setGateError('Enter a booking reference.'); return; }
-    setGateBusy(true);
-    setGateError('');
-    try {
-      const res = await axios.patch(
-        `${API_BASE_URL}/api/bookings/${encodeURIComponent(ref)}/gate-scan`,
-        { action, observedPlate: gatePlate.trim() || undefined },
-        authHeader
-      );
-      const d = res.data || {};
-      let msg = d.message || `Gate ${action} recorded.`;
-      if (d.plateMatched === false) msg += ' ⚠ Plate mismatch — please verify the vehicle.';
-      if (d.nextInLine) msg += ` Next in line: ${d.nextInLine}.`;
-      msg += describeWhatsapp(d.whatsappStatus);
-      setNotice(msg);
-      setGateOpen(false);
-      fetchBookings();
-    } catch (err) {
-      setGateError(err.response?.data?.error || 'Gate scan failed.');
-    } finally {
-      setGateBusy(false);
-    }
-  };
-
-  const fmtSlot = (b) => {
-    if (!b.slot_start) return '—';
-    try { return new Date(b.slot_start).toLocaleString('en-SG', { dateStyle: 'short', timeStyle: 'short' }); }
-    catch { return b.slot_start; }
-  };
-
-  // Local YYYY-MM-DD of a booking's slot start (matches the date input + displayed Slot).
-  const slotDateKey = (b) => {
-    if (!b.slot_start) return '';
-    const d = new Date(b.slot_start);
-    if (isNaN(d.getTime())) return String(b.slot_start).slice(0, 10);
-    const p = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  };
+  // Singapore YYYY-MM-DD of a booking's slot start (matches the date input + displayed Slot).
+  const slotDateKey = (b) => singaporeDateKey(b.slot_start);
 
   // --- Compact summary stats ---
-  const todayKey = slotDateKey({ slot_start: new Date().toISOString() });
+  // Always Singapore today — the "Today's Bookings" card never changes meaning
+  // when the FM selects another date or All dates.
+  const todayKey = getSingaporeTodayDateKey();
   const stats = {
     today: bookings.filter(b => slotDateKey(b) === todayKey).length,
     open: bookings.filter(b => b.status === 'Pending' || b.status === 'Confirmed').length,
@@ -217,6 +186,13 @@ const TenantLogistics = () => {
     return matchesQ && matchesStatus && matchesBay && matchesDate;
   });
 
+  // Context-aware empty message for when data exists but nothing matches.
+  const emptyFilteredMessage = !filterDate
+    ? 'No bookings match the selected filters.'
+    : filterDate === todayKey
+      ? 'No bookings scheduled for today.'
+      : 'No bookings found for the selected date.';
+
   return (
     <div className="dashboard-layout">
       <Sidebar />
@@ -229,7 +205,7 @@ const TenantLogistics = () => {
           <div className="header-actions">
             <button className="edit-btn" onClick={fetchBookings}>Refresh</button>
             {canGateScan && (
-              <button className="edit-btn" onClick={openGate}>Gate Scan</button>
+              <button className="edit-btn" onClick={() => navigate('/logistics/gate-verification')}>Gate Scan</button>
             )}
             {canCreate && (
               <button className="new-booking-btn" onClick={openForm}>+ New Booking</button>
@@ -286,11 +262,18 @@ const TenantLogistics = () => {
             onChange={(e) => setFilterDate(e.target.value)}
             aria-label="Filter by slot date"
           />
-          {filterDate && (
-            <button type="button" className="edit-btn" onClick={() => setFilterDate('')} aria-label="Clear date filter">
-              Clear date
-            </button>
-          )}
+          {/* Escape hatch to the full booking history. Active state is shown by
+              the ✓ text + aria-pressed (never colour alone). */}
+          <button
+            type="button"
+            className={`logistics-filter logistics-alldates${!filterDate ? ' active' : ''}`}
+            onClick={() => setFilterDate('')}
+            aria-pressed={!filterDate}
+            aria-label="Show all dates — full booking history"
+            title="Show all booking history (all dates)"
+          >
+            {!filterDate ? '✓ All dates' : 'All dates'}
+          </button>
         </div>
 
         {/* Booking list — plain table styled like Workforce Attendance (no bulky card/heading) */}
@@ -300,7 +283,7 @@ const TenantLogistics = () => {
           ) : bookings.length === 0 ? (
             <p style={{ padding: '24px', color: '#94a3b8' }}>No bookings scheduled yet.</p>
           ) : filtered.length === 0 ? (
-            <p style={{ padding: '24px', color: '#94a3b8' }}>No bookings match your filters.</p>
+            <p style={{ padding: '24px', color: '#94a3b8' }}>{emptyFilteredMessage}</p>
           ) : (
             <div className="table-container">
               <table className="management-table">
@@ -314,33 +297,39 @@ const TenantLogistics = () => {
                   {filtered.map((b) => {
                     const nextStatus = STATUS_FLOW[b.status];
                     const isClosed = CLOSED.includes(b.status);
+                    const canEditOrCancel = !isClosed && (role === 'FM' || role === 'Tenant');
+                    const hasActions = (canManage && nextStatus) || canEditOrCancel;
                     return (
                       <tr key={b.id}>
-                        <td data-label="Ref" style={{ fontFamily: 'monospace' }}>{b.booking_ref}</td>
+                        <td data-label="Ref" className="booking-ref-cell">{b.booking_ref}</td>
                         <td data-label="Plate">{b.license_plate}</td>
-                        <td data-label="Company">{b.transport_company}</td>
-                        <td data-label="Driver">{b.driver_name || '—'}</td>
+                        <td data-label="Company" className="booking-wrap-cell">{b.transport_company}</td>
+                        <td data-label="Driver" className="booking-wrap-cell">{b.driver_name || '—'}</td>
                         <td data-label="Bay">{b.loading_bay}</td>
                         <td data-label="Slot">{fmtSlot(b)}</td>
                         <td data-label="Status"><span className={`status-badge ${String(b.status).toLowerCase()}`}>{b.status}</span></td>
-                        <td data-label="Actions">
-                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            {canManage && nextStatus && (
-                              <button className="edit-btn" onClick={() => updateStatus(b.id, nextStatus)}>
-                                Mark {nextStatus}
-                              </button>
-                            )}
-                            {!isClosed && (role === 'FM' || role === 'Tenant') && (
-                              <button className="edit-btn" onClick={() => openEdit(b)}>
-                                Edit
-                              </button>
-                            )}
-                            {!isClosed && (role === 'FM' || role === 'Tenant') && (
-                              <button className="edit-btn" style={{ background: '#7f1d1d' }} onClick={() => cancelBooking(b.id)}>
-                                Cancel
-                              </button>
-                            )}
-                          </div>
+                        <td data-label="Actions" className="booking-actions-cell">
+                          {hasActions ? (
+                            <div className="booking-action-group" aria-label={`Actions for ${b.booking_ref}`}>
+                              {canManage && nextStatus && (
+                                <button className="edit-btn booking-action-btn booking-action-primary" onClick={() => updateStatus(b.id, nextStatus)}>
+                                  Mark {nextStatus}
+                                </button>
+                              )}
+                              {canEditOrCancel && (
+                                <button className="edit-btn booking-action-btn" onClick={() => openEdit(b)}>
+                                  Edit
+                                </button>
+                              )}
+                              {canEditOrCancel && (
+                                <button className="edit-btn booking-action-btn booking-action-danger" onClick={() => cancelBooking(b.id)}>
+                                  Cancel
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="booking-actions-none">—</span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -409,52 +398,6 @@ const TenantLogistics = () => {
           </div>
         )}
 
-        {/* Gate Scan modal (FM/Staff) — verify a driver pass at the loading bay */}
-        {gateOpen && canGateScan && (
-          <div className="modal-overlay" onClick={closeGate}>
-            <div className="modal-content booking-modal" onClick={(e) => e.stopPropagation()}>
-              <div className="booking-modal-head">
-                <h2>Loading Bay Gate Scan</h2>
-                <button className="modal-x" onClick={closeGate} aria-label="Close">✕</button>
-              </div>
-
-              {gateError && <div className="error-banner" style={{ margin: '0 0 14px' }}>⚠️ {gateError}</div>}
-
-              <div className="dark-form">
-                <div className="form-group">
-                  <label>Booking Reference *</label>
-                  <input
-                    value={gateRef}
-                    onChange={(e) => setGateRef(e.target.value)}
-                    placeholder="e.g., FG-02C7F5"
-                    aria-label="Booking reference"
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Observed Vehicle Plate (optional)</label>
-                  <input
-                    value={gatePlate}
-                    onChange={(e) => setGatePlate(e.target.value)}
-                    placeholder="e.g., GBG 1234M"
-                    aria-label="Observed vehicle plate"
-                  />
-                </div>
-                <p style={{ color: '#94a3b8', fontSize: '0.8rem', margin: '0 0 12px' }}>
-                  Scan the driver's QR or type the booking reference, then record entry or exit.
-                </p>
-                <div className="booking-modal-actions">
-                  <button type="button" className="cancel-btn" onClick={closeGate}>Cancel</button>
-                  <button type="button" className="edit-btn" disabled={gateBusy} onClick={() => gateScan('entry')}>
-                    {gateBusy ? 'Working…' : 'Mark Arrived (Entry)'}
-                  </button>
-                  <button type="button" className="new-booking-btn" disabled={gateBusy} onClick={() => gateScan('exit')}>
-                    {gateBusy ? 'Working…' : 'Mark Completed (Exit)'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </main>
     </div>
   );

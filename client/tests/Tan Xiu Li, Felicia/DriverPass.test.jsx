@@ -1,7 +1,7 @@
 // Frontend tests — Driver Pass renders booking + QR, and degrades cleanly.
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { MemoryRouter, Routes, Route } from "react-router";
 import { vi, describe, test, expect, afterEach } from "vitest";
 
 import DriverPass from "../../src/pages/DriverPass";
@@ -106,5 +106,27 @@ describe("DriverPass", () => {
     const { container } = renderPass("FG-MIN");
     expect(await screen.findByText("FG-MIN")).toBeTruthy();
     expect(container.querySelector("svg")).toBeTruthy(); // QR still renders from booking_ref
+  });
+
+  test("Copy Driver Pass Link copies the CURRENT browser origin + path (no hardcoded host)", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    mockFetchOnce(() => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        booking_ref: "FG-052B13", transport_company: "NinjaVan", license_plate: "GBG 1234M",
+        loading_bay: "Bay A", status: "Confirmed",
+      }),
+    }));
+
+    renderPass();
+    const btn = await screen.findByRole("button", { name: /Copy driver pass link/i });
+    fireEvent.click(btn);
+
+    // Uses window.location (whatever host the device is on) — localhost, LAN IP or Cloud Run.
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(window.location.origin + window.location.pathname)
+    );
+    expect(await screen.findByText(/Link copied/i)).toBeTruthy();
   });
 });

@@ -1,189 +1,171 @@
-# 🏭 FlowGuard: Harrison Food Factory Monitoring System 🚀
+# FlowGuard
 
-FlowGuard is an enterprise-grade AI facility management platform and Command Center
-designed for the upcoming **Harrison Food Factory (TOL 2027)**. It automates security,
-compliance, and logistics monitoring by integrating machine-learning models with existing
-CCTV networks — turning passive surveillance into proactive facility management, with a
-target of **reducing manual security man-hours by 50%**. 📉✨
+FlowGuard is the academic proof of concept for SCCCI Problem Statement 5B, Asset & Manpower Monitoring for Harrison Food Factory. It combines access management, object and space monitoring, facility support, incident resolution, and loading-bay operations in one full-stack application.
 
-**SCCCI AI Challenge — Problem Statement 5B (Asset & Manpower Monitoring)**
-**Team:** IT2115-03, Group 11
+The working application is the source of truth. This repository does not claim production safety certification, production-grade licence-plate recognition, explosive detection, a real gate actuator, or continuous cross-camera person re-identification.
 
----
+## Problem and users
 
-## 📌 The Problem & How FlowGuard Solves It
+Harrison Food Factory has multiple tenants, entry points, monitored spaces, and two loading bays. Facilities Managers need a consolidated way to review access, attendance, unattended objects, alerts, incidents, support cases, and delivery traffic. Tenants and Staff need appropriately scoped operational access, while drivers need a public booking pass without a FlowGuard account.
 
-Harrison Food Factory has 10–30 entry points, multiple tenants, and 2 loading bays, all
-currently monitored **manually** by facility-management and security staff. This is
-labour-intensive and error-prone: there is no integrated, predictive system, so staff
-rely on human observation to catch unauthorised access, unattended assets, and incidents.
+Primary actors are Facilities Manager (`FM`), `Tenant`, `Staff`, public Driver, and trusted AI/SecurePi service callers. Authentication is shared infrastructure, not a student's main assessed feature.
 
-FlowGuard addresses this with a full-stack web app backed by a Python AI service that
-**automates detection, tracking, and alerting** across four integrated modules. Each
-module is a complete CRUD application, so FM staff can configure rules, monitor live
-activity, and resolve incidents from one Command Center — cutting routine monitoring
-workload and freeing staff for higher-value work.
+## Official task allocation
 
-> **PoC scope:** This proof of concept focuses on the **CCTV + AI monitoring and
-> operations layer**. Environmental sensors (temperature/humidity) and pest detection
-> require IoT hardware beyond a web app and are documented as **future scope**.
+| Module | Owner | Implemented scope | Enhanced capability |
+|---|---|---|---|
+| Module 1 - Facial Recognition & Access Management | Felicia | User enrolment/re-enrolment, Gate Scanner, V-Patrol, attendance, access audit, FM evaluation, PDPA off-boarding | Smart Logistics and loading-bay verification |
+| Module 2 - Object Detection & Space Management | Charlisa | Camera and zone configuration, browser/upload/SecurePi sources, people count, unattended-object alerts, alert lifecycle | Configurable edge and zone workflows |
+| Module 3 - AI Helpdesk & Facility Support | Lucas | Chat transcripts, keyword/knowledge-base replies, automatic ticket escalation, ticket and knowledge-base CRUD | Linked transcript and FM resolution workflow |
+| Module 4 - Incident Tracking & Resolution | Gladwin | Automatic incidents from detection alerts, manual incidents, search, resolution updates, notes, and soft deletion | Bidirectional alert/incident synchronisation |
+| Shared team infrastructure | Team | Accounts, registration, login, JWT verification, RBAC, CORS, rate limiting, deployment configuration | Not a main assigned module |
 
----
+## Implemented application
 
-## 👥 Task Allocation
+### Facial Recognition & Access Management
 
-Each member owns one full-stack module (Create, Read, Update, Delete + enhancements).
-User accounts/authentication are a shared feature across the team.
+- Manual account creation within role limits; three-angle face enrolment and re-enrolment.
+- Raspberry Pi Camera Module 3 and laptop webcam capture, with manual image upload for enrolment.
+- FM-only Gate Scanner and V-Patrol with transient face tracking, recognition, multiple-face rejection, motion/head-turn liveness, and final same-person confirmation.
+- Unknown, stale, suspended, liveness-timeout, identity-mismatch, and multiple-face outcomes fail closed.
+- Gate Scanner toggles `Attendance` IN/OUT; V-Patrol writes `SecurityLog` access events without changing attendance.
+- FM-only side-effect-free evaluation workflow with stable participant labels.
+- Transactional PDPA off-boarding wipes the embedding, removes attendance, anonymises retained access logs, unlinks booking ownership, retires the evaluation mapping, deletes the user, and requests an AI cache refresh.
+- Liveness is a PoC head-turn/motion check, not certified anti-spoofing. Multiple-face rejection is not presented as tailgating detection. No VIP role exists.
 
-| Module | Owner | Responsibility |
-|--------|-------|----------------|
-| **Facial Recognition & Access Management** | **Felicia** | Biometric enrolment (auto webcam scan + manual photo upload), live gate recognition, access-permission management, PDPA-compliant off-boarding, security logs |
-| **Object Detection & Space Management** | **Charlisa** | Monitoring zones & AI rules, unattended-item detection, people-counting/density analytics, alert lifecycle, log purging |
-| **AI Helpdesk & Facility Support** | **Lucas** | AI support chatbot, chat-transcript logging, FM ticketing & escalation, knowledge-base updates |
-| **Incident Tracking & Resolution** | **Gladwin** | Centralised incident dashboard, automatic + manual incident creation, resolution pipeline, archiving |
-| **User Accounts & Auth (shared)** | All | Registration, login, JWT auth, role-based protected routes |
+### Smart Logistics
 
-Felicia also implemented a Phase 1 Smart Logistics enhancement with loading bay booking CRUD and WhatsApp notification support to address the client’s two-loading-bay congestion requirement.
+- Booking create/read/edit/status/cancel workflows with FM/Tenant/Staff scoping.
+- Bay A/B time-slot conflict validation using Singapore wall-clock input normalised to UTC for storage.
+- Public Driver Pass with a large QR code and readable booking reference.
+- QR decoding uses native `BarcodeDetector`, ZXing fallback, then Node-to-private-FastAPI cloud decoding; manual reference entry remains available.
+- Laptop webcam and Raspberry Pi Camera Module 3 sources.
+- Proof-of-concept Tesseract plate OCR with manual correction; it is not production-grade LPR.
+- FM-authoritative gate verification for invalid, unconfirmed, cancelled, completed, early, late, unreadable, missing, and mismatched inputs.
+- Every final gate decision writes `GateAccessLog`; allowed manual overrides require a reason. Entry/exit transitions are idempotent.
+- WhatsApp Cloud API can send real messages when configured; default demo mode is safe and simulated. Completion can notify the next driver for the same bay.
+- The UI simulates the barrier state. It does not actuate a physical barrier.
 
----
+### Object Detection & Space Management
 
-## 🛠️ Technical Stack
+- CRUD for `Camera`, `MonitoringZone`, and `DetectionAlert`, with soft deletion on these models.
+- Configured classes, people-density threshold, unattended threshold, cooldown, severity, assigned team, enable/disable, and detection type.
+- Browser camera/upload analysis through Node's authenticated YOLO proxy, plus optional IMX500/SecurePi edge ingestion.
+- People counting and proximity/timer-based unattended-object detection for model-supported classes.
+- Every current detection-alert creation path atomically creates and links an `IncidentLog` through `DetectionAlert.incident_log_id`; status, severity, person, and soft deletion synchronise in both directions.
 
-- **Frontend:** React.js (Vite + JavaScript + SWC)
-- **Styling:** Custom enterprise dark-mode CSS (Flexbox & Grid) 🎨
-- **Backend:** Node.js + Express ⚙️
-- **AI Service:** Python + FastAPI 🧠
-- **Computer-Vision Models:** InsightFace (faces) + Ultralytics YOLO (objects/people) 👁️
-- **Database:** PostgreSQL — face embeddings are stored as a native `FLOAT[]` array column (`faceVector`). The project does not require the `pgvector` extension for local development. 🗄️
-- **ORM:** Sequelize
-- **Validation:** Yup & Formik ✅
+### AI Helpdesk & Facility Support
 
----
+- `ChatTranscript`, `SupportTicket`, and `KnowledgeBase` persistence.
+- Public chat records exchanges, scores keyword/knowledge-base overlap, and escalates after configured phrases or five user messages.
+- FM ticket list/detail reads include the linked transcript; FM can update status and resolution notes or hard-delete a ticket and its linked transcript.
+- FM knowledge-base create/read/update/delete. The current response engine is deterministic keyword logic, not a large-language model.
 
-## 💻 Running the Project Locally
+### Incident Tracking & Resolution
 
-### 1. Install frontend & backend dependencies 📦
+- Incidents are created automatically with detection alerts and can also be created manually by FM.
+- FM can list/search/read incidents, update resolution status/notes/severity/person, and soft-delete records.
+- Linked detection alerts mirror resolution, severity, person, and delete operations.
+
+## Repository layout and architecture
+
+- `client/` - React 19/Vite frontend. The Cloud Run image serves the built SPA through Nginx and proxies `/api/*` and `/user/*` to Node.
+- `server/` - Node.js/Express API, Sequelize models, RBAC, integration services, and cron cleanup.
+- `ai-service/` - private Python/FastAPI service for InsightFace, QR decoding, and YOLO.
+- `raspberry-pi/` - Raspberry Pi Camera Module 3 snapshot/MJPEG PoC.
+- `edge/securepi/` - optional IMX500/SecurePi object-detection edge integration.
+- PostgreSQL/Cloud SQL is authoritative. `User.faceVector` is Sequelize `ARRAY(FLOAT)` / PostgreSQL `FLOAT[]`; matching is performed with NumPy. No pgvector extension is used by the application.
+
+Normal cloud request path:
+
+```text
+Browser -> public Cloud Run client/Nginx -> public Cloud Run Node server
+Node -> private authenticated Cloud Run FastAPI AI service
+Node and FastAPI -> Cloud SQL PostgreSQL
+SecurePi -> Node edge-ingest endpoint
+```
+
+The browser normally calls Node, never private FastAPI. Local QR decoding is the exception because it executes in the browser; the cloud QR fallback is Browser -> Node -> FastAPI. See [design/architecture.md](design/architecture.md), [design/architecture-diagram.md](design/architecture-diagram.md), and [design/er-diagram.md](design/er-diagram.md).
+
+## Local setup
+
+Prerequisites: Node.js/npm, Python 3.12-compatible environment for the pinned AI dependencies, and PostgreSQL.
 
 ```bash
 cd client
-npm install
+npm ci
 
 cd ../server
-npm install
-```
+npm ci
 
-### 2. Set up the Python AI service 🧠
-
-```bash
 cd ../ai-service
 python -m venv .venv
-# Windows PowerShell:  .venv\Scripts\Activate.ps1
-# Windows CMD:         .venv\Scripts\activate
-# macOS / Linux:       source .venv/bin/activate
-pip install -r requirements.txt
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install -r requirements-torch.txt
+python -m pip install -r requirements.txt
+python -m pip check
 ```
 
-The AI service uses **InsightFace** (facial recognition), **Ultralytics YOLO**
-(object/person detection), **FastAPI**, **OpenCV**, and **ONNX Runtime / NumPy**.
-If you add a package, refresh the lock file: `pip freeze > requirements.txt`.
+Copy `client/.env.example`, `server/.env.example`, and `ai-service/.env.example` to local environment files and supply your own values. Never commit secrets. Important names include `APP_SECRET`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PWD`, `FACE_AI_URL`, `AI_SERVICE_KEY`, `CLIENT_URL`, and `FRONTEND_URL`.
 
-### 3. Environment configuration 🔐
-
-Copy each `.env.example` to a real `.env` and fill in your own values.
-**Never commit a real `.env`.**
+Run three terminals:
 
 ```bash
-# server/.env
-APP_PORT=5001
-DB_HOST=your-host
-DB_NAME=your-db
-DB_USER=your-user
-DB_PWD=your-password
-JWT_SECRET=your-secret
-FRONTEND_URL=http://localhost:5173
-FACE_AI_URL=http://127.0.0.1:8501
-PYTHON_AI_URL=http://127.0.0.1:8000/recognize
-WHATSAPP_ENABLED=false
-WHATSAPP_API_URL=https://graph.facebook.com/vXX.X
-WHATSAPP_API_KEY=your_whatsapp_api_key_here
-WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id_here
-
-# client/.env — the ONE backend URL variable. Leave EMPTY for local dev
-# (relative URLs go through the Vite proxy); set the deployed Node backend
-# URL for production builds.
-VITE_API_BASE_URL=
-```
-
-> **WhatsApp notifications are disabled by default.** When `WHATSAPP_ENABLED=false`, FlowGuard uses a safe simulated notification mode for local demos. Never commit a real WhatsApp API key.
-
-### 4. Start the services 🏃‍♂️ (one terminal each)
-
-```bash
-# Terminal 1 — Frontend (React/Vite). --host exposes it on your local network,
-# handy for testing webcam enrolment from a phone.
 cd client && npm run dev -- --host
-
-# Terminal 2 — Backend (Node/Express)
-cd server && node index.js
-
-# Terminal 3 — AI service (InsightFace faces + YOLO objects) — MUST be port 8501
-# This ONE service (ai-service/main.py) hosts both the face endpoints
-# (/api/encode-faces, /refresh, /user/recognize) and the YOLO endpoints (/api/yolo/*).
-cd ai-service && uvicorn main:app --host 0.0.0.0 --port 8501 --reload
+cd server && npm start
+cd ai-service && uvicorn main:app --host 0.0.0.0 --port 8501
 ```
 
-> ⚠️ **The AI service must run on port 8501.** `FACE_AI_URL` and the frontend Vite
-> `/ai` proxy both target `http://127.0.0.1:8501`, so the backend reaches
-> `http://127.0.0.1:8501/api/encode-faces` and the browser reaches recognition/YOLO
-> through `/ai/...`. Running it on any other port silently breaks enrolment and live
-> recognition. Swagger docs: `http://127.0.0.1:8501/docs`.
+For local development, Node reaches FastAPI through `FACE_AI_URL=http://127.0.0.1:8501`. Production uses the private Cloud Run AI URL and Google identity-token authentication in addition to `X-AI-Service-Key`.
 
-**Seed a demo login:** run `node seed.js` once inside `server/` to create the FM admin
-account → `admin@harrison.com` / `Admin123!`. Change the password after first login.
+## Tests and latest audited results
 
----
+Audit date: 28 July 2026. No camera or private face images were required.
 
-## 🧪 Testing
+| Area | Command | Exact result |
+|---|---|---|
+| Client install | `cd client && npm ci` | Passed; 625 packages installed, 0 vulnerabilities reported. |
+| Full client | `npm test -- --run` | Passed: 60/60 files and 552/552 tests in 35.91 s. |
+| Felicia client subset | `npx vitest run "tests/Tan Xiu Li, Felicia"` | Passed: 54/54 files and 501/501 tests in 31.30 s. |
+| Charlisa client focus | Three named files plus `CameraFeed.test.jsx` | Passed three consecutive runs: 4/4 files and 38/38 tests each run. |
+| Client build | `npm run build` | Passed; 744 modules transformed. The existing >500 kB chunk warning remains. |
+| Server install | `cd server && npm ci` | Passed; 502 packages installed, 0 vulnerabilities reported. |
+| Full server | `npm test -- --runInBand --forceExit` | Passed: 36/36 suites and 501/501 tests in six bounded Windows-safe batches. Jest still prints its `--forceExit` advisory for each child process. |
+| Charlisa server subset | Seven named Jest files | Passed: 7/7 suites and 143/143 tests in 5.70 s. |
+| Python dependency check | `python -m pip check` and `ai-service/.venv/Scripts/python -m pip check` | Passed in both environments: no broken requirements. |
+| Safe AI/edge set | `ai-service/.venv/Scripts/python -m pytest ai-service/tests/test_zone_resolution.py ai-service/test/test_track_endpoint.py ai-service/test/test_qr_endpoint.py edge/securepi/test_securepi_edge.py -q` | Passed three consecutive runs: 29/29 tests each run; 9 dependency deprecation warnings. |
+| Pi camera cache suite | Global Python; `raspberry-pi/test_pi_camera_stream.py` | Passed: 9/9. The AI virtualenv lacks Flask, so this suite was run in the global environment. |
 
-```bash
-# Backend (Jest)
-cd server && npm test
+Baseline mismatches resolved:
 
-# Frontend (Vitest)
-cd client && npm test -- --run
+- Recognition retains the accuracy-driven 512 px / JPEG 0.74 defaults. One shared resolver accepts only bounded deployment overrides (512-640 px and 0.74-0.85), and tests cover valid and rejected configuration.
+- The visible accessible current-user marker is `YOU`; the stale class-name assertion now checks user-visible/accessibility behavior.
+- Camera analysis uses canonical `{ image, source?, camera_id?, zone_id? }` payloads. Missing tokens suppress CameraFeed analysis instead of sending `Bearer null`.
+- The SecurePi owner-near fixture now places the centres inside the configured 40 px threshold and separately proves a far person does not reset the timer.
+- The rate-limit window-reset assertion uses the limiter's deterministic key reset rather than a 150 ms wall-clock sleep.
 
-# Frontend production build
-cd client && npm run build
-```
+Not run automatically: `ai-service/test/test_webcam.py`, `test_manpower.py`, and `test_insightface.py` require a physical camera and/or private images; `test_yolo.py` requires `test.jpg` and real model inference. The safe track/QR TestClient suites ran in the repository AI virtualenv.
 
-Latest verified status: **backend 79/79 passed**, **frontend 70/70 passed**, **build success**.
-Some tests print expected console warnings (e.g. simulated-WhatsApp or deliberate error paths) —
-these are non-blocking; the suites still pass.
+See [docs/Tan Xiu Li, Felicia/test-results-summary.md](docs/Tan%20Xiu%20Li,%20Felicia/test-results-summary.md) for the audit breakdown.
 
----
+## Deployment
 
-## 🚚 Smart Logistics & Loading Bay Management
+Repository deployment configuration targets Google Cloud in `asia-southeast1`: public Cloud Run client, public Cloud Run Node server, private/authenticated Cloud Run AI service, Cloud SQL PostgreSQL, Secret Manager, and Artifact Registry/Cloud Build workflow. The only public URL independently verified during this audit was:
 
-FlowGuard includes a Smart Logistics module to help Harrison Food Factory manage congestion across its two loading bays.
+- Client: <https://flowguard-client-staging-590663319889.asia-southeast1.run.app> (HTTP 200 on 28 July 2026).
 
-Key features:
+The direct server URL, Cloud SQL instance/database names, and build-trigger identifiers are not present as verified values in the repository and are therefore not invented here. See [deployment.md](deployment.md).
 
-* Create loading bay booking requests
-* View today’s bay queue
-* Update booking status: Pending, Confirmed, Arrived, Completed, Cancelled
-* Cancel bookings using a soft-cancel status for auditability
-* Role-based access for Facilities Managers, Staff, and Tenants
-* Public driver pass route using booking reference
-* WhatsApp notification service with safe mock mode when credentials are disabled
+## Security, privacy, and performance boundaries
 
-The WhatsApp service is designed to avoid exposing secrets. Real API keys must only be stored inside `server/.env`, while `.env.example` should contain placeholders only.
+- JWT verification re-reads the database account, role, active state, and token version on protected requests.
+- Production/staging CORS fails closed without an explicit client origin.
+- Route-aware rate limits use in-memory `MemoryStore`; limits are per Node instance/cold start, not globally distributed across Cloud Run.
+- FastAPI is configured as a private Cloud Run service; Node obtains a Google ID token and also supplies `AI_SERVICE_KEY`.
+- Facial, QR, and plate frames are transient and are not permanently stored by the current PoC. PostgreSQL stores facial embeddings and audit metadata. AI models are baked into the container image. No persistent user-upload object store is required for current scope.
+- Gate access remains an FM-authoritative software decision with a simulated barrier.
+- AI chat logs belong in the separate individual AI submission package. Student AI reflections are student-authored evidence and must not be rewritten by this documentation audit.
 
----
+## Future roadmap
 
-## 🛡️ Team Protocols
-
-- 🔄 **Syncing:** Always pull the latest `main` before starting a feature to avoid conflicts.
-- 📦 **Dependencies:** Update `package.json` / `requirements.txt` whenever you add a library.
-- 🗄️ **Database:** Shared PostgreSQL instance — coordinate before running scripts that drop or alter shared tables.
-- 🧠 **AI Service:** Always activate the `.venv` before running InsightFace/YOLO/FastAPI.
-- 🔐 **Security:** Never commit `.env`, `.venv`, model artifacts, or private test images.
+Advanced pest analytics, temporal pick-up/set-down/push-in recognition, suspicious-item/threat classification, schedule-based after-hours motion rules, animal/rat detection, rat re-identification, pest hotspot analytics, and continuous cross-camera person re-identification are post-PoC work. See [design/client-feedback-traceability.md](design/client-feedback-traceability.md).

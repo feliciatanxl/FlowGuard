@@ -1,135 +1,128 @@
-# Database Schema — FlowGuard (Sequelize / PostgreSQL)
+# Felicia database schema
 
-Documents the tables relevant to Felicia's features (facial access + logistics) plus the shared
-tables the system uses. Defined with Sequelize.
+Source of truth: current Sequelize models in `server/models`. Sequelize supplies implicit integer `id` primary keys and `createdAt`/`updatedAt` unless a model declares another key. Omitted `allowNull` values below are identified rather than guessed.
 
-> **Face-vector storage:** `faceVector` is a native PostgreSQL `FLOAT[]` array (Sequelize
-> `ARRAY(FLOAT)`), **not** pgvector. Cosine-similarity matching is done in the Python AI service
-> with NumPy, so pgvector is optional and unused.
+## `users` / User
 
----
+| Field | Sequelize/PostgreSQL type | Null/constraint/default | Purpose |
+|---|---|---|---|
+| `id` | INTEGER | implicit PK, auto increment | User identity. |
+| `name` | STRING(100) | not null | Display/person name. |
+| `email` | STRING(100) | not null, unique | Login identity. |
+| `password` | STRING(100) | not null | Bcrypt hash. |
+| `role` | ENUM(`FM`,`Tenant`,`Staff`) | default `Tenant`; `allowNull` not explicitly set | Current RBAC role. No VIP value exists. |
+| `companyCode` | STRING(50) | nullable, unique | Tenant staff-registration code. |
+| `codeCreatedAt` | DATE | nullable | Code expiry reference. |
+| `codeMaxUsage` | INTEGER | not null, default 10 | Maximum registrations. |
+| `codeCurrentUsage` | INTEGER | not null, default 0 | Current registrations. |
+| `managerId` | INTEGER | nullable, self association | Tenant manager for Staff. |
+| `isEnrolled` | BOOLEAN | not null, default false | Face enrolment state. |
+| `faceVector` | `ARRAY(FLOAT)` / PostgreSQL `FLOAT[]` | nullable | Protected facial embedding. The application does not use pgvector. |
+| `isActive` | BOOLEAN | not null, default true | Suspension state. |
+| `tokenVersion` | INTEGER | not null, default 0 | Session revocation version. |
+| `passwordResetTokenHash` | STRING(64) | nullable | SHA-256 reset-token digest. |
+| `passwordResetExpiresAt` | DATE | nullable | Reset expiry. |
+| `createdAt`, `updatedAt` | DATE | Sequelize timestamps | Audit timestamps. |
 
-## `users`  (model `User`)
-**Purpose:** identity, role, registration-code logic, biometric vector. **Hard delete** (`paranoid:false`).
+Associations: User belongs to User as `Manager` through `managerId`; User has many `StaffMembers` and Attendance; User has one EvaluationParticipant. `paranoid:false`: user deletion is a hard delete after the explicit transaction.
 
-| Field | Type | Notes |
-|-------|------|-------|
-| id | INTEGER PK | auto |
-| name | VARCHAR(100) | not null |
-| email | VARCHAR(100) | not null, unique |
-| password | VARCHAR(100) | bcrypt hash |
-| role | ENUM(FM,Tenant,Staff) | default Tenant |
-| companyCode | VARCHAR(50) | unique, nullable |
-| codeCreatedAt / codeMaxUsage / codeCurrentUsage | TIMESTAMP / INT / INT | tenant unit-code logic |
-| managerId | INTEGER | self-ref FK → users.id (Tenant → Staff) |
-| isEnrolled | BOOLEAN | default false |
-| faceVector | FLOAT[] | nullable, 512-d |
-| isActive | BOOLEAN | default true |
+## `evaluation_participants` / EvaluationParticipant
 
-**Relationships:** self (Manager/StaffMembers via `managerId`); 1—M `attendance`.
-**CRUD:** create (register / manual-create), read (`GET /user/`, `/my-staff`), update
-(suspend, generate-code, enroll-face), delete (PDPA `DELETE /user/:id`).
+| Field | Type | Constraint/default |
+|---|---|---|
+| `id` | INTEGER | implicit PK |
+| `userId` | INTEGER | nullable, unique, FK to User, `ON DELETE SET NULL` |
+| `evaluationLabel` | STRING(32) | not null, unique |
+| `active` | BOOLEAN | not null, default true |
+| `assignedAt` | DATE | not null, default now |
+| `retiredAt` | DATE | nullable |
+| timestamps | DATE | enabled |
 
-## `bookings`  (model `Booking`, `paranoid:true`)
-**Purpose:** loading-bay booking requests + gate lifecycle.
+The service retires rather than deletes the mapping so labels such as P01 remain reserved. Eligibility is computed from active User enrolment/vector state; the vector is never returned by the participant API.
 
-| Field | Type | Notes |
-|-------|------|-------|
-| id | INTEGER PK | |
-| booking_ref | VARCHAR(50) | unique; QR value |
-| tenantId | INTEGER | soft link → users.id (unit owner) |
-| tenant_name | VARCHAR(255) | nullable |
-| driver_name / transport_company / license_plate / driver_phone | VARCHAR | driver + vehicle |
-| loading_bay | VARCHAR(50) | e.g. Bay A / Bay B |
-| slot_start / slot_end | TIMESTAMP | nullable |
-| status | VARCHAR(50) | Pending / Confirmed / Arrived / Completed / Cancelled |
-| arrived_at / completed_at | TIMESTAMP | nullable, set on gate scan |
-| deletedAt | TIMESTAMP | soft delete |
+## `security_logs` / SecurityLog
 
-**Relationships:** soft link `tenantId → users.id`.
-**CRUD:** create (`POST /api/bookings/create`), read (role-scoped `GET /api/bookings/`, public
-`GET /api/bookings/:ref`), update (`PATCH /api/bookings/:id/status`,
-`PATCH /api/bookings/:ref/gate-scan`), delete (soft cancel `PATCH /api/bookings/:id/cancel`).
+| Field | Type | Constraint/default |
+|---|---|---|
+| `id` | STRING | primary key, not null; route/service generates UUID |
+| `time` | STRING | not null |
+| `type` | STRING | not null |
+| `desc` | TEXT | not null |
+| `severity` | STRING | not null, default `safe` |
+| `icon` | STRING | not null |
+| `personnelName` | STRING | nullable soft reference |
+| `matchedUserId` | INTEGER | nullable soft reference; no FK/association |
+| `confidence` | FLOAT | nullable |
+| `cameraLocation` | STRING | nullable |
+| `reviewStatus` | STRING | not null, default `Pending Review`; route accepts Pending Review/False Positive/Escalated/Resolved |
+| `reviewNotes` | TEXT | nullable |
+| `reviewedBy` | STRING | nullable |
+| `reviewedAt` | DATE | nullable |
+| timestamps | DATE | enabled |
 
-## `attendance`  (model `Attendance`)
-**Purpose:** IN/OUT events from gate recognition.
+Off-boarding clears `personnelName`/`matchedUserId` and neutralises descriptions containing the removed name while retaining the audit event.
 
-| Field | Type | Notes |
-|-------|------|-------|
-| id | INTEGER PK | |
-| type | ENUM(IN,OUT) | not null |
-| timestamp | TIMESTAMP | default NOW |
-| userId | INTEGER | FK → users.id, ON DELETE CASCADE |
+## `attendance` / Attendance
 
-**Relationships:** belongs to `User`. **CRUD:** create (`POST /api/attendance/scan`), read (`GET /api/attendance/logs`,
-role-scoped), delete via user cascade.
+| Field | Type | Constraint/default |
+|---|---|---|
+| `id` | INTEGER | implicit PK |
+| `userId` | INTEGER | association FK to User; `ON DELETE CASCADE`; nullability not explicitly declared in model field list |
+| `type` | ENUM(`IN`,`OUT`) | not null |
+| `timestamp` | DATE | default now; `allowNull` not explicitly set |
+| timestamps | DATE | enabled |
 
-## `security_logs`  (model `SecurityLog`)
-**Purpose:** access + intrusion events; FM review workflow.
+Gate Scanner writes Attendance after final same-person/liveness confirmation. V-Patrol never writes Attendance.
 
-| Field | Type | Notes |
-|-------|------|-------|
-| id | VARCHAR PK | UUID |
-| time / type / desc / severity / icon | VARCHAR/TEXT | event data |
-| personnelName | VARCHAR | soft link → users.name; nulled on off-board |
-| reviewStatus | VARCHAR | Pending Review / False Positive / Escalated / Resolved |
-| reviewNotes / reviewedBy / reviewedAt | TEXT / VARCHAR / TIMESTAMP | FM triage |
+## `bookings` / Booking
 
-**CRUD:** create (`POST /api/security/logs`), read (`GET /api/security/logs`,
-`GET /api/security/logs/user/:id`), update (`PATCH /api/security/logs/:id/review`), delete not
-exposed (retained for audit).
+| Field | Type | Constraint/default |
+|---|---|---|
+| `id` | INTEGER | implicit PK |
+| `booking_ref` | STRING(50) | not null, unique |
+| `tenant_name` | STRING(255) | nullable |
+| `tenantId` | INTEGER | nullable soft User reference; no declared association/FK |
+| `driver_name` | STRING(255) | nullable |
+| `transport_company` | STRING(255) | not null |
+| `license_plate` | STRING(20) | not null |
+| `driver_phone` | STRING(20) | not null |
+| `loading_bay` | STRING(50) | not null |
+| `slot_start`, `slot_end` | DATE | nullable |
+| `status` | STRING(50) | default `Pending`; route values Pending/Confirmed/Arrived/Completed/Cancelled |
+| `notes` | TEXT | nullable |
+| `arrived_at`, `completed_at` | DATE | nullable |
+| `deletedAt` | DATE | implicit because `paranoid:true` |
+| timestamps | DATE | enabled |
 
-## `detection_alerts`  (model `DetectionAlert`, `paranoid:true`) — object-detection module
-| Field | Type | Notes |
-|-------|------|-------|
-| id | INTEGER PK | |
-| zone_name / camera_location | VARCHAR(255) | not null |
-| status | VARCHAR(50) | default Active |
-| object_class | VARCHAR(100) | nullable |
-| duration_seconds | INTEGER | nullable |
-| person_name | VARCHAR(255) | nullable |
-| deletedAt | TIMESTAMP | soft delete + 30-day purge |
+The current cancel endpoint sets `status=Cancelled`; it does not call `destroy()`. Bay conflict checks are application queries, not a database exclusion constraint.
 
-**Soft link:** `zone_name → monitoring_zones.zone_name`; can seed `incident_logs`.
+## `gate_access_logs` / GateAccessLog
 
-## `incident_logs`  (model `IncidentLog`, `paranoid:true`) — incident module
-| Field | Type | Notes |
-|-------|------|-------|
-| id | INTEGER PK | |
-| camera_location | VARCHAR(255) | not null |
-| status | VARCHAR(50) | not null |
-| person_name | VARCHAR(255) | nullable |
-| confidence_score | DECIMAL(5,4) | nullable |
-| severity | VARCHAR(20) | default Medium |
-| source | VARCHAR(50) | default Facial Recognition |
-| resolutionStatus | VARCHAR(50) | default Active |
-| notes | TEXT | nullable |
-| deletedAt | TIMESTAMP | soft delete |
+| Field | Type | Constraint/default |
+|---|---|---|
+| `id` | UUID | PK, default UUIDV4 |
+| `bookingRef` | STRING(50) | not null, indexed; soft reference to Booking reference |
+| `action` | STRING(10) | not null, indexed; `entry`/`exit` by service validation |
+| `decision` | STRING(10) | not null; `granted`/`denied` |
+| `reasonCode` | STRING(40) | not null |
+| `verificationMode` | STRING(20) | nullable; automatic/manual |
+| `plateSource` | STRING(20) | nullable; ocr/simulation/manual |
+| `plateConfidence` | FLOAT | nullable |
+| `expectedPlate`, `observedPlate` | STRING(20) | nullable |
+| `plateMatched` | BOOLEAN | nullable |
+| `loadingBay` | STRING(50) | nullable |
+| `overrideUsed` | BOOLEAN | not null, default false |
+| `overrideReason` | TEXT | nullable; service requires text for an accepted override |
+| `fmId` | INTEGER | nullable soft User reference |
+| `fmEmail` | STRING(255) | nullable |
+| `createdAt` | DATE | enabled and indexed; decision time |
+| `updatedAt` | DATE | enabled |
 
-## `monitoring_zones`  (model `MonitoringZone`, `paranoid:true`) — object-detection module
-| Field | Type | Notes |
-|-------|------|-------|
-| id | INTEGER PK | |
-| zone_name / location | VARCHAR(255) | not null |
-| time_threshold | INTEGER | minutes before an unattended-object alert |
-| deletedAt | TIMESTAMP | soft delete |
+Confirmed indexes: `bookingRef`, `action`, and `createdAt`. No Sequelize association/foreign key to Booking or User is declared.
 
-## `invites`  (model `Invite`)
-| Field | Type | Notes |
-|-------|------|-------|
-| id | INTEGER PK | |
-| code | VARCHAR | unique |
-| role | ENUM(Tenant) | default Tenant |
-| isUsed | BOOLEAN | default false |
-| expiresAt | TIMESTAMP | not null |
+## Deletion, retention, and images
 
-**CRUD:** create (`/invite-tenant`), read/consume during registration.
-
-## `staff_members`  (model `Staff`, `paranoid:true`) — legacy/auxiliary
-Legacy face store: `id`, `name`, `role`, `face_embedding` (TEXT), `deletedAt`. Superseded by the
-`users.faceVector` approach; retained for compatibility.
-
----
-
-*Cross-module note: `bookings`, `detection_alerts`, `incident_logs`, `monitoring_zones` live in the
-shared DB and involve teammate modules; see `design/md/er-diagram.md` for the full picture.*
+- User off-boarding transaction: set `faceVector=null`/`isEnrolled=false`; delete Attendance; anonymise SecurityLog; clear Booking `tenantId`; retire EvaluationParticipant; destroy User. Tenant deletion is blocked with 409 while linked Staff remain.
+- Booking supports paranoid deletion but the current workflow uses status-based cancellation. GateAccessLog has no delete route and is retained as decision audit metadata.
+- Facial enrolment/recognition, QR, and plate images are transient. No owned model has an image column. The persisted biometric is a `FLOAT[]` embedding; GateAccessLog stores plate strings/confidence and audit metadata only.
+- AI models live in the container image. The current PoC does not require persistent user-upload object storage.

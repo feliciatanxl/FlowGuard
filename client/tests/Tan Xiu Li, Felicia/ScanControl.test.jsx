@@ -5,6 +5,10 @@ import {
   SCAN_INTERVAL_MS,
   TARGET_LOCK_MS,
   CAPTURE_MAX_WIDTH,
+  CAPTURE_JPEG_QUALITY,
+  DEFAULT_CAPTURE_MAX_WIDTH,
+  DEFAULT_CAPTURE_JPEG_QUALITY,
+  resolveCaptureTuning,
   AI_ERROR_BACKOFF_MS,
   createScanGate,
 } from "../../src/constants/scanControl";
@@ -19,13 +23,34 @@ describe("scan tuning values", () => {
     expect(TARGET_LOCK_MS).toBe(600);
   });
 
-  test("capture width is 320–360 px (was 420 px)", () => {
-    expect(CAPTURE_MAX_WIDTH).toBeGreaterThanOrEqual(320);
-    expect(CAPTURE_MAX_WIDTH).toBeLessThanOrEqual(360);
+  test("recognition capture defaults preserve embedding-grade detail", () => {
+    expect(CAPTURE_MAX_WIDTH).toBe(DEFAULT_CAPTURE_MAX_WIDTH);
+    expect(CAPTURE_MAX_WIDTH).toBe(512);
   });
 
   test("AI-error backoff is a short pause (~5 s)", () => {
     expect(AI_ERROR_BACKOFF_MS).toBe(5000);
+  });
+
+  test("recognition JPEG quality defaults below full quality without reverting the accuracy fix", () => {
+    expect(CAPTURE_JPEG_QUALITY).toBe(DEFAULT_CAPTURE_JPEG_QUALITY);
+    expect(CAPTURE_JPEG_QUALITY).toBe(0.74);
+    expect(CAPTURE_JPEG_QUALITY).toBeLessThan(1); // never full quality
+  });
+
+  test("capture tuning accepts only bounded accuracy-preserving overrides", () => {
+    expect(resolveCaptureTuning({
+      VITE_FACE_CAPTURE_MAX_WIDTH: "640",
+      VITE_FACE_CAPTURE_JPEG_QUALITY: "0.8",
+    })).toEqual({ maxWidth: 640, jpegQuality: 0.8 });
+
+    expect(resolveCaptureTuning({
+      VITE_FACE_CAPTURE_MAX_WIDTH: "352",
+      VITE_FACE_CAPTURE_JPEG_QUALITY: "0.62",
+    })).toEqual({
+      maxWidth: DEFAULT_CAPTURE_MAX_WIDTH,
+      jpegQuality: DEFAULT_CAPTURE_JPEG_QUALITY,
+    });
   });
 });
 

@@ -36,6 +36,14 @@ Frontend receives SAFE fields only:
 POST /api/attendance/scan { userId }            (Node, FM JWT or service key)
 ```
 
+Recognition frames use the shared `scanControl.js` default of 512 px maximum
+width and JPEG quality 0.74 so InsightFace retains embedding detail. Optional
+build-time values `VITE_FACE_CAPTURE_MAX_WIDTH` and
+`VITE_FACE_CAPTURE_JPEG_QUALITY` may raise these only within 512-640 and
+0.74-0.85. Invalid or lower-detail values fall back to the safe defaults.
+Tracking keeps its separate smaller 256 px/JPEG 0.5 frames because it returns
+geometry only, not an identity embedding.
+
 ### Manual enrolment flow
 
 ```
@@ -147,17 +155,14 @@ New nullable audit columns on `security_logs`: `matchedUserId`, `confidence`,
 5. Pi Camera remains primary on Gate Scanner / V-Patrol; laptop webcam is the
    automatic fallback.
 
-## Vercel / cloud deployment
+## Google Cloud deployment
 
-- **Vercel frontend:** set `VITE_API_BASE_URL` to the deployed Node backend URL.
-  The Vite `/ai` proxy does not exist in production and is no longer used by the
-  facial-recognition pages — the frontend never calls FastAPI directly.
-- **Node backend (e.g. Render):** set `FACE_AI_URL` to the deployed FastAPI URL
-  (e.g. Cloud Run), plus `AI_SERVICE_KEY`, `APP_SECRET`, PostgreSQL creds, and
-  optionally `EDGE_SERVICE_TOKEN`.
-- **FastAPI (e.g. Cloud Run):** set `AI_SERVICE_KEY` (required in production)
-  and `ALLOWED_ORIGINS` (or leave the face service unexposed to browsers
-  entirely). PostgreSQL (Neon) remains the system database.
+- **Cloud Run client:** Nginx serves React and proxies `/api/*` and `/user/*` to
+  the Node Cloud Run service through runtime `BACKEND_HOST`.
+- **Cloud Run Node backend:** `FACE_AI_URL` points to the private FastAPI Cloud
+  Run URL. Node obtains a Google ID token and supplies `AI_SERVICE_KEY`.
+- **Private Cloud Run FastAPI:** `--no-allow-unauthenticated`; only the Node
+  service account has invoker permission. Cloud SQL PostgreSQL is authoritative.
 - **Storage:** Google Cloud Storage is NOT used for raw enrolment photos or live
   snapshots — no raw facial imagery is persisted anywhere.
 - **Production direction:** the Pi edge node sends temporary frames (or
@@ -169,8 +174,8 @@ New nullable audit columns on `security_logs`: `matchedUserId`, `confidence`,
 
 | | Local PoC | Deployment |
 |---|---|---|
-| Frontend | Vite dev server + proxy | Vercel, `VITE_API_BASE_URL` → Node |
-| Recognition path | Browser → Node → FastAPI (all local) | Vercel → cloud Node → secured FastAPI |
+| Frontend | Vite dev server + proxy | Cloud Run React/Nginx, same-origin proxy → Node |
+| Recognition path | Browser → Node → FastAPI (all local) | Cloud Run client → Node → private authenticated FastAPI |
 | Pi camera | LAN MJPEG preview + `/snapshot` capture | Edge node posts frames via `x-edge-token` |
 | Webcam | Automatic fallback for demo reliability | Same (kiosk fallback) |
 | Secrets | Dev placeholder keys via `.env` | Real keys in platform env vars only |

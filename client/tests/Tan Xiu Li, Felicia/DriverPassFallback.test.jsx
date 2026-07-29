@@ -3,7 +3,7 @@
 // fallback instead of crashing the page (no 500 ErrorBoundary).
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { MemoryRouter, Routes, Route } from "react-router";
 import { vi, describe, test, expect, afterEach } from "vitest";
 
 vi.mock("react-qr-code", () => ({ default: { notAComponent: true } }));

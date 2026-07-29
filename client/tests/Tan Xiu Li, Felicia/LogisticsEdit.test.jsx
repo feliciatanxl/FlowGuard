@@ -1,6 +1,7 @@
 // Frontend tests — manual Edit Booking flow (modal reuse + PATCH /api/bookings/:id).
 import React from "react";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../src/components/Sidebar", () => ({ default: () => <div data-testid="sidebar" /> }));
@@ -30,7 +31,10 @@ afterEach(() => {
 
 const renderAs = async (role) => {
   localStorage.setItem("userRole", role);
-  render(<TenantLogistics />);
+  render(<MemoryRouter><TenantLogistics /></MemoryRouter>);
+  // The page now defaults to today (Singapore); this fixture is dated 2026-07-10,
+  // so switch to "All dates" to make the booking visible.
+  fireEvent.click(screen.getByRole("button", { name: /All dates/i }));
   await screen.findByText("FG-EDIT01");
 };
 

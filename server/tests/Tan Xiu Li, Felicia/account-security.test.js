@@ -6,7 +6,10 @@ const request = require("supertest");
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
-const crypto = require("crypto");
+// Reset-token digest goes through the same production helper the route uses, so
+// the test asserts real behaviour and no SHA-256 "password hash" sink lives here
+// (see utils/resetTokenDigest.js and the security report, Part 5).
+const { digestResetToken } = require("../../utils/resetTokenDigest");
 
 // Mutable in-memory "users table" — the DB-backed verifyToken and the routes
 // both read through User.findByPk, so deleting from this map genuinely makes
@@ -33,6 +36,7 @@ jest.mock("../../models", () => ({
   Invite: { findOne: jest.fn(), create: jest.fn() },
   SecurityLog: mockSecurityLog,
   Booking: mockBooking,
+  EvaluationParticipant: { findOne: jest.fn(), findAll: jest.fn(), create: jest.fn() },
   sequelize: { transaction: mockTransaction },
 }));
 
@@ -378,13 +382,13 @@ describe("POST /user/forgot-password and /user/reset-password", () => {
     expect(to).toBe("staff@x.com");
     expect(url).toMatch(/\/reset-password\?token=[a-f0-9]{64}/);
     const rawToken = url.split("token=")[1];
-    const rehash = crypto.createHash("sha256").update(rawToken).digest("hex");
+    const rehash = digestResetToken(rawToken);
     expect(rehash).toBe(stored.passwordResetTokenHash);
   });
 
   test("reset with a valid token: rehashes password, clears reset fields, revokes sessions", async () => {
     const raw = "a".repeat(64);
-    DB.users[3].passwordResetTokenHash = crypto.createHash("sha256").update(raw).digest("hex");
+    DB.users[3].passwordResetTokenHash = digestResetToken(raw);
     DB.users[3].passwordResetExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
     mockUser.findOne.mockResolvedValueOnce(DB.users[3]);
 
@@ -397,7 +401,7 @@ describe("POST /user/forgot-password and /user/reset-password", () => {
     expect(mockUser.findOne).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          passwordResetTokenHash: crypto.createHash("sha256").update(raw).digest("hex"),
+          passwordResetTokenHash: digestResetToken(raw),
         }),
       })
     );

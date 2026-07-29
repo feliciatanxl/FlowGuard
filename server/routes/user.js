@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { User, Attendance, Invite, SecurityLog, Booking, sequelize } = require('../models');
+// Route-wide authenticated read limiter as a safe ceiling for every /user
+// endpoint; the sensitive POSTs below layer tighter auth/reset limiters on top.
+const { readLimiter: userReadLimiter } = require('../middlewares/rateLimit');
+router.use(userReadLimiter);
 const { Op } = require('sequelize');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
@@ -11,12 +15,38 @@ const crypto = require('crypto');
 // PostgreSQL on EVERY request (deleted → 401, suspended → 403, tokenVersion
 // mismatch → 401) and uses the DATABASE role as authoritative.
 const { verifyToken, requireRole } = require('../middlewares/auth');
-const { createRateLimiter } = require('../middlewares/rateLimit');
+const { authLimiter, passwordResetLimiter, uploadLimiter } = require('../middlewares/rateLimit');
+const { generateResetToken, digestResetToken } = require('../utils/resetTokenDigest');
 const { sendPasswordResetEmail } = require('../services/mailer');
+const { assignStableEvaluationLabel, retireEvaluationParticipant } = require('../services/evaluationParticipants');
+const { aiServiceHeaders } = require('../services/aiServiceAuth');
 require('dotenv').config();
 
+const TENANT_INVITE_TTL_MS = 48 * 60 * 60 * 1000;
+
+const getInviteStatus = (invite, now = new Date()) => {
+    if (invite.isUsed) return 'USED';
+    if (now >= new Date(invite.expiresAt)) return 'EXPIRED';
+    return 'PENDING';
+};
+
+const toInviteDto = (invite, now = new Date()) => {
+    const plain = typeof invite.toJSON === 'function' ? invite.toJSON() : invite;
+    const status = getInviteStatus(plain, now);
+    return {
+        id: plain.id,
+        code: plain.code,
+        role: plain.role,
+        expiresAt: plain.expiresAt,
+        createdAt: plain.createdAt,
+        status,
+        isUsed: Boolean(plain.isUsed),
+        isUsable: status === 'PENDING'
+    };
+};
+
 // --- REGISTRATION (Multi-Level Security Gate) ---
-router.post("/register", async (req, res) => {
+router.post("/register", authLimiter, async (req, res) => {
     const { recaptchaToken, ...userData } = req.body;
     try {
         if (!recaptchaToken) return res.status(400).json({ errors: ["Security token missing."] });
@@ -63,7 +93,7 @@ router.post("/register", async (req, res) => {
             }
 
             // Check Expiration (e.g., 24h/48h set when invite was created)
-            if (new Date() > invite.expiresAt) {
+            if (new Date() >= new Date(invite.expiresAt)) {
                 return res.status(401).json({ errors: ["This invitation code has expired."] });
             }
 
@@ -125,7 +155,7 @@ router.post("/invite-tenant", verifyToken, async (req, res) => {
         if (req.user.role !== 'FM') return res.status(403).json({ message: "Access Denied." });
 
         const inviteCode = `INVITE-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
-        const expiry = new Date(Date.now() + 48 * 60 * 60 * 1000);
+        const expiry = new Date(Date.now() + TENANT_INVITE_TTL_MS);
 
         // CRITICAL: Ensure Invite is imported at the top of this file
         await Invite.create({
@@ -149,7 +179,8 @@ router.get("/tenant-invites", verifyToken, requireRole('FM'), async (req, res) =
             order: [['createdAt', 'DESC']],
             limit: 25
         });
-        res.json(invites);
+        const now = new Date();
+        res.json(invites.map(invite => toInviteDto(invite, now)));
     } catch (err) {
         console.error("Invite list error:", err);
         res.status(500).json({ error: "Failed to load invitations." });
@@ -181,7 +212,7 @@ router.put("/generate-code", verifyToken, async (req, res) => {
 });
 
 
-router.post("/login", async (req, res) => {
+router.post("/login", authLimiter, async (req, res) => {
     let { email, password, recaptchaToken } = req.body;
 
     try {
@@ -404,7 +435,13 @@ router.delete("/:id", verifyToken, async (req, res) => {
                 { where: { tenantId: targetId }, transaction: t }
             );
 
-            // 5. Hard-delete the user row itself.
+            // 5. Retire (never delete) any evaluation-participant mapping so
+            //    the P-label stays reserved and historical evaluation records
+            //    keep their meaning. userId becomes NULL via ON DELETE SET
+            //    NULL when the User row is destroyed below.
+            await retireEvaluationParticipant(targetId, t);
+
+            // 6. Hard-delete the user row itself.
             await staffMember.destroy({ transaction: t });
         });
 
@@ -415,7 +452,7 @@ router.delete("/:id", verifyToken, async (req, res) => {
             const faceAiUrl = process.env.FACE_AI_URL || 'http://127.0.0.1:8501';
             await axios.get(`${faceAiUrl}/refresh`, {
                 timeout: 5000,
-                headers: { 'X-AI-Service-Key': process.env.AI_SERVICE_KEY || '' }
+                headers: await aiServiceHeaders(faceAiUrl)
             });
         } catch (refreshErr) {
             console.warn("AI face-cache refresh after off-boarding failed (non-fatal):", refreshErr.message);
@@ -429,7 +466,7 @@ router.delete("/:id", verifyToken, async (req, res) => {
 });
 
 // POST: /user/enroll-face
-router.post('/enroll-face', verifyToken, async (req, res) => {
+router.post('/enroll-face', uploadLimiter, verifyToken, async (req, res) => {
     try {
         const { images, targetUserId } = req.body;
 
@@ -478,7 +515,7 @@ router.post('/enroll-face', verifyToken, async (req, res) => {
             right: images.right
         }, {
             timeout: 20000,
-            headers: { 'X-AI-Service-Key': process.env.AI_SERVICE_KEY || '' }
+            headers: await aiServiceHeaders(faceAiUrl)
         });
 
         const faceVector = pythonResponse.data?.vector; // The 512-number array
@@ -493,6 +530,8 @@ router.post('/enroll-face', verifyToken, async (req, res) => {
             { faceVector, isEnrolled: true },
             { where: { id: targetUser.id } }
         );
+        try { await assignStableEvaluationLabel({ ...targetUser.toJSON?.(), id: targetUser.id, isEnrolled: true, faceVector }); }
+        catch (labelError) { console.warn('Evaluation label assignment pending explicit FM sync:', labelError.message); }
 
         // 3. Ask the AI service to reload its in-memory known-face cache so the newly
         //    enrolled face is recognised immediately on V-Patrol/Gate Scanner — no AI
@@ -501,7 +540,7 @@ router.post('/enroll-face', verifyToken, async (req, res) => {
         try {
             await axios.get(`${faceAiUrl}/refresh`, {
                 timeout: 5000,
-                headers: { 'X-AI-Service-Key': process.env.AI_SERVICE_KEY || '' }
+                headers: await aiServiceHeaders(faceAiUrl)
             });
             return res.status(200).json({ message: "Biometric enrollment successful" });
         } catch (refreshErr) {
@@ -649,20 +688,19 @@ router.put('/change-password', verifyToken, async (req, res) => {
 // to probe which emails exist. Stores only the SHA-256 hash of a random token
 // (15-minute expiry) and emails ${CLIENT_URL}/reset-password?token=... via the
 // server-only SMTP configuration (services/mailer.js).
-const forgotPasswordLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 5 });
 const GENERIC_FORGOT_RESPONSE = {
     message: "If that email matches an authorized FlowGuard profile, a secure reset link has been sent."
 };
 
-router.post('/forgot-password', forgotPasswordLimiter, async (req, res) => {
+router.post('/forgot-password', passwordResetLimiter, async (req, res) => {
     try {
         const email = String(req.body.email || '').trim();
         if (!email) return res.json(GENERIC_FORGOT_RESPONSE);
 
         const user = await User.findOne({ where: { email } });
         if (user) {
-            const rawToken = crypto.randomBytes(32).toString('hex');
-            const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+            const rawToken = generateResetToken();
+            const tokenHash = digestResetToken(rawToken);
 
             await user.update({
                 passwordResetTokenHash: tokenHash,
@@ -688,6 +726,10 @@ router.post('/forgot-password', forgotPasswordLimiter, async (req, res) => {
 });
 
 // --- RESET PASSWORD (public, token from the emailed link) ---
+// Covered by the route-wide limiter above; not given the strict forgot-password
+// counter because the token is a 256-bit unguessable secret (brute force is
+// infeasible) and sharing that counter would let reset attempts exhaust the
+// forgot-password quota.
 router.post('/reset-password', async (req, res) => {
     try {
         const token = String(req.body.token || '');
@@ -698,7 +740,7 @@ router.post('/reset-password', async (req, res) => {
             return res.status(400).json({ message: "New password must be at least 8 characters." });
         }
 
-        const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+        const tokenHash = digestResetToken(token);
         const user = await User.findOne({
             where: {
                 passwordResetTokenHash: tokenHash,

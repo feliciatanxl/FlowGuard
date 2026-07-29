@@ -1,4 +1,4 @@
-// Backend tests — POST /api/facial-recognition/recognize orchestration.
+// Backend tests - POST /api/facial-recognition/recognize orchestration.
 // The Node route forwards frames to FastAPI, then resolves identity, role and
 // account status from PostgreSQL (the source of truth), never from AI metadata.
 const request = require("supertest");
@@ -7,7 +7,10 @@ const jwt = require("jsonwebtoken");
 
 const mockUser = { findByPk: jest.fn() };
 const mockSecurityLog = { create: jest.fn() };
-jest.mock("../../models", () => ({ User: mockUser, SecurityLog: mockSecurityLog }));
+const mockEvaluationParticipant = { findOne: jest.fn() };
+const mockParticipantService = { listEvaluationParticipants: jest.fn(), syncEligibleEvaluationParticipants: jest.fn() };
+jest.mock("../../models", () => ({ User: mockUser, SecurityLog: mockSecurityLog, EvaluationParticipant: mockEvaluationParticipant }));
+jest.mock("../../services/evaluationParticipants", () => mockParticipantService);
 
 const mockAxios = { post: jest.fn() };
 jest.mock("axios", () => mockAxios);
@@ -46,13 +49,13 @@ const primeDb = (extra = {}) => {
   mockUser.findByPk.mockImplementation((id) => Promise.resolve(table[id] ?? null));
 };
 
-describe("POST /api/facial-recognition/recognize — access control", () => {
+describe("POST /api/facial-recognition/recognize - access control", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     primeDb();
   });
 
-  test("unauthenticated request → 401", async () => {
+  test("unauthenticated request -> 401", async () => {
     const res = await request(app)
       .post("/api/facial-recognition/recognize")
       .send({ image: FRAME });
@@ -60,7 +63,7 @@ describe("POST /api/facial-recognition/recognize — access control", () => {
     expect(mockAxios.post).not.toHaveBeenCalled();
   });
 
-  test("Staff token → 403 (FM only)", async () => {
+  test("Staff token -> 403 (FM only)", async () => {
     const res = await request(app)
       .post("/api/facial-recognition/recognize")
       .set("Authorization", `Bearer ${staffToken}`)
@@ -77,7 +80,7 @@ describe("POST /api/facial-recognition/recognize — access control", () => {
     expect(res.status).toBe(200);
   });
 
-  test("wrong edge token without JWT → 401", async () => {
+  test("wrong edge token without JWT -> 401", async () => {
     const res = await request(app)
       .post("/api/facial-recognition/recognize")
       .set("x-edge-token", "wrong-token")
@@ -86,13 +89,13 @@ describe("POST /api/facial-recognition/recognize — access control", () => {
   });
 });
 
-describe("POST /api/facial-recognition/recognize — validation & AI forwarding", () => {
+describe("POST /api/facial-recognition/recognize - validation & AI forwarding", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     primeDb();
   });
 
-  test("missing / non-data-URL image → 400", async () => {
+  test("missing / non-data-URL image -> 400", async () => {
     const res = await request(app)
       .post("/api/facial-recognition/recognize")
       .set("Authorization", `Bearer ${fmToken}`)
@@ -116,7 +119,7 @@ describe("POST /api/facial-recognition/recognize — validation & AI forwarding"
     );
   });
 
-  test("AI service offline → controlled 503 (no crash)", async () => {
+  test("AI service offline -> controlled 503 (no crash)", async () => {
     mockAxios.post.mockRejectedValue({ code: "ECONNREFUSED" });
     const res = await request(app)
       .post("/api/facial-recognition/recognize")
@@ -126,7 +129,7 @@ describe("POST /api/facial-recognition/recognize — validation & AI forwarding"
     expect(res.body.error).toMatch(/offline/i);
   });
 
-  test("AI service 5xx reply → 502", async () => {
+  test("AI service 5xx reply -> 502", async () => {
     mockAxios.post.mockRejectedValue({ response: { status: 500 } });
     const res = await request(app)
       .post("/api/facial-recognition/recognize")
@@ -136,13 +139,13 @@ describe("POST /api/facial-recognition/recognize — validation & AI forwarding"
   });
 });
 
-describe("POST /api/facial-recognition/recognize — outcomes & security logging", () => {
+describe("POST /api/facial-recognition/recognize - outcomes & security logging", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     primeDb();
   });
 
-  test("no face detected → user null and NO suspicious-person log", async () => {
+  test("no face detected -> user null and NO suspicious-person log", async () => {
     aiReplies({ matchedUserId: null, confidence: 0, box: null, liveness_ratio: 0.5, faceDetected: false });
     const res = await request(app)
       .post("/api/facial-recognition/recognize")
@@ -153,7 +156,7 @@ describe("POST /api/facial-recognition/recognize — outcomes & security logging
     expect(mockSecurityLog.create).not.toHaveBeenCalled();
   });
 
-  test("unknown person → DENIED result + intrusion SecurityLog (no biometric data)", async () => {
+  test("unknown person -> DENIED result + intrusion SecurityLog (no biometric data)", async () => {
     aiReplies({ matchedUserId: null, confidence: 0.34, box: [1, 2, 3, 4], liveness_ratio: 0.5, faceDetected: true });
     const location = nextLocation();
     const res = await request(app)
@@ -184,9 +187,9 @@ describe("POST /api/facial-recognition/recognize — outcomes & security logging
     expect(mockSecurityLog.create).toHaveBeenCalledTimes(1);
   });
 
-  test("recognised ACTIVE user → AUTHORIZED with name/role from PostgreSQL, no log", async () => {
+  test("recognised ACTIVE user -> AUTHORIZED with name/role from PostgreSQL, no log", async () => {
     aiReplies({ matchedUserId: 25, confidence: 0.92, box: [10, 20, 30, 40], liveness_ratio: 0.31, faceDetected: true });
-    // The DB record deliberately differs from anything the AI could claim —
+    // The DB record deliberately differs from anything the AI could claim -
     // proving role/name/status come from PostgreSQL, not FastAPI metadata.
     primeDb({
       25: { id: 25, name: "Tan Xiu Li, Felicia", role: "FM", isActive: true, isEnrolled: true }
@@ -204,11 +207,11 @@ describe("POST /api/facial-recognition/recognize — outcomes & security logging
     expect(res.body.box).toEqual([10, 20, 30, 40]);
     expect(res.body.liveness_ratio).toBe(0.31);
     expect(mockSecurityLog.create).not.toHaveBeenCalled();
-    // Safe fields only — nothing biometric in the response.
+    // Safe fields only - nothing biometric in the response.
     expect(JSON.stringify(res.body)).not.toMatch(/faceVector|embedding/i);
   });
 
-  test("recognised SUSPENDED user → SUSPENDED result + denial SecurityLog", async () => {
+  test("recognised SUSPENDED user -> SUSPENDED result + denial SecurityLog", async () => {
     aiReplies({ matchedUserId: 25, confidence: 0.92, box: [1, 2, 3, 4], liveness_ratio: 0.4, faceDetected: true });
     primeDb({
       25: { id: 25, name: "Tan Xiu Li, Felicia", role: "FM", isActive: false, isEnrolled: true }
@@ -228,7 +231,7 @@ describe("POST /api/facial-recognition/recognize — outcomes & security logging
     expect(log.personnelName).toBe("Tan Xiu Li, Felicia");
   });
 
-  test("match for a user the DB no longer knows → DENIED (stale AI cache)", async () => {
+  test("match for a user the DB no longer knows -> DENIED (stale AI cache)", async () => {
     aiReplies({ matchedUserId: 999, confidence: 0.8, box: [1, 2, 3, 4], liveness_ratio: 0.5, faceDetected: true });
     primeDb({ 999: null }); // FM auth account still resolves; matched id does not
 
@@ -240,5 +243,98 @@ describe("POST /api/facial-recognition/recognize — outcomes & security logging
     expect(res.body.user.status).toBe("DENIED");
     expect(res.body.user.id).toBeNull();
     expect(mockSecurityLog.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("POST /api/facial-recognition/evaluate — side-effect-free model evaluation", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    primeDb();
+  });
+
+  test("unauthenticated rejected", async () => {
+    const res = await request(app).post("/api/facial-recognition/evaluate").send({ image: FRAME });
+    expect(res.status).toBe(401);
+    expect(mockAxios.post).not.toHaveBeenCalled();
+  });
+
+  test("non-FM rejected", async () => {
+    const res = await request(app)
+      .post("/api/facial-recognition/evaluate")
+      .set("Authorization", `Bearer ${staffToken}`)
+      .send({ image: FRAME });
+    expect(res.status).toBe(403);
+    expect(mockAxios.post).not.toHaveBeenCalled();
+  });
+
+  test("FM allowed and returns safe telemetry only", async () => {
+    aiReplies({ matchedUserId: 25, confidence: 0.91, box: [1, 2, 3, 4], liveness_ratio: 0.31, faceDetected: true, inference_ms: 77 });
+    const res = await request(app)
+      .post("/api/facial-recognition/evaluate")
+      .set("Authorization", `Bearer ${fmToken}`)
+      .send({ image: FRAME });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      matchedUserId: 25,
+      outcome: "MATCHED",
+      confidence: 0.91,
+      box: [1, 2, 3, 4],
+      liveness: { ratio: 0.31, status: "movement-detected" },
+      timings: { inferenceMs: 77 }
+    });
+    expect(JSON.stringify(res.body)).not.toMatch(/data:image|template|vector|embedding|email|password/i);
+    expect(mockSecurityLog.create).not.toHaveBeenCalled();
+    expect(mockUser.findByPk).toHaveBeenCalledTimes(2); // auth plus authoritative safe matched-subject lookup
+  });
+
+  test("no face returns NO_FACE without suspicious log", async () => {
+    aiReplies({ matchedUserId: null, confidence: 0, box: null, liveness_ratio: 0.5, faceDetected: false, inference_ms: 10 });
+    const res = await request(app)
+      .post("/api/facial-recognition/evaluate")
+      .set("Authorization", `Bearer ${fmToken}`)
+      .send({ image: FRAME });
+    expect(res.status).toBe(200);
+    expect(res.body.outcome).toBe("NO_FACE");
+    expect(mockSecurityLog.create).not.toHaveBeenCalled();
+  });
+
+  test("FastAPI failure returns controlled 503", async () => {
+    mockAxios.post.mockRejectedValue({ code: "ECONNREFUSED" });
+    const res = await request(app)
+      .post("/api/facial-recognition/evaluate")
+      .set("Authorization", `Bearer ${fmToken}`)
+      .send({ image: FRAME });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toMatch(/offline/i);
+    expect(mockSecurityLog.create).not.toHaveBeenCalled();
+  });
+});
+describe("database-backed evaluation participants", () => {
+  beforeEach(() => { jest.clearAllMocks(); primeDb(); });
+  test("GET returns FM-only safe PostgreSQL participant fields", async () => {
+    mockParticipantService.listEvaluationParticipants.mockResolvedValue([{ userId: 25, evaluationLabel: "P10", name: "Person", role: "Staff", isActive: true, isEnrolled: true }]);
+    const res = await request(app).get("/api/facial-recognition/evaluation-participants").set("Authorization", `Bearer ${fmToken}`);
+    expect(res.status).toBe(200); expect(res.body.participants[0]).toMatchObject({ userId: 25, evaluationLabel: "P10" });
+    expect(JSON.stringify(res.body)).not.toMatch(/faceVector|embedding|password|tokenVersion/i);
+  });
+  test("GET is read-only and sync is explicit", async () => {
+    mockParticipantService.listEvaluationParticipants.mockResolvedValue([]); mockParticipantService.syncEligibleEvaluationParticipants.mockResolvedValue([]);
+    await request(app).get("/api/facial-recognition/evaluation-participants").set("Authorization", `Bearer ${fmToken}`);
+    expect(mockParticipantService.syncEligibleEvaluationParticipants).not.toHaveBeenCalled();
+    await request(app).post("/api/facial-recognition/evaluation-participants/sync").set("Authorization", `Bearer ${fmToken}`);
+    expect(mockParticipantService.syncEligibleEvaluationParticipants).toHaveBeenCalledTimes(1);
+  });
+  test("evaluate returns authoritative predicted label, Unknown, and null for No Face", async () => {
+    primeDb({ 25: { id: 25, name: "Person", role: "Staff", isActive: true, isEnrolled: true } });
+    mockEvaluationParticipant.findOne.mockResolvedValue({ evaluationLabel: "P10" });
+    aiReplies({ matchedUserId: 25, confidence: .9, box: [1,2,3,4], faceDetected: true });
+    let res = await request(app).post("/api/facial-recognition/evaluate").set("Authorization", `Bearer ${fmToken}`).send({ image: FRAME });
+    expect(res.body.predictedEvaluationLabel).toBe("P10"); expect(res.body.subject.evaluationLabel).toBe("P10");
+    aiReplies({ matchedUserId: null, confidence: .2, box: [1,2,3,4], faceDetected: true });
+    res = await request(app).post("/api/facial-recognition/evaluate").set("Authorization", `Bearer ${fmToken}`).send({ image: FRAME }); expect(res.body.predictedEvaluationLabel).toBe("Unknown");
+    aiReplies({ matchedUserId: null, box: null, faceDetected: false });
+    res = await request(app).post("/api/facial-recognition/evaluate").set("Authorization", `Bearer ${fmToken}`).send({ image: FRAME }); expect(res.body).toMatchObject({ predictedEvaluationLabel: null, noFace: true });
+    expect(mockSecurityLog.create).not.toHaveBeenCalled();
   });
 });

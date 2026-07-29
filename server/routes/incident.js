@@ -1,11 +1,14 @@
 const express = require('express');
 const router = express.Router();
+const { readLimiter } = require('../middlewares/rateLimit');
+router.use(readLimiter); // route-wide rate limiting (trusted AI service calls are skipped)
 const { IncidentLog, DetectionAlert, sequelize } = require('../models');
 const { Op } = require("sequelize");
 const axios = require('axios');
 const multer = require('multer');
 const FormData = require('form-data');
 const { verifyToken, requireRole, verifyServiceOrRole } = require('../middlewares/auth');
+const { aiServiceHeaders } = require('../services/aiServiceAuth');
 require('dotenv').config();
 
 const ALLOWED_STATUSES = ['Active', 'Investigating', 'Escalated to Security', 'Cleared'];
@@ -44,15 +47,40 @@ async function findLinkedAlert(log, t) {
     }
 }
 
-// Memory storage for incoming CCTV frames
-const upload = multer({ storage: multer.memoryStorage() });
+// Incoming frames stay in memory only long enough to proxy them to the AI
+// service. Bound both type and size before allocating/forwarding the payload.
+const MAX_FRAME_BYTES = 8 * 1024 * 1024;
+const ALLOWED_FRAME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_FRAME_BYTES, files: 1 },
+    fileFilter: (_req, file, callback) => {
+        if (ALLOWED_FRAME_TYPES.has(file.mimetype)) return callback(null, true);
+        const error = new Error('Unsupported image type.');
+        error.code = 'UNSUPPORTED_IMAGE_TYPE';
+        return callback(error);
+    }
+});
+
+const acceptFrameUpload = (req, res, next) => {
+    upload.single('file')(req, res, (error) => {
+        if (!error) return next();
+        if (error.code === 'LIMIT_FILE_SIZE') {
+            return res.status(413).json({ error: 'Image frame exceeds the 8 MB limit.' });
+        }
+        if (error.code === 'UNSUPPORTED_IMAGE_TYPE') {
+            return res.status(415).json({ error: 'Image frame must be JPEG, PNG, or WebP.' });
+        }
+        return res.status(400).json({ error: 'Invalid image frame upload.' });
+    });
+};
 
 // -------------------------------------------------------------
 // AI INTEGRATION ROUTE: Scan frame and save to DB automatically
 // -------------------------------------------------------------
 // Camera bridge posts frames server-to-server with the shared AI service key;
 // FM/Staff JWTs may also call it for manual testing. Never publicly accessible.
-router.post("/scan-frame", verifyServiceOrRole('FM', 'Staff'), upload.single('file'), async (req, res) => {
+router.post("/scan-frame", verifyServiceOrRole('FM', 'Staff'), acceptFrameUpload, async (req, res) => {
     const cameraLocation = req.body.camera_location || "Unknown Sector";
 
     if (!req.file) {
@@ -69,8 +97,13 @@ router.post("/scan-frame", verifyServiceOrRole('FM', 'Staff'), upload.single('fi
         formData.append('file', req.file.buffer, req.file.originalname);
 
         // 2. Request AI analysis
+        // Merge multipart headers with the AI-service auth headers (Google ID
+        // token on Cloud Run + X-AI-Service-Key defence in depth).
         const aiResponse = await axios.post(process.env.PYTHON_AI_URL, formData, {
-            headers: formData.getHeaders()
+            headers: {
+                ...formData.getHeaders(),
+                ...(await aiServiceHeaders(process.env.PYTHON_AI_URL))
+            }
         });
 
         const faces = aiResponse.data.faces;

@@ -2,7 +2,7 @@
 // Verifies unauthenticated and non-FM users cannot reach protected content.
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { describe, test, expect, beforeEach } from "vitest";
 
 import ProtectedRoute from "../../src/components/ProtectedRoute";

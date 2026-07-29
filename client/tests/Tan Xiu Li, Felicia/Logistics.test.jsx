@@ -1,21 +1,34 @@
 // Frontend tests — Smart Logistics page renders, with loading → empty state.
 import React from "react";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { vi, describe, test, expect, beforeEach } from "vitest";
 
-const { mockGet } = vi.hoisted(() => ({ mockGet: vi.fn(() => Promise.resolve({ data: [] })) }));
+const { mockGet, mockNavigate } = vi.hoisted(() => ({
+  mockGet: vi.fn(() => Promise.resolve({ data: [] })),
+  mockNavigate: vi.fn(),
+}));
 vi.mock("axios", () => ({
   default: { get: mockGet, post: vi.fn(() => Promise.resolve({ data: {} })), patch: vi.fn(() => Promise.resolve({ data: {} })) },
 }));
+// Keep the real router (MemoryRouter) but capture navigation from the Gate Scan button.
+vi.mock("react-router", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, useNavigate: () => mockNavigate };
+});
 
 import TenantLogistics from "../../src/pages/TenantLogistics";
 import axios from "axios";
 
 const renderPage = () => render(<MemoryRouter><TenantLogistics /></MemoryRouter>);
 
+// The page now defaults to TODAY (Singapore). These fixtures use fixed past
+// dates, so switch to "All dates" to view the full history like before.
+const showAllDates = () => fireEvent.click(screen.getByRole("button", { name: /All dates/i }));
+
 beforeEach(() => {
   mockGet.mockClear();
+  mockNavigate.mockClear();
   localStorage.clear();
   localStorage.setItem("accessToken", "test-token");
   localStorage.setItem("userRole", "FM");
@@ -58,6 +71,7 @@ describe("Logistics page", () => {
       data: [{ id: 1, booking_ref: "FG-AAA", license_plate: "P1", transport_company: "C1", driver_name: "D1", loading_bay: "Bay A", slot_start: "2026-06-21T09:00", status: "Pending" }],
     });
     renderPage();
+    showAllDates();
     await screen.findByText("FG-AAA");
     expect(screen.queryByRole("button", { name: /Mark Confirmed/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /Mark Arrived/i })).toBeNull();
@@ -87,21 +101,10 @@ describe("Logistics page", () => {
     expect(screen.queryByRole("button", { name: /Gate Scan/i })).toBeNull();
   });
 
-  test("Gate Scan modal opens and submitting entry calls the gate-scan API", async () => {
+  test("Gate Scan navigates to the dedicated FM-only gate verification page", () => {
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: /Gate Scan/i }));
-    expect(await screen.findByText(/Loading Bay Gate Scan/i)).toBeTruthy();
-
-    fireEvent.change(screen.getByLabelText(/Booking reference/i), { target: { value: "FG-AAA" } });
-    fireEvent.click(screen.getByRole("button", { name: /Mark Arrived/i }));
-
-    await waitFor(() =>
-      expect(axios.patch).toHaveBeenCalledWith(
-        "/api/bookings/FG-AAA/gate-scan",
-        expect.objectContaining({ action: "entry" }),
-        expect.any(Object)
-      )
-    );
+    expect(mockNavigate).toHaveBeenCalledWith("/logistics/gate-verification");
   });
 
   test("renders the slot-date filter alongside the other filters", () => {
@@ -109,6 +112,65 @@ describe("Logistics page", () => {
     expect(screen.getByLabelText(/Filter by slot date/i)).toBeTruthy();
     expect(screen.getByLabelText(/Filter by status/i)).toBeTruthy();
     expect(screen.getByLabelText(/Filter by bay/i)).toBeTruthy();
+  });
+
+  test("action buttons render in a consistent grouped layout (primary first, Cancel destructive)", async () => {
+    mockGet.mockResolvedValueOnce({
+      data: [{ id: 1, booking_ref: "FG-AAA", license_plate: "P1", transport_company: "C1", driver_name: "D1", loading_bay: "Bay A", slot_start: "2026-06-21T09:00", status: "Pending" }],
+    });
+    renderPage();
+    showAllDates();
+    await screen.findByText("FG-AAA");
+
+    const group = screen.getByLabelText("Actions for FG-AAA");
+    expect(group.classList.contains("booking-action-group")).toBe(true);
+
+    const buttons = [...group.querySelectorAll("button")];
+    expect(buttons.map((b) => b.textContent)).toEqual(["Mark Confirmed", "Edit", "Cancel"]);
+    // Every action shares the uniform sizing class — no uneven stacking.
+    expect(buttons.every((b) => b.classList.contains("booking-action-btn"))).toBe(true);
+    // Primary action leads; Cancel stays visually destructive.
+    expect(buttons[0].classList.contains("booking-action-primary")).toBe(true);
+    expect(buttons[2].classList.contains("booking-action-danger")).toBe(true);
+  });
+
+  test("grouped action buttons still fire their original handlers", async () => {
+    mockGet.mockResolvedValue({
+      data: [{ id: 7, booking_ref: "FG-CCC", license_plate: "P7", transport_company: "C7", driver_name: "D7", loading_bay: "Bay B", slot_start: "2026-06-23T09:00", status: "Pending" }],
+    });
+    renderPage();
+    showAllDates();
+    await screen.findByText("FG-CCC");
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark Confirmed" }));
+    await waitFor(() =>
+      expect(axios.patch).toHaveBeenCalledWith(
+        "/api/bookings/7/status",
+        { status: "Confirmed" },
+        expect.any(Object)
+      )
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(axios.patch).toHaveBeenCalledWith(
+        "/api/bookings/7/cancel",
+        {},
+        expect.any(Object)
+      )
+    );
+  });
+
+  test("closed bookings show no action buttons (status only)", async () => {
+    mockGet.mockResolvedValueOnce({
+      data: [{ id: 9, booking_ref: "FG-DDD", license_plate: "P9", transport_company: "C9", driver_name: "D9", loading_bay: "Bay A", slot_start: "2026-06-20T09:00", status: "Completed" }],
+    });
+    renderPage();
+    showAllDates();
+    await screen.findByText("FG-DDD");
+    expect(screen.queryByLabelText("Actions for FG-DDD")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
   });
 
   test("date filter narrows the table to bookings on that slot date", async () => {
@@ -119,6 +181,8 @@ describe("Logistics page", () => {
       ],
     });
     renderPage();
+    // Start from the full history (the page defaults to today), then narrow.
+    showAllDates();
     expect(await screen.findByText("FG-AAA")).toBeTruthy();
     expect(screen.getByText("FG-BBB")).toBeTruthy();
 

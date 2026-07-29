@@ -1,4 +1,4 @@
-/* Facial Evaluation Lab — FM-only simulation & metrics page */
+/* Facial Evaluation Lab - FM-only simulation & metrics page */
 
 .eval-main { color: #e2e8f0; }
 
@@ -154,3 +154,92 @@
 .eval-matrix td { text-align: center; min-width: 56px; }
 .eval-diagonal { background: rgba(16, 185, 129, 0.12); color: #34d399; font-weight: 700; }
 .eval-offdiag { background: rgba(239, 68, 68, 0.12); color: #f87171; font-weight: 700; }
+
+.legacy-warning { display: none; }
+.eval-card.nested { background: #111827; margin-top: 12px; }
+.eval-live-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 14px 0; }
+.eval-camera-box { margin: 10px 0; min-height: 160px; border: 1px dashed #334155; border-radius: 10px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #020617; }
+.eval-camera-box video { width: 100%; max-height: 220px; object-fit: contain; }
+.eval-upload-preview { display: block; max-width: 220px; max-height: 160px; object-fit: contain; border: 1px solid #334155; border-radius: 8px; margin-top: 10px; }
+.eval-map-list { display: grid; gap: 8px; margin-top: 12px; }
+.eval-map-row { display: grid; grid-template-columns: 70px 1fr auto; align-items: center; gap: 10px; padding: 8px 10px; background: #0b0f1a; border: 1px solid #2d364f; border-radius: 8px; }
+.eval-error { color: #fecdd3; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 8px; padding: 8px 10px; }
+.eval-success { color: #bbf7d0; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 8px; padding: 8px 10px; }
+.eval-table td .eval-secondary-btn, .eval-table td .eval-danger-btn { margin: 2px; }
+/* --- Guided simulation CRUD additions --- */
+.eval-guidance ul {
+    margin: 8px 0 0;
+    padding-left: 20px;
+    color: #b6c2d6;
+    font-size: 0.85rem;
+    line-height: 1.6;
+}
+
+.eval-capture-list {
+    list-style: none;
+    margin: 8px 0 12px;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.eval-capture-list li {
+    background: #111a2e;
+    border: 1px solid #27314f;
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: #94a3b8;
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.eval-capture-list li.captured {
+    border-color: rgba(16, 185, 129, 0.45);
+    color: #34d399;
+}
+
+.eval-row-selected {
+    outline: 1px solid rgba(96, 165, 250, 0.5);
+}
+.image-eval-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 18px 0 26px; }
+.image-eval-card { min-width: 0; padding: 18px; border: 1px solid #334155; border-radius: 12px; background: rgba(15, 23, 42, 0.45); display: grid; gap: 12px; align-content: start; }
+.image-eval-card label { display: grid; gap: 6px; }
+.image-eval-preview { display: block; width: 100%; max-height: 240px; object-fit: contain; border-radius: 8px; background: #0f172a; }
+.image-eval-result { padding: 14px; border-radius: 10px; background: rgba(15, 23, 42, 0.7); }
+.image-eval-result h4 { margin: 10px 0 6px; }
+.eval-warning { padding: 12px; border-left: 4px solid #f59e0b; background: rgba(245, 158, 11, 0.1); color: #fde68a; }
+.eval-correct { color: #34d399; font-weight: 700; }
+.eval-incorrect { color: #fb7185; font-weight: 700; }
+@media (max-width: 900px) { .image-eval-grid { grid-template-columns: 1fr; } }
+
+/* --- Overview dashboard (auto-calculated scores + matrix) --- */
+.eval-mode-note {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  background: rgba(59, 130, 246, 0.1);
+  color: #93c5fd;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin-bottom: 12px;
+}
+
+.eval-summary-line { color: #cbd5e1; font-size: 0.9rem; margin: 10px 0 14px; }
+
+.eval-empty-state {
+  text-align: center;
+  padding: 28px 16px;
+  border: 1px dashed #334155;
+  border-radius: 12px;
+}
+.eval-empty-state h3 { margin: 0 0 8px; color: #f8fafc; }
+.eval-empty-state .eval-primary-btn { margin-top: 12px; }
+
+.eval-matrix-legend { color: #94a3b8; font-size: 0.82rem; margin: 14px 0 6px; }
+
+.eval-matrix-help { margin-top: 10px; font-size: 0.85rem; }
+.eval-matrix-help summary { cursor: pointer; color: #93c5fd; font-weight: 600; }
+.eval-matrix-help p { margin: 8px 0 0; }

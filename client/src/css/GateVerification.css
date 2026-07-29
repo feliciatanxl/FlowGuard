@@ -1,0 +1,350 @@
+/* Loading Bay Gate Verification (FM-only PoC) — layered on Dashboard/Booking.css.
+   Decision states never rely on colour alone: each carries an icon + explicit
+   text so the granted/denied outcome is unambiguous. */
+
+.gate-restricted {
+  max-width: 640px;
+  margin: 48px auto;
+  padding: 28px;
+  border: 1px solid #f59e0b55;
+  background: #f59e0b12;
+  border-radius: 14px;
+  color: #fbbf24;
+  text-align: center;
+}
+
+/* --- Entry / Exit selector --- */
+.gate-action-selector {
+  display: inline-flex;
+  gap: 6px;
+  background: #0b1220;
+  border: 1px solid #1e293b;
+  border-radius: 12px;
+  padding: 5px;
+  margin: 4px 0 14px;
+}
+.gate-seg {
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  padding: 9px 18px;
+  border-radius: 9px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.gate-seg.active { background: #2563eb; color: #fff; }
+.gate-seg:not(.active):hover { color: #e2e8f0; }
+
+/* --- Mode tabs --- */
+.gate-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid #1e293b;
+  margin-bottom: 18px;
+}
+.gate-tab {
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  padding: 12px 20px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
+}
+.gate-tab.active { color: #60a5fa; border-bottom-color: #2563eb; }
+.gate-tab:not(.active):hover { color: #e2e8f0; }
+
+/* --- Two-column layout --- */
+.gate-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 960px) {
+  .gate-grid { grid-template-columns: 1fr; }
+}
+.gate-panel {
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 14px;
+  padding: 18px;
+}
+.gate-panel h3 { margin: 0 0 12px; color: #e2e8f0; font-size: 1.02rem; }
+.gate-block { padding: 14px 0; border-top: 1px solid #16233b; }
+.gate-block:first-of-type { border-top: 0; padding-top: 0; }
+
+/* --- Step indicator --- */
+.gate-steps {
+  list-style: none;
+  display: flex;
+  gap: 6px;
+  padding: 0;
+  margin: 0 0 16px;
+}
+.gate-step {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: #64748b;
+  font-size: 0.72rem;
+  text-align: center;
+}
+.gate-step-num {
+  width: 30px; height: 30px;
+  display: grid; place-items: center;
+  border-radius: 999px;
+  border: 2px solid #334155;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+.gate-step.current { color: #93c5fd; }
+.gate-step.current .gate-step-num { border-color: #2563eb; color: #93c5fd; }
+.gate-step.done { color: #34d399; }
+.gate-step.done .gate-step-num { border-color: #10b981; background: #10b98122; color: #34d399; }
+
+/* --- Camera preview --- */
+.gate-video-wrap {
+  position: relative;
+  background: #020617;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  display: grid;
+  place-items: center;
+}
+.gate-video { width: 100%; height: 100%; object-fit: cover; }
+.gate-video-idle {
+  position: absolute;
+  color: #475569;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+}
+
+.gate-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0;
+}
+.gate-btn-row input {
+  flex: 1;
+  min-width: 140px;
+  padding: 9px 12px;
+  background: #0b1220;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  color: #e2e8f0;
+}
+.gate-upload { cursor: pointer; display: inline-flex; align-items: center; }
+
+.gate-fallback { margin-top: 10px; }
+.gate-fallback > label { display: block; color: #94a3b8; font-size: 0.8rem; margin-bottom: 4px; }
+
+.gate-note { color: #94a3b8; font-size: 0.82rem; line-height: 1.5; margin: 0 0 10px; }
+.gate-ok { color: #34d399; font-size: 0.85rem; margin: 6px 0 0; }
+.gate-inline-error {
+  color: #fca5a5;
+  background: #7f1d1d22;
+  border: 1px solid #b91c1c55;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  margin: 8px 0;
+}
+
+/* --- OCR result --- */
+.gate-ocr-result {
+  margin-top: 12px;
+  background: #0b1220;
+  border: 1px solid #1e293b;
+  border-radius: 10px;
+  padding: 12px;
+}
+.gate-ocr-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  font-size: 0.85rem;
+  border-bottom: 1px dashed #1e293b;
+}
+.gate-ocr-row:last-child { border-bottom: 0; }
+.gate-ocr-row span:first-child { color: #94a3b8; }
+.gate-ocr-row code { color: #e2e8f0; background: #1e293b; padding: 1px 6px; border-radius: 5px; }
+
+.gate-sim { margin-top: 12px; border: 1px dashed #7c3aed66; border-radius: 10px; padding: 10px 12px; }
+.gate-sim summary { cursor: pointer; color: #c4b5fd; font-weight: 600; font-size: 0.85rem; }
+
+.gate-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  margin: 6px 0;
+}
+.gate-badge.sim { background: #7c3aed22; color: #c4b5fd; border: 1px solid #7c3aed55; }
+
+.gate-verify-btn { width: 100%; margin-top: 4px; }
+
+/* --- Decision panel --- */
+.gate-decision-panel { position: sticky; top: 16px; }
+.gate-decision-empty { color: #64748b; padding: 24px 8px; text-align: center; }
+
+.gate-decision { border-radius: 12px; padding: 16px; border: 1px solid; }
+.gate-decision.granted { background: #052e1a; border-color: #10b981; }
+.gate-decision.denied { background: #2a0f14; border-color: #ef4444; }
+
+.gate-decision-head { display: flex; align-items: center; gap: 10px; }
+.gate-decision-icon {
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 1.1rem;
+}
+.gate-decision.granted .gate-decision-icon { background: #10b981; color: #04120b; }
+.gate-decision.denied .gate-decision-icon { background: #ef4444; color: #1a0505; }
+.gate-decision-title { font-weight: 800; letter-spacing: 0.03em; font-size: 1.02rem; }
+.gate-decision.granted .gate-decision-title { color: #6ee7b7; }
+.gate-decision.denied .gate-decision-title { color: #fca5a5; }
+.gate-decision-msg { color: #e2e8f0; font-size: 0.9rem; margin: 10px 0; }
+
+/* --- Barrier simulation --- */
+.gate-barrier { margin: 10px 0 14px; }
+.gate-barrier-track {
+  height: 16px;
+  background: repeating-linear-gradient(45deg, #1e293b, #1e293b 8px, #0b1220 8px, #0b1220 16px);
+  border-radius: 6px;
+  position: relative;
+  overflow: hidden;
+}
+.gate-barrier-arm {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: linear-gradient(90deg, #f59e0b, #f97316);
+  transition: transform .5s ease;
+}
+.gate-barrier-arm.closed { width: 100%; transform: translateX(0); }
+.gate-barrier-arm.open { width: 100%; transform: translateX(-100%); }
+.gate-sim-note { font-size: 0.82rem; color: #cbd5e1; margin: 8px 0 0; }
+.gate-sim-note.muted { color: #64748b; font-size: 0.76rem; }
+
+/* --- Plate comparison + summary --- */
+.gate-compare, .gate-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  margin: 12px 0;
+}
+.gate-summary { grid-template-columns: 1fr 1fr; }
+.gate-compare > div, .gate-summary > div {
+  background: #0b1220;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.gate-compare span, .gate-summary span { color: #94a3b8; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.gate-compare strong, .gate-summary strong { color: #e2e8f0; font-size: 0.9rem; word-break: break-word; }
+.gate-compare strong.match { color: #34d399; }
+.gate-compare strong.mismatch { color: #fca5a5; }
+
+/* --- Override --- */
+.gate-override {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #f59e0b55;
+  background: #f59e0b0f;
+  border-radius: 10px;
+}
+.gate-override h4 { margin: 0 0 6px; color: #fbbf24; }
+.gate-override textarea {
+  width: 100%;
+  background: #0b1220;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  color: #e2e8f0;
+  padding: 9px 12px;
+  resize: vertical;
+  margin-bottom: 8px;
+}
+.gate-reset-btn { width: 100%; margin-top: 14px; }
+
+/* Fallback for the shared error-banner class if not otherwise defined. */
+.error-banner {
+  color: #fca5a5;
+  background: #7f1d1d22;
+  border: 1px solid #b91c1c55;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+/* --- QR camera-source selector (Phase 6: webcam / Raspberry Pi Camera Module 3) --- */
+.gate-source-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 4px 0 12px;
+}
+.gate-source-label {
+  color: #94a3b8;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.gate-source-btn {
+  border: 1px solid #334155;
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.gate-source-btn:hover { border-color: #3b82f6; }
+.gate-source-btn.active {
+  border-color: #3b82f6;
+  background: #1d4ed8;
+}
+
+/* Inline scanner-state status line (Loading scanner…, Looking for QR…, etc.) */
+.gate-scanner-state {
+  margin: 6px 0;
+  color: #38bdf8;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+/* Dev-only QR timing diagnostics (shown only when VITE_CAMERA_DEBUG=true). */
+.gate-diag {
+  margin: 8px 0;
+  border: 1px dashed #334155;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #0b1220;
+}
+.gate-diag > summary {
+  cursor: pointer;
+  color: #94a3b8;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.gate-diag-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: #cbd5e1;
+  font-size: 0.8rem;
+}
+.gate-diag-list code { color: #7dd3fc; }

@@ -11,6 +11,7 @@ const mockAxios = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 vi.mock("axios", () => ({ default: mockAxios }));
 
 import VPatrol from "../../src/pages/VPatrol";
+import { resetPiAvailabilityCache } from "../../src/constants/piCamera";
 
 // Backend rows as returned by GET /api/security/logs (fixed past timestamps —
 // the card must show THESE, not a freshly generated time).
@@ -45,6 +46,7 @@ const BACKEND_LOGS = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetPiAvailabilityCache(); // Pi-unavailable cooldown must not leak between tests
   mockAxios.get.mockResolvedValue({ data: BACKEND_LOGS });
   mockAxios.post.mockResolvedValue({ data: {} });
   // Pi probe fails fast → webcam fallback path (camera behaviour covered elsewhere).
@@ -103,6 +105,33 @@ describe("V-Patrol attendance separation", () => {
     );
     expect(source).not.toMatch(/attendance\/scan/);
     expect(source).toMatch(/facial-recognition\/access-event/);
+  });
+});
+
+describe("V-Patrol operational layout", () => {
+  test("the large recognition-result card is removed; camera and Security Timeline remain", async () => {
+    const { container } = await renderTimeline();
+    // No big decision card (idle text, detail rows or record button).
+    expect(screen.queryByTestId("recognition-decision-card")).toBeNull();
+    expect(screen.queryByText(/Awaiting scan — no recognition decision yet/)).toBeNull();
+    expect(screen.queryByText("Record for Evaluation")).toBeNull();
+    // Live camera feed + HUD on the left, Security Timeline on the right.
+    expect(container.querySelector("video.video-feed")).toBeTruthy();
+    expect(screen.getByText(/SYS_MODE \/\/ BIOMETRIC_GANTRY/)).toBeTruthy();
+    expect(screen.getByText("Security Timeline")).toBeTruthy();
+    // Camera source switching stays available.
+    expect(screen.getByRole("button", { name: "Raspberry Pi Camera Module 3" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Laptop Webcam" })).toBeTruthy();
+  });
+
+  test("mode pills, evaluation accordion and confusion matrix are gone from V-Patrol", async () => {
+    await renderTimeline();
+    expect(screen.queryByRole("button", { name: "Operational Mode" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Live Evaluation Mode" })).toBeNull();
+    expect(screen.queryByText(/Facial Recognition Evaluation/)).toBeNull();
+    expect(screen.queryByTestId("live-matrix-vpatrol")).toBeNull();
+    expect(screen.queryByText(/Select ground-truth identity/)).toBeNull();
+    expect(screen.queryByText(/Auto-record completed scans/)).toBeNull();
   });
 });
 

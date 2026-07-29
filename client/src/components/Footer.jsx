@@ -1,5 +1,4 @@
-import React from 'react';
-import { Link } from 'react-router-dom'; // Import Link for SPA navigation
+import { Link } from 'react-router';
 import LogoIcon from './LogoIcon';
 
 const Footer = () => {
@@ -11,43 +10,22 @@ const Footer = () => {
             <LogoIcon size={32} />
             <span>FlowGuard</span>
           </div>
-          <p className="footer-desc">
-            Defining the future of food manufacturing through AI-driven surveillance, 
-            IoT monitoring, and smart logistics at Harrison Food Factory.
-          </p>
+          <p className="footer-desc">AI-assisted access, monitoring and response for connected factory operations.</p>
         </div>
-
-        <div className="footer-column">
-          <h4>Solutions</h4>
+        <nav className="footer-column footer-nav" aria-label="Footer navigation">
           <ul>
-            {/* Link to your new AI Innovation page */}
-            <li><Link to="/innovation">AI Surveillance</Link></li>
-            <li><Link to="/dashboard">Logistics Tracking</Link></li>
-            <li><Link to="/dashboard">IoT Monitoring</Link></li>
+            <li><Link to="/innovation">Solutions</Link></li>
+            <li><Link to="/#capabilities">Capabilities</Link></li>
+            <li><Link to="/#how-it-works">How It Works</Link></li>
+            <li><Link to="/login">Client Login</Link></li>
           </ul>
-        </div>
-
+        </nav>
         <div className="footer-column">
-          <h4>Company</h4>
-          <ul>
-            {/* Link to your new AI Innovation page */}
-            <li><Link to="/innovation">Innovation</Link></li>
-            <li><a href="#">Compliance</a></li>
-            <li><a href="#">Support</a></li>
-          </ul>
-        </div>
-        
-        <div className="footer-column">
-          <h4>Contact</h4>
-          <p className="contact-text">Harrison Food Factory</p>
-          <p className="contact-text">7 Harrison Rd</p>
-          <p className="contact-text">Singapore 369650</p>
-          <p className="contact-sub">Available TOL 2027</p>
+          <Link className="footer-status" to="/#poc-status"><span aria-hidden="true" />Academic PoC status</Link>
         </div>
       </div>
-
       <div className="footer-bottom">
-        <p>© 2026 FlowGuard. Built for the Next Generation of Manufacturing.</p>
+        <p>© 2026 FlowGuard · Academic industry proof of concept</p>
       </div>
     </footer>
   );

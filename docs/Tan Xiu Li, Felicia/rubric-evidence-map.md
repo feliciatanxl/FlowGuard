@@ -1,71 +1,29 @@
-# FlowGuard — Rubric Evidence Map (Felicia)
+# Felicia rubric evidence map
 
-Maps Week 13 rubric criteria to concrete evidence in the repo. Verified status (latest run, 2026-07-10):
-**Backend 214/214 passed (19 suites) · Frontend 206/206 passed (25 files) · Frontend build success.**
-Object Detection and Incident Tracking were merged into this branch. **No real secrets are committed.**
+This document maps current evidence; it does not award a grade.
 
-- **Primary feature:** Facial Recognition & Access Management — biometric access + security/attendance
-  logging (not just user-account management).
-- **Secondary supporting feature:** Smart Logistics & Loading Bay Management — additional CRUD
-  evidence via Bookings.
+| Criterion | Current evidence | Missing evidence | Action required |
+|---|---|---|---|
+| A1 roles/use cases | `design/Tan Xiu Li, Felicia/use-cases.md` covers FM/Tenant/Staff/Driver/service actors, preconditions, success, fallback, edge cases, postconditions, and privacy for facial access and Smart Logistics. | Tutor/client sign-off on scope is not present. | Obtain dated review/sign-off; keep advanced requests as future scope. |
+| A1 API docs | Owned account/enrolment, facial, attendance/security, booking, QR, and gate-verification endpoints have auth, roles, parameters, examples, statuses, side effects, AI/privacy notes. | OpenAPI for Felicia endpoints is not present; legacy route `/gate-scan` and canonical `/gate-verification` coexist. | Optionally add validated OpenAPI and clearly deprecate legacy route in a future code task. |
+| A1 database | User facial fields, EvaluationParticipant, SecurityLog, Attendance, Booking, GateAccessLog, constraints, indexes, soft references, status values, retention and no-image policy documented from models. | Deployed Cloud SQL schema/export evidence absent. | Capture sanitised schema/index evidence from deployed database. |
+| A1 architecture | Canonical architecture shows browser/Pi sources, Cloud Run client/Node/private AI, Cloud SQL, QR path, credentials, WhatsApp, and SecurePi. Mermaid architecture/ER PNGs were regenerated and visually checked on 28 July 2026. | Live cloud resource/IAM evidence remains absent. | Capture sanitised deployed architecture and IAM evidence. |
+| A2 React/Node/PostgreSQL/FastAPI | FaceEnrollment, GateScanner, VPatrol, FacialEvaluation, Attendance, Logistics, DriverPass, GateVerification -> Node routes/models -> private FastAPI as applicable. | Deployed end-to-end evidence for each flow absent. | Capture successful and denied deployed journeys plus DB/audit result. |
+| A2 CRUD/enhancement | User/access lifecycle and booking CRUD; audited gate verification, QR fallbacks, OCR correction, SG time, WhatsApp and next-driver enhancements. | OCR is PoC only; barrier is simulated; no certified liveness. | Use bounded demo wording and document production validation roadmap. |
+| A2 RBAC/security | FM-only scanner/gate pages, scoped Tenant/Staff behavior, DB-authoritative JWT, token revocation, off-boarding transaction, private AI credentials, CORS/rate limits. | Live IAM and Secret Manager bindings not captured; MemoryStore per-instance limitation. | Add sanitised cloud evidence and production distributed-limit plan. |
+| A2 usability/performance | Pi/webcam/upload/manual fallbacks, large QR/ref, accessible `YOU` marker, safe messages, AI timeouts, split tracking/recognition, and shared 512 px/JPEG 0.74 recognition defaults with bounded deployment overrides. | No measured warm/cold deployed latency dataset; main client chunk remains large. | Record QR/face latency and plan focused route-level code splitting. |
+| A2 Git evidence | Current branch `feature/facial-smart-logistics`; recent merge/security commits exist. | No concise PR/commit-to-rubric table. | Add PR/commit links or screenshots for Felicia-owned work. |
+| A3 tests | Felicia client subset 501/501; the nine previously failing/camera-lifecycle files passed 79/79 in three consecutive runs. Full server is 501/501 across three final runs and contains 25 Felicia files/315 assertions; the complete 16-test rate-limit file passed three consecutive focused runs. | Direct large Jest combinations can still trigger a Windows Node native exit; hardware/private-image suites were not run; Jest prints the force-exit advisory. | Use the bounded full runner in Windows CI and run hardware tests in a controlled environment. |
+| A3 deployment | Cloud Run/Cloud SQL design and verified client URL; private AI auth code and Dockerfiles. | Direct server URL, Cloud SQL instance, IAM, trigger/build/revision and rollback evidence missing. | Capture current Google Cloud evidence without secrets. |
+| B1 interim review | Working PoC, client feedback table, explicit limitations/future plan. | Dated feedback/minutes and interim demonstration artefact. | Attach client/tutor evidence. |
+| B2 final review | Facial access -> attendance/security and booking -> Driver Pass -> gate decision -> audit/notification journeys are documented and green in deterministic automated coverage. | Live deployed demo evidence remains absent. | Rehearse and capture truthful deployed edge cases. |
+| C1 AI workflow | Existing separate AI package and `ai-usage-summary.md`. | Student must verify coverage across design, coding, testing, deployment. | Submit AI logs separately; do not add logs to main repo. |
+| C2 AI reflection | `flowguard-ai/Tan Xiu Li, Felicia/ai-reflection.md` exists. | Reflection quality is outside this audit. | Felicia reviews/submits it in her own words; do not have AI rewrite it. |
 
-| Rubric area | Evidence |
-|-------------|----------|
-| **Working prototype** | Runnable full-stack app: `client/` (React/Vite), `server/` (Node/Express), `ai-service/` (FastAPI). Demo steps in `docs/Tan Xiu Li, Felicia/demo-script-week13.md`. |
-| **Problem statement** | `design/md/problem-statement.md` — 40+ units, two loading bays, manual monitoring pain. |
-| **System design & architecture** | `design/md/architecture.md`, `design/md/architecture-diagram.md`, `design/md/er-diagram.md`, `design/md/*-flow.md` (Mermaid); PNGs in `design/png/`. |
-| **Full-stack integration** | React → Express (JWT) → PostgreSQL/Sequelize → FastAPI AI → WhatsApp API. Face enrol calls AI; bookings trigger WhatsApp; Driver Pass reads a public API. |
-| **CRUD coverage** | See table below. |
-| **Enhanced capabilities** | Face enrol (camera + upload), live recognition + liveness, PDPA off-board, FM security-review workflow, WhatsApp notifications, Driver Pass QR, Gate Scan entry/exit, next-in-line alert, slot-conflict guard, date/status/bay filters. |
-| **Security / RBAC** | JWT + `requireRole` middleware + React `ProtectedRoute`; FM/Tenant/Staff/Public matrix in `design/md/rbac-flow.md`. bcrypt hashing, reCAPTCHA, PDPA delete, ownership checks (Tenant own-staff logs), gate scan FM-only. |
-| **Usability** | Role-aware dashboards/wording, dark theme, loading/empty/error states, password show/hide, responsive Logistics + mobile Driver Pass, friendly 401/403/404/500 pages, error boundary. |
-| **Testing** | `server` Jest 214/214 (19 suites), `client` Vitest 206/206 (25 files); see `docs/Tan Xiu Li, Felicia/test-results-summary.md`. |
-| **Evaluation / metrics** | FM-only Facial Evaluation Lab (`/facial-evaluation`, `client/src/pages/FacialEvaluation.jsx`) — simulation scenarios, anonymised evaluation-record CRUD, confusion matrix with accuracy / macro P-R-F1 / FAR / FRR; plan in `docs/Tan Xiu Li, Felicia/facial-recognition-evaluation-plan.md`. |
-| **Deployment readiness** | `deployment.md` (Vercel/Render/Neon plan), `.env.example` placeholders only, build succeeds. |
-| **AI usage** | `flowguard-ai/Tan Xiu Li, Felicia/ai-logs/` + `ai-reflection.md`; summary in `docs/Tan Xiu Li, Felicia/ai-usage-summary.md`. |
-| **Git evidence** | Meaningful, scoped commits per feature/fix on `feature/smart-logistics-whatsapp` (see `git log`). |
-| **Mermaid / system design** | `design/md/architecture-diagram.md`, `design/md/er-diagram.md`, `design/md/facial-recognition-flow.md`, `design/md/logistics-flow.md`, `design/md/rbac-flow.md`; PNGs in `design/png/`. |
+## CRUD and automatic evidence
 
-## CRUD coverage
-
-### Primary feature — Facial Recognition & Access Management
-Entity group: **Biometric Access Profile** (`users.faceVector` + `isEnrolled`) + **SecurityLog** +
-**Attendance**. This is biometric access plus security/attendance logging — supporting user/account
-operations are part of access management, not the whole feature.
-
-| CRUD | Evidence |
-|------|----------|
-| **Create** | Manual create Tenant/Staff where allowed (`POST /user/manual-create`); face enrolment `POST /user/enroll-face` (self, or FM via `targetUserId`); **automatic** attendance created by ID-verified recognition (`POST /api/facial-recognition/recognize` → `POST /api/attendance/scan { userId }`); **automatic** SecurityLogs for unknown/suspended detections (server-side, deduplicated). |
-| **Read** | V-Patrol, Gate Scanner, Security Review, User Logs, Attendance logs — `GET /api/security/logs`, `GET /api/security/logs/user/:id`, `GET /api/attendance/logs`, `GET /user/`. |
-| **Update** | Face re-enrolment (`POST /user/enroll-face`, overwrites the protected template — FM can re-enrol any user via the "Re-enrol Face ID" action → `/enrollment?userId=<id>`); suspend/reactivate user (`PUT /user/suspend/:id`); update security-review status/notes (`PATCH /api/security/logs/:id/review`). Face ID enrolment status badge on User/Staff Management. |
-| **Delete** | PDPA off-boarding `DELETE /user/:id` — wipe `faceVector`, delete the attendance trail, and **anonymise** security logs (kept for audit, `personnelName` nulled). |
-
-### Secondary supporting feature — Smart Logistics & Loading Bay Management
-Additional CRUD evidence via **Booking**; includes WhatsApp notifications, Driver Pass QR, FM Gate
-Scan, and next-in-line alerts.
-
-| CRUD | Evidence |
-|------|----------|
-| **Create** | `POST /api/bookings/create` (FM / Tenant / Staff) |
-| **Read** | `GET /api/bookings/` (role-scoped) and public `GET /api/bookings/:ref` (driver pass) |
-| **Update** | Manual **Edit Booking** `PATCH /api/bookings/:id` (editable fields, tenant-ownership + FM permissions, slot-conflict validation); `PATCH /api/bookings/:id/status`; `PATCH /api/bookings/:ref/gate-scan` |
-| **Delete (soft)** | `PATCH /api/bookings/:id/cancel` (status = Cancelled) |
-
-### Automatic-process evidence (facial recognition)
-- Recognised **active** user → attendance created/updated automatically via the verified unique
-  User ID (never a name — duplicate names cannot select the wrong account).
-- **Unknown** or **suspended** person → automatic SecurityLog (`Intrusion Alert` /
-  `Suspended Access Attempt`) with matched user ID, confidence and camera location, deduplicated
-  with a 30 s cooldown. No face in frame → no suspicious-person log.
-- Recognition reads the matched User record by unique ID from PostgreSQL (source of truth for
-  name, role, `isActive`, `isEnrolled`); FastAPI returns only `matchedUserId` + telemetry.
-- Active biometric templates are never auto-deleted; deletion is the deliberate PDPA
-  off-boarding flow above. See `facial-recognition-api-and-security.md`.
-
-## Notes
-- **Backend 214/214 passed**, **Frontend 206/206 passed**, **build success** — the single current
-  verified run (commands in the test-results summary; all earlier totals are superseded).
-- **Object Detection** and **Incident Tracking** teammate modules are merged into this branch and
-  present in the shared DB/models (`detection_alerts`, `incident_logs`, `monitoring_zones`).
-- **No real secrets committed** — all credentials are placeholders in `.env.example`.
-- Mermaid `.md` diagrams render in VS Code preview; PNG exports must be generated manually.
+- Facial/access create/update/delete: `/user/manual-create`, `/user/enroll-face`, `/user/suspend/:id`, SecurityLog review, and transactional `/user/:id` off-boarding.
+- Facial/access reads: users, attendance, SecurityLog, evaluation participants.
+- Automatic: transient tracking, recognition with PostgreSQL status, Gate Scanner attendance, V-Patrol security audit, denied-event handling, stable evaluation labels/cache refresh.
+- Logistics create/read/update/logical delete: booking create/list/public pass/edit/status/cancel.
+- Enhanced automatic: SG time conversion, same-bay conflict 409, QR local/cloud/manual fallbacks, PoC OCR/manual correction, FM-authoritative audited decisions, idempotency, WhatsApp real/mock-safe, and next-driver notification.

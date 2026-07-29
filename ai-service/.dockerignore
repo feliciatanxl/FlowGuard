@@ -1,0 +1,49 @@
+# Never copy secrets, personal data, or local-only files into the image.
+.env
+.env.*
+!.env.example
+
+# Virtual environments — dependencies install inside the image.
+.venv
+venv
+env
+
+# Face images / enrollment data / recordings must NEVER enter an image (PDPA).
+known_faces
+*.jpg
+*.jpeg
+*.png
+*.mp4
+*.webm
+*.avi
+
+# Local model caches that could contain downloaded or personal artifacts.
+# (yolov8n.pt is intentionally NOT ignored — the Dockerfile copies it explicitly.)
+.insightface
+models
+runs
+
+# Python bytecode / test output
+__pycache__
+*.pyc
+.pytest_cache
+test
+tests
+
+# Databases / logs
+*.db
+*.sqlite*
+*.log
+
+# Git / editor noise
+.git
+.gitignore
+.vscode
+.DS_Store
+
+# Node artifact that doesn't belong to this service
+package-lock.json
+
+# Container files themselves
+Dockerfile
+.dockerignore

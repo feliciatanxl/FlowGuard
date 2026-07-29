@@ -70,32 +70,90 @@ def get_db_connection():
     )
 
 # 3. Memory bank for the "Security Scan"
+#
+# The cache is replaced only after a successful database read. A temporary
+# Cloud SQL error must not erase an already-working cache and make every person
+# appear as an unknown 0% match.
 known_faces = []
+_known_faces_lock = threading.Lock()
+_face_cache_last_attempt = 0.0
+_FACE_CACHE_RETRY_SECONDS = float(os.getenv("FACE_CACHE_RETRY_SECONDS", "15"))
+_FACE_MATCH_THRESHOLD = float(os.getenv("FACE_MATCH_THRESHOLD", "0.45"))
+
 
 @app.on_event("startup")
 def load_authorized_faces():
-    """Fetches all staff embeddings from Postgres on startup"""
-    global known_faces
-    known_faces = []
-    
+    """Load normalized enrolled-user embeddings from PostgreSQL.
+
+    Returns the number of usable templates. Invalid/empty vectors are skipped,
+    and the active cache is swapped atomically only after the query succeeds.
+    """
+    global known_faces, _face_cache_last_attempt
+    _face_cache_last_attempt = time.time()
+    conn = None
+    cur = None
+
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        # Cache keys on the unique user ID; name is retained ONLY for developer
-        # logging — matching and API responses use user_id, never the name.
-        cur.execute('SELECT id, name, "faceVector" FROM users WHERE "faceVector" IS NOT NULL')
+        cur.execute(
+            'SELECT id, name, "faceVector" FROM users '
+            'WHERE "isEnrolled" = TRUE AND "faceVector" IS NOT NULL'
+        )
         rows = cur.fetchall()
+        loaded_faces = []
 
         for user_id, name, embedding_json in rows:
             raw_embedding = json.loads(embedding_json) if isinstance(embedding_json, str) else embedding_json
-            embedding = np.array(raw_embedding, dtype=np.float32)
-            known_faces.append({"user_id": user_id, "name": name, "embedding": embedding})
-            
-        cur.close()
-        conn.close()
-        print(f"✅ Security Scan Ready: {len(known_faces)} enrolled members loaded.")
+            embedding = np.asarray(raw_embedding, dtype=np.float32).reshape(-1)
+            norm = float(np.linalg.norm(embedding))
+
+            if embedding.size == 0 or not np.isfinite(embedding).all() or norm <= 0:
+                print(f"⚠️  Skipping invalid face template for user #{user_id}.")
+                continue
+
+            loaded_faces.append({
+                "user_id": user_id,
+                "name": name,
+                "embedding": embedding / norm,
+            })
+
+        with _known_faces_lock:
+            known_faces = loaded_faces
+
+        print(f"✅ Security Scan Ready: {len(loaded_faces)} enrolled members loaded.")
+        return len(loaded_faces)
     except Exception as e:
+        # Keep the previous good cache instead of replacing it with [].
         print(f"❌ DB Load Error: {e}")
+        with _known_faces_lock:
+            return len(known_faces)
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
+
+
+def _known_faces_snapshot():
+    """Return a stable copy for one recognition request."""
+    with _known_faces_lock:
+        return list(known_faces)
+
+
+def _ensure_face_cache():
+    """Retry an empty cache without hammering Cloud SQL on every frame."""
+    with _known_faces_lock:
+        cache_ready = bool(known_faces)
+
+    if cache_ready:
+        return True
+
+    if time.time() - _face_cache_last_attempt >= _FACE_CACHE_RETRY_SECONDS:
+        load_authorized_faces()
+
+    with _known_faces_lock:
+        return bool(known_faces)
 
 
 # --- Phase 2 - Biometric Enrollment Endpoint ---
@@ -207,46 +265,289 @@ async def recognize(request: RecognitionRequest):
     live_faces = face_app.get(img)
     inference_ms = int((time.time() - _inference_started) * 1000)
 
-    for face in live_faces:
-        best_match = None
-        highest_similarity = 0.0
-        live_embedding = face.embedding / np.linalg.norm(face.embedding)
-
-        for known in known_faces:
-            sim = float(np.dot(live_embedding, known["embedding"]))
-            if sim > highest_similarity:
-                highest_similarity = sim
-                best_match = known if sim > 0.45 else None
-
-        bbox = face.bbox
-        x = int(bbox[0])
-        y = int(bbox[1])
-        width = int(bbox[2] - bbox[0])
-        height = int(bbox[3] - bbox[1])
-
-        # 🎯 Calculate the Head Turn Ratio
-        liveness_ratio = calculate_head_turn(face.kps)
-
-        # Name stays in the developer log only — never in the response.
-        if best_match:
-            print(f"Recognize: matched user #{best_match['user_id']} ({best_match['name']}) sim={highest_similarity:.3f}")
-
+    if not live_faces:
         return {
-            "matchedUserId": best_match["user_id"] if best_match else None,
-            "confidence": round(highest_similarity, 4),
-            "box": [x, y, width, height],
-            "liveness_ratio": liveness_ratio,
-            "faceDetected": True,
-            "inference_ms": inference_ms
+            "matchedUserId": None,
+            "confidence": 0.0,
+            "box": None,
+            "liveness_ratio": 0.5,
+            "faceDetected": False,
+            "registry_ready": _ensure_face_cache(),
+            "enrolled_face_count": len(_known_faces_snapshot()),
+            "inference_ms": inference_ms,
         }
 
-    return {"matchedUserId": None, "confidence": 0.0, "box": None, "liveness_ratio": 0.5, "faceDetected": False, "inference_ms": inference_ms}
+    # Retry an empty/stale startup cache before classifying a detected face.
+    registry_ready = _ensure_face_cache()
+    face_registry = _known_faces_snapshot()
+
+    # Prefer the largest face in-frame. InsightFace's returned order is not a
+    # promise, and choosing a small/background face can produce an incorrect
+    # unknown result even when the intended subject is centred.
+    face = max(
+        live_faces,
+        key=lambda item: max(0.0, float(item.bbox[2] - item.bbox[0]))
+        * max(0.0, float(item.bbox[3] - item.bbox[1]))
+    )
+
+    best_match = None
+    highest_similarity = 0.0
+    live_norm = float(np.linalg.norm(face.embedding))
+    live_embedding = face.embedding / live_norm if live_norm > 0 else face.embedding
+
+    for known in face_registry:
+        sim = float(np.dot(live_embedding, known["embedding"]))
+        if sim > highest_similarity:
+            highest_similarity = sim
+            best_match = known if sim >= _FACE_MATCH_THRESHOLD else None
+
+    bbox = face.bbox
+    x = int(bbox[0])
+    y = int(bbox[1])
+    width = int(bbox[2] - bbox[0])
+    height = int(bbox[3] - bbox[1])
+    liveness_ratio = calculate_head_turn(face.kps)
+
+    # Name stays in the developer log only — never in the response.
+    if best_match:
+        print(
+            f"Recognize: matched user #{best_match['user_id']} "
+            f"({best_match['name']}) sim={highest_similarity:.3f}"
+        )
+    elif registry_ready:
+        print(
+            f"Recognize: unknown face, best similarity={highest_similarity:.3f}, "
+            f"threshold={_FACE_MATCH_THRESHOLD:.3f}, templates={len(face_registry)}"
+        )
+    else:
+        print("Recognize: face detected but the enrolled-face registry is empty.")
+
+    return {
+        "matchedUserId": best_match["user_id"] if best_match else None,
+        "confidence": round(max(0.0, highest_similarity), 4),
+        "box": [x, y, width, height],
+        "liveness_ratio": liveness_ratio,
+        "faceDetected": True,
+        "registry_ready": registry_ready,
+        "enrolled_face_count": len(face_registry),
+        "inference_ms": inference_ms,
+    }
+
+
+# --- Lightweight face tracking (detection + keypoints ONLY, no identity) ----
+# Powers the scanners' real-time face box + head-turn movement sampling. It
+# reuses InsightFace's already-loaded detector at a smaller input size and
+# NEVER runs the embedding model, matches identities, touches the database,
+# or persists the frame. Safe transient telemetry only.
+_TRACK_DET_SIZE = int(os.getenv("TRACK_DET_SIZE", "256"))
+_TRACK_MAX_FACES = 2
+
+_NO_FACE_TRACK = {"faceDetected": False, "faceCount": 0, "box": None, "headTurnRatio": None}
+
+
+@app.post("/user/track", dependencies=[Depends(require_service_key)])
+async def track(request: RecognitionRequest):
+    try:
+        header, encoded = request.image.split(",", 1)
+        data = base64.b64decode(encoded)
+        nparr = np.frombuffer(data, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError("decode failed")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid image data")
+
+    det_model = face_app.models.get("detection")
+    if det_model is None:
+        raise HTTPException(status_code=503, detail="Face detector unavailable.")
+
+    _detect_started = time.time()
+    bboxes, kpss = det_model.detect(
+        img,
+        input_size=(_TRACK_DET_SIZE, _TRACK_DET_SIZE),
+        max_num=_TRACK_MAX_FACES,
+        metric="default",
+    )
+    inference_ms = int((time.time() - _detect_started) * 1000)
+
+    if bboxes is None or len(bboxes) == 0:
+        return {**_NO_FACE_TRACK, "inferenceMs": inference_ms}
+
+    # Largest face is the primary tracking subject.
+    areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in bboxes]
+    primary = int(np.argmax(areas))
+    x1, y1, x2, y2 = bboxes[primary][:4]
+
+    head_turn_ratio = None
+    if kpss is not None and len(kpss) > primary:
+        head_turn_ratio = calculate_head_turn(kpss[primary])
+
+    return {
+        "faceDetected": True,
+        "faceCount": int(len(bboxes)),
+        "box": [int(x1), int(y1), int(x2 - x1), int(y2 - y1)],
+        "headTurnRatio": head_turn_ratio,
+        "inferenceMs": inference_ms,
+    }
+
 
 # Helper to refresh the list manually if a new staff joins
 @app.get("/refresh", dependencies=[Depends(require_service_key)])
 def refresh():
-    load_authorized_faces()
-    return {"message": "Staff list updated from database"}
+    loaded = load_authorized_faces()
+    return {
+        "message": "Staff list updated from database",
+        "enrolled_face_count": loaded,
+        "registry_ready": loaded > 0,
+    }
+
+
+# ============================================================
+# SMART LOGISTICS — CLOUD QR SNAPSHOT DECODE (candidate only)
+# ============================================================
+# Authenticated OpenCV QR decoder used as the SNAPSHOT fallback when the
+# browser/Raspberry Pi laptop-webcam scanner can't lock a QR locally. It returns
+# a CANDIDATE FlowGuard booking reference ONLY — it never verifies the booking,
+# approves entry/exit, updates booking status, writes GateAccessLog, or opens a
+# barrier. The Node gate-verification endpoint remains authoritative.
+#
+# Input: one base64 JPEG/PNG still (data-URL) via the project's existing
+# authenticated image-payload convention (same shape as /user/recognize). The
+# image is decoded in memory and never persisted to disk, the repository, or
+# Cloud Run storage; raw image bytes are never logged.
+
+import re
+
+_QR_BOOKING_REF_RE = re.compile(r"^FG-[A-Z0-9]{4,12}$")
+
+# Strict request-size cap (bytes of the decoded image). Overridable per-deploy.
+_QR_MAX_IMAGE_BYTES = int(os.getenv("QR_MAX_IMAGE_BYTES", str(6 * 1024 * 1024)))
+_QR_ALLOWED_CONTENT_TYPES = {
+    t.strip().lower()
+    for t in os.getenv("QR_ALLOWED_CONTENT_TYPES", "image/jpeg,image/jpg,image/png").split(",")
+    if t.strip()
+}
+
+
+class QRDecodeRequest(BaseModel):
+    image: str
+
+
+def _normalize_booking_ref(raw):
+    return re.sub(r"\s+", "", str(raw or "")).upper()
+
+
+def _decode_qr_candidate(img):
+    """Bounded OpenCV QR-decode sequence: original → grayscale → upscale-if-small
+    → Otsu threshold. Returns the first non-empty decoded string, or "". Stops as
+    soon as anything decodes; deliberately avoids expensive brute-forcing."""
+    detector = cv2.QRCodeDetector()
+
+    def _try(mat):
+        try:
+            data, _points, _straight = detector.detectAndDecode(mat)
+            if data:
+                return data
+            # A frame can hold more than one code — cheap multi pass as a backup.
+            ok, decoded, _pts, _straight = detector.detectAndDecodeMulti(mat)
+            if ok and decoded:
+                for d in decoded:
+                    if d:
+                        return d
+        except cv2.error:
+            return ""
+        return ""
+
+    # 1. Original colour image.
+    data = _try(img)
+    if data:
+        return data
+    # 2. Grayscale.
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    data = _try(gray)
+    if data:
+        return data
+    # 3. Upscale small stills (preserve aspect ratio) — helps a low-res webcam frame.
+    h, w = gray.shape[:2]
+    longest = max(h, w)
+    if longest and longest < 640:
+        scale = 640.0 / longest
+        resized = cv2.resize(gray, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+        data = _try(resized)
+        if data:
+            return data
+    # 4. Otsu threshold (single safe pass).
+    _t, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return _try(thresh)
+
+
+@app.post("/api/qr/decode", dependencies=[Depends(require_service_key)])
+async def decode_qr(request: QRDecodeRequest):
+    """Decode a QR still into a CANDIDATE FlowGuard booking reference. This
+    endpoint is intentionally powerless: it cannot verify a booking, grant or
+    deny access, mutate booking status, write GateAccessLog, or open a barrier —
+    it only reports what reference (if any) the image appears to contain."""
+    started = time.time()
+
+    raw = request.image or ""
+    # Reject an oversized payload before any decode work. Base64 expands bytes
+    # ~4/3, so bound the string length against the byte cap first.
+    if len(raw) > int(_QR_MAX_IMAGE_BYTES * 4 / 3) + 1024:
+        raise HTTPException(status_code=413, detail="Image exceeds the maximum allowed size.")
+
+    # Validate the declared content type when a data-URL header is present.
+    if raw.startswith("data:"):
+        try:
+            mime = raw[5:raw.index(";")].lower()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Malformed image payload.")
+        if mime not in _QR_ALLOWED_CONTENT_TYPES:
+            raise HTTPException(status_code=415, detail="Unsupported image type. Use JPEG or PNG.")
+
+    # Decode base64 → bytes. There is no supplied filename to trust.
+    try:
+        encoded = raw.split(",", 1)[1] if "," in raw else raw
+        img_bytes = base64.b64decode(encoded)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid image data.")
+
+    if not img_bytes:
+        raise HTTPException(status_code=400, detail="Invalid image data.")
+    if len(img_bytes) > _QR_MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image exceeds the maximum allowed size.")
+
+    # Decode bytes → OpenCV image; reject malformed images.
+    nparr = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(status_code=400, detail="Malformed or unreadable image.")
+
+    try:
+        raw_text = _decode_qr_candidate(img)
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Log the error class only — never the image bytes.
+        print(f"QR decode error: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to decode the QR image.")
+
+    decode_ms = int((time.time() - started) * 1000)
+    candidate = _normalize_booking_ref(raw_text)
+
+    if raw_text and _QR_BOOKING_REF_RE.match(candidate):
+        return {
+            "success": True,
+            "bookingRef": candidate,
+            "decodeMs": decode_ms,
+            "decoder": "opencv-cloud",
+        }
+    return {
+        "success": False,
+        "bookingRef": None,
+        "decodeMs": decode_ms,
+        "decoder": "opencv-cloud",
+        "message": "No valid FlowGuard QR code detected",
+    }
 
 
 # ============================================================
@@ -261,12 +562,21 @@ _FOOD_CLASSES = {'banana', 'apple', 'orange'}
 _VEHICLE_CLASSES = {'truck'}
 # COCO ids: 0 person, 7 truck, 24 backpack, 26 handbag, 28 suitcase, 39 bottle,
 # 41 cup, 46 banana, 47 apple, 49 orange, 63 laptop, 67 cell phone, 73 book
-_YOLO_CLASS_IDS = os.getenv("YOLO_CLASS_IDS", "").strip()
-_YOLO_CLASS_IDS = [int(x.strip()) for x in _YOLO_CLASS_IDS.split(",") if x.strip()] or None
+_YOLO_CLASS_IDS_RAW = os.getenv("YOLO_CLASS_IDS", "").strip().lower()
+if _YOLO_CLASS_IDS_RAW in {"", "all", "*"}:
+    _YOLO_CLASS_IDS = None
+else:
+    _YOLO_CLASS_IDS = [
+        int(x.strip()) for x in _YOLO_CLASS_IDS_RAW.split(",") if x.strip()
+    ] or None
+
 _CAMERA_WIDTH = int(os.getenv("CAMERA_WIDTH", "640"))
 _CAMERA_HEIGHT = int(os.getenv("CAMERA_HEIGHT", "360"))
-_YOLO_IMG_SIZE = int(os.getenv("YOLO_IMG_SIZE", "640"))
-_YOLO_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.25"))
+# Slightly larger inference input + lower threshold help retain small office
+# objects (monitor/TV, chair, bottle, laptop, keyboard, mouse) in compressed
+# browser/video frames while staying practical for CPU-only Cloud Run.
+_YOLO_IMG_SIZE = int(os.getenv("YOLO_IMG_SIZE", "768"))
+_YOLO_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.18"))
 _YOLO_FPS = float(os.getenv("YOLO_FPS", "8"))
 _STREAM_FPS = float(os.getenv("STREAM_FPS", "12"))
 _FACE_RECOG_EVERY_N_FRAMES = int(os.getenv("FACE_RECOG_EVERY_N_FRAMES", "5"))
@@ -275,6 +585,11 @@ _PERSON_CRITICAL_COUNT = int(os.getenv("PERSON_CRITICAL_COUNT", "2"))
 _PERSON_ALERT_COOLDOWN = int(os.getenv("PERSON_ALERT_COOLDOWN", "30"))
 _PROXIMITY_PX = 160      # centroid distance threshold (pixels at 640-wide frame)
 _NODE_URL = os.getenv("NODE_SERVER_URL", "http://localhost:5001")
+print(
+    "YOLO config: "
+    f"imgsz={_YOLO_IMG_SIZE}, conf={_YOLO_CONFIDENCE}, "
+    f"classes={_YOLO_CLASS_IDS if _YOLO_CLASS_IDS is not None else 'ALL'}"
+)
 
 # A browser-submitted analyse-frame request may only claim to be one of these two
 # sources — never "SecurePi Edge Node", which is reserved for the authenticated
@@ -605,7 +920,7 @@ def _annotate_detection_frame(frame, recognize_faces=True, zone_config=None, sou
         if class_name == 'person':
             people_count += 1
             recog_name = "UNKNOWN"
-            display_label = "Person Detected"
+            display_label = f"Person {conf:.2f}"
             box_color = (0, 200, 200)
             label_color = (0, 200, 200)
 
@@ -823,7 +1138,7 @@ def _yolo_detection_loop():
                 recog_name = "UNKNOWN"
                 box_color = (0, 200, 200)
                 label_color = (0, 200, 200)
-                display_label = "Person Detected"
+                display_label = f"Person {conf:.2f}"
 
                 track_key = (x1 // 80, y1 // 80)
                 cached_name, cached_sim = _person_name_cache[track_key]

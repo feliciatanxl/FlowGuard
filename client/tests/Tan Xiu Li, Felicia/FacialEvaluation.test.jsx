@@ -1,11 +1,11 @@
-// Frontend tests — FM-only Facial Evaluation Lab (Felicia).
+// Frontend tests â€” FM-only Facial Evaluation Lab (Felicia).
 // Simulation-only: verifies the page never calls real attendance/security/user
 // mutation APIs, evaluation-record CRUD + localStorage persistence, the
 // confusion-matrix math (accuracy, macro P/R/F1, FAR, FRR, zero-sample safety),
 // CSV export, and that no raw image/vector/template data is rendered or stored.
 import React from "react";
-import { render, screen, fireEvent, within, cleanup } from "@testing-library/react";
-import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { render, screen, fireEvent, within, cleanup, act } from "@testing-library/react";
+import { MemoryRouter, Routes, Route } from "react-router";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import "@testing-library/jest-dom";
 
@@ -61,16 +61,16 @@ describe("FM-only route", () => {
       </MemoryRouter>
     );
 
-  test("FM sees the evaluation lab", () => {
+  test("FM sees the evaluation dashboard", () => {
     renderGuarded();
-    expect(screen.getByText("Facial Evaluation Lab")).toBeInTheDocument();
+    expect(screen.getByText("Facial Recognition Evaluation")).toBeInTheDocument();
   });
 
   test.each(["Tenant", "Staff"])("%s is redirected to 403", (role) => {
     localStorage.setItem("userRole", role);
     renderGuarded();
     expect(screen.getByText("403 blocked")).toBeInTheDocument();
-    expect(screen.queryByText("Facial Evaluation Lab")).toBeNull();
+    expect(screen.queryByText("Facial Recognition Evaluation")).toBeNull();
   });
 });
 
@@ -78,11 +78,12 @@ describe("FM-only route", () => {
 // Banner + simulation scenarios
 // ---------------------------------------------------------------------------
 describe("Simulation scenarios", () => {
-  test("shows the SIMULATION MODE banner", () => {
+  const openSimTab = () => fireEvent.click(screen.getByRole("tab", { name: "Simulated Workflow" }));
+
+  test("no global SIMULATION MODE banner; Overview shows the Live mode note by default", () => {
     renderPage();
-    expect(
-      screen.getByText(/SIMULATION MODE — Production users, attendance and security logs are not modified\./)
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/SIMULATION MODE/)).toBeNull();
+    expect(screen.getByTestId("overview-mode-note").textContent).toMatch(/LIVE MODEL RESULTS/);
   });
 
   test("links to the real live pages instead of duplicating the camera", () => {
@@ -94,11 +95,12 @@ describe("Simulation scenarios", () => {
   });
 
   const runScenario = (title) => {
+    openSimTab();
     fireEvent.click(screen.getByRole("button", { name: new RegExp(title) }));
     return within(screen.getByTestId("sim-result"));
   };
 
-  test("recognised active user → Access Granted with anonymised label", () => {
+  test("recognised active user â†’ Access Granted with anonymised label", () => {
     renderPage();
     const result = runScenario("1\\. Recognised Active User");
     expect(result.getByText("P01")).toBeInTheDocument();
@@ -107,7 +109,7 @@ describe("Simulation scenarios", () => {
     expect(result.getByText(/attendance clock-in would be recorded/i)).toBeInTheDocument();
   });
 
-  test("recognised suspended user → Access Denied + simulated security log", () => {
+  test("recognised suspended user â†’ Access Denied + simulated security log", () => {
     renderPage();
     const result = runScenario("2\\. Recognised Suspended User");
     expect(result.getByText("P02")).toBeInTheDocument();
@@ -116,7 +118,7 @@ describe("Simulation scenarios", () => {
     expect(result.getByText(/suspended access attempt/i)).toBeInTheDocument();
   });
 
-  test("unknown person → Access Denied + simulated intrusion log", () => {
+  test("unknown person â†’ Access Denied + simulated intrusion log", () => {
     renderPage();
     const result = runScenario("3\\. Unknown Person");
     expect(result.getAllByText("Unknown").length).toBeGreaterThan(0);
@@ -124,21 +126,21 @@ describe("Simulation scenarios", () => {
     expect(result.getByText(/intrusion alert/i)).toBeInTheDocument();
   });
 
-  test("no face detected → NO suspicious log is simulated", () => {
+  test("no face detected â†’ NO suspicious log is simulated", () => {
     renderPage();
     const result = runScenario("4\\. No Face Detected");
     expect(result.getByText("No decision")).toBeInTheDocument();
     expect(result.getByText(/no log created/i)).toBeInTheDocument();
   });
 
-  test("Pi offline → automatic laptop fallback continues recognition", () => {
+  test("Pi offline â†’ automatic laptop fallback continues recognition", () => {
     renderPage();
     const result = runScenario("5\\. Pi Camera Offline");
     expect(result.getByText(/laptop-webcam fallback/i)).toBeInTheDocument();
     expect(result.getByText("Access Granted")).toBeInTheDocument();
   });
 
-  test("recognition service offline → retry/backoff without switching camera", () => {
+  test("recognition service offline â†’ retry/backoff without switching camera", () => {
     renderPage();
     const result = runScenario("6\\. Recognition Service Offline");
     expect(result.getByText(/scan-gate backoff engaged/i)).toBeInTheDocument();
@@ -147,6 +149,7 @@ describe("Simulation scenarios", () => {
 
   test("simulations never call real attendance/security/user mutation APIs", () => {
     renderPage();
+    openSimTab();
     // Run every scenario and log one to the records.
     [1, 2, 3, 4, 5, 6].forEach((n) => {
       fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${n}\\.`) }));
@@ -154,7 +157,7 @@ describe("Simulation scenarios", () => {
     fireEvent.click(screen.getByRole("button", { name: /1\. Recognised Active User/ }));
     fireEvent.click(screen.getByRole("button", { name: "Log to evaluation records" }));
 
-    expect(mockAxios.get).not.toHaveBeenCalled();
+    expect(mockAxios.get.mock.calls.every(([url]) => url === "/api/facial-recognition/evaluation-participants")).toBe(true);
     expect(mockAxios.post).not.toHaveBeenCalled();
     expect(mockAxios.put).not.toHaveBeenCalled();
     expect(mockAxios.patch).not.toHaveBeenCalled();
@@ -167,6 +170,7 @@ describe("Simulation scenarios", () => {
 // ---------------------------------------------------------------------------
 describe("Evaluation records CRUD", () => {
   const openRecordsTab = () => fireEvent.click(screen.getByRole("tab", { name: "Evaluation Records" }));
+  const openSimTab = () => fireEvent.click(screen.getByRole("tab", { name: "Simulated Workflow" }));
 
   const addLiveRecord = () => {
     fireEvent.change(screen.getByLabelText(/^Actual/), { target: { value: "P02" } });
@@ -210,13 +214,13 @@ describe("Evaluation records CRUD", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     fireEvent.change(screen.getByLabelText("Edit actual label"), { target: { value: "P03" } });
     fireEvent.change(screen.getByLabelText("Edit predicted label"), { target: { value: "P03" } });
-    fireEvent.change(screen.getByLabelText("Edit condition"), { target: { value: "low-light" } });
+    fireEvent.change(screen.getByLabelText("Edit condition"), { target: { value: "Low Lighting" } });
     fireEvent.change(screen.getByLabelText("Edit notes"), { target: { value: "corrected label" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(screen.getByText("corrected label")).toBeInTheDocument();
     const stored = JSON.parse(localStorage.getItem(EVAL_STORAGE_KEY));
-    expect(stored[0]).toMatchObject({ actualLabel: "P03", predictedLabel: "P03", condition: "low-light" });
+    expect(stored[0]).toMatchObject({ actualLabel: "P03", predictedLabel: "P03", condition: "Low Lighting" });
   });
 
   test("Delete: removes one record", () => {
@@ -230,11 +234,12 @@ describe("Evaluation records CRUD", () => {
   test("Clear Simulated asks for confirmation and keeps Live records", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     renderPage();
+    openSimTab();
 
-    // One simulated record…
+    // One simulated recordâ€¦
     fireEvent.click(screen.getByRole("button", { name: /1\. Recognised Active User/ }));
     fireEvent.click(screen.getByRole("button", { name: "Log to evaluation records" }));
-    // …and one live record.
+    // â€¦and one live record.
     openRecordsTab();
     addLiveRecord();
 
@@ -248,6 +253,7 @@ describe("Evaluation records CRUD", () => {
 
   test("no raw image/vector/template data is rendered or stored", () => {
     renderPage();
+    openSimTab();
     fireEvent.click(screen.getByRole("button", { name: /1\. Recognised Active User/ }));
     fireEvent.click(screen.getByRole("button", { name: "Log to evaluation records" }));
 
@@ -257,7 +263,7 @@ describe("Evaluation records CRUD", () => {
     // Records carry ONLY the approved safe fields.
     for (const rec of JSON.parse(raw)) {
       expect(Object.keys(rec).sort()).toEqual(
-        ["actualLabel", "condition", "confidence", "id", "latencyMs", "notes", "predictedLabel", "source", "timestamp"]
+        ["actualLabel", "condition", "confidence", "detectionOutcome", "id", "latencyMs", "notes", "origin", "predictedLabel", "source", "timestamp"]
       );
     }
   });
@@ -291,7 +297,7 @@ describe("computeConfusionMatrix", () => {
     rec("P01", "P01"), rec("P01", "P01"), rec("P01", "Unknown"), // FRR contribution
     rec("P02", "P02"),
     rec("Unknown", "Unknown"), rec("Unknown", "Unknown"), rec("Unknown", "P03"), // FAR contribution
-    rec("P01", "No Face"), // detection failure — excluded from identity matrix
+    rec("P01", "No Face"), // detection failure â€” excluded from identity matrix
   ];
 
   test("matrix counts: rows = actual, columns = predicted", () => {
@@ -323,11 +329,11 @@ describe("computeConfusionMatrix", () => {
   });
 
   test("FRR = enrolled predicted as Unknown / all enrolled", () => {
-    // Enrolled identity samples: 3×P01 + 1×P02 = 4 (the No-Face row is excluded); 1 rejected.
+    // Enrolled identity samples: 3Ã—P01 + 1Ã—P02 = 4 (the No-Face row is excluded); 1 rejected.
     expect(computeConfusionMatrix(SAMPLE).frr).toBeCloseTo(1 / 4, 5);
   });
 
-  test("zero samples → all metrics are 0, never NaN", () => {
+  test("zero samples â†’ all metrics are 0, never NaN", () => {
     const m = computeConfusionMatrix([]);
     for (const v of [m.accuracy, m.macroPrecision, m.macroRecall, m.macroF1, m.far, m.frr, m.avgLatencyMs, m.noFaceRate]) {
       expect(v).toBe(0);
@@ -336,16 +342,158 @@ describe("computeConfusionMatrix", () => {
     expect(m.sampleCount).toBe(0);
   });
 
-  test("page matrix tab renders the computed stats", () => {
+  test("Overview renders the computed stats automatically — no Calculate button", () => {
     localStorage.setItem(EVAL_STORAGE_KEY, JSON.stringify(SAMPLE.map((r, i) => ({ ...r, id: `T-${i}` }))));
     renderPage();
-    fireEvent.click(screen.getByRole("tab", { name: "Confusion Matrix" }));
+    // Overview is the default; Live is the default source, so Simulated sample
+    // records show the empty state until the source filter is switched.
+    expect(screen.getByRole("tab", { name: "Overview", selected: true })).toBeInTheDocument();
+    expect(screen.getByLabelText("Matrix source filter").value).toBe("Live");
+    expect(screen.getByTestId("overview-empty")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /calculate|generate/i })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Matrix source filter"), { target: { value: "Simulated" } });
+    expect(screen.getByTestId("overview-mode-note").textContent).toMatch(/SIMULATED RESULTS/);
     expect(screen.getByTestId("stat-samples").textContent).toBe("7");
     expect(screen.getByTestId("stat-accuracy").textContent).toBe("71.4%");
     expect(screen.getByTestId("stat-far").textContent).toBe("33.3%");
     expect(screen.getByTestId("stat-frr").textContent).toBe("25.0%");
-    expect(screen.getByTestId("no-face-stat").textContent).toMatch(/1 “No Face” sample/);
+    expect(screen.getByTestId("no-face-stat").textContent).toMatch(/1 .*No Face.* sample/);
     expect(screen.getByTestId("confusion-matrix")).toBeInTheDocument();
+  });
+
+  test("Overview with Live records auto-displays metrics and matrix; camera never starts", () => {
+    const getUserMedia = vi.fn();
+    vi.stubGlobal("navigator", Object.assign(Object.create(navigator), { mediaDevices: { getUserMedia } }));
+    localStorage.setItem(EVAL_STORAGE_KEY, JSON.stringify([
+      { id: "L-1", actualLabel: "P01", predictedLabel: "P01", condition: "Front", source: "Live", origin: "Live Model Evaluation", latencyMs: 200, timestamp: "2026-07-10T02:00:00.000Z" },
+      { id: "L-2", actualLabel: "P02", predictedLabel: "Unknown", condition: "Front", source: "Live", origin: "Live Model Evaluation", latencyMs: 300, timestamp: "2026-07-10T02:01:00.000Z" },
+    ]));
+    renderPage();
+    // Metrics appear with no clicks at all.
+    expect(screen.getByTestId("stat-samples").textContent).toBe("2");
+    expect(screen.getByTestId("stat-accuracy").textContent).toBe("50.0%");
+    expect(screen.getByTestId("confusion-matrix")).toBeInTheDocument();
+    // Matrix axes are anonymised and numerically ordered.
+    const headers = [...screen.getByTestId("confusion-matrix").querySelectorAll("thead th")].map((h) => h.textContent);
+    expect(headers.slice(1)).toEqual(["P01", "P02", "Unknown"]);
+    // Opening Overview never starts the webcam.
+    expect(getUserMedia).not.toHaveBeenCalled();
+    expect(document.querySelector("video")).toBeNull();
+  });
+
+  test("empty Live records show a meaningful empty state, not fake 0% scores", () => {
+    renderPage();
+    expect(screen.getByText(/No confirmed Live evaluation samples are available yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Complete controlled recognition tests with a confirmed actual identity/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run Live Evaluation" })).toBeInTheDocument();
+    expect(screen.queryByTestId("stat-accuracy")).toBeNull();
+  });
+
+  test("unenrolled participants appear in the directory but not as matrix classes", async () => {
+    mockAxios.get.mockResolvedValue({ data: { participants: [
+      { userId: 1, evaluationLabel: "P01", name: "Felicia Tan", role: "FM", isActive: true, isEnrolled: true, matrixEligible: true },
+      { userId: 2, evaluationLabel: "P02", name: "Suspended Enrolled", role: "Staff", isActive: false, isEnrolled: true, matrixEligible: true },
+      { userId: 3, evaluationLabel: "P04", name: "Sarah Tan", role: "Tenant", isActive: true, isEnrolled: false, matrixEligible: false },
+    ] } });
+    localStorage.setItem(EVAL_STORAGE_KEY, JSON.stringify([
+      { id: "L-1", actualLabel: "P01", predictedLabel: "P01", condition: "Front", source: "Live", origin: "Manual", timestamp: "2026-07-10T02:00:00.000Z" },
+    ]));
+    renderPage();
+    const legend = await screen.findByTestId("participant-legend");
+    expect(within(legend).getByText("Sarah Tan")).toBeInTheDocument();
+    expect(within(legend).getByText("Excluded until face enrolment")).toBeInTheDocument();
+    expect(within(legend).getByText("Suspended")).toBeInTheDocument();
+    const headers = [...screen.getByTestId("confusion-matrix").querySelectorAll("thead th")].map((h) => h.textContent);
+    // Suspended-but-enrolled P02 stays a class; unenrolled P04 does not.
+    expect(headers.slice(1)).toEqual(["P01", "P02", "Unknown"]);
+    expect(within(screen.getByTestId("confusion-matrix")).queryByText("Felicia Tan")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Live model evaluation — prediction source
+// ---------------------------------------------------------------------------
+describe("Live model evaluation prediction source", () => {
+  test("prediction comes from predictedEvaluationLabel; a recognised user needs NO browser-local mapping and never degrades to Unknown", async () => {
+    const createObjectURL = vi.fn(() => "blob:probe");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", Object.assign(Object.create(URL), { createObjectURL, revokeObjectURL }));
+    // Recognised user with a database-backed label but NO local label map entry.
+    mockAxios.post.mockResolvedValue({
+      data: {
+        matchedUserId: 9, outcome: "MATCHED", confidence: 0.91,
+        predictedEvaluationLabel: "P07",
+        timings: { totalRequestMs: 210 }, liveness: { status: "front-facing" },
+      },
+    });
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: "Run Live Evaluation" }));
+
+    const file = new File(["probe-bytes"], "probe.png", { type: "image/png" });
+    fireEvent.change(screen.getByLabelText("Temporary evaluation upload"), { target: { files: [file] } });
+    await screen.findByAltText("temporary evaluation preview");
+
+    // The FileReader that produces the temporary frame fires on the task
+    // queue — flush it before running the model exactly once.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+    fireEvent.click(screen.getByRole("button", { name: "Run model on upload" }));
+    expect(await screen.findByText("Predicted: P07")).toBeInTheDocument();
+
+    // Database-backed prediction: no "Assign evaluation label first" block.
+    expect(screen.queryByText("Assign evaluation label first")).toBeNull();
+    expect(screen.getByRole("button", { name: "Save Live Evaluation Record" })).toBeEnabled();
+    // Only the side-effect-free evaluate endpoint was called.
+    expect(mockAxios.post.mock.calls.every(([url]) => url === "/api/facial-recognition/evaluate")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Clear Local Evaluation Records dialog
+// ---------------------------------------------------------------------------
+describe("Clear Local Evaluation Records dialog", () => {
+  const openDialog = () => {
+    fireEvent.click(screen.getByRole("button", { name: "Clear Local Evaluation Records" }));
+    return within(screen.getByRole("dialog", { name: "Clear Local Evaluation Records" }));
+  };
+
+  test("explicitly lists every unaffected production data type", () => {
+    renderPage();
+    const dialog = openDialog();
+    expect(dialog.getByText(/Identity evaluation records are stored locally in this browser only/)).toBeInTheDocument();
+    expect(dialog.getByText(/does not remove or modify/)).toBeInTheDocument();
+    for (const item of ["PostgreSQL Users", "Face ID enrolments", "Biometric templates", "Attendance", "SecurityLogs", "Bookings"]) {
+      expect(dialog.getByText(item)).toBeInTheDocument();
+    }
+    expect(dialog.getByText(/Access-decision records are cleared only when you separately select/)).toBeInTheDocument();
+    expect(dialog.getByText(/never contain uploaded images, base64 data or embeddings/)).toBeInTheDocument();
+  });
+
+  test("confirming clears only browser-local records and calls no operational API", () => {
+    localStorage.setItem(EVAL_STORAGE_KEY, JSON.stringify([
+      { id: "C-1", actualLabel: "P01", predictedLabel: "P01", condition: "Front", source: "Live", origin: "Manual", timestamp: "2026-07-10T02:00:00.000Z" },
+    ]));
+    renderPage();
+    const dialog = openDialog();
+    fireEvent.click(dialog.getByRole("button", { name: "Confirm Clear" }));
+
+    expect(JSON.parse(localStorage.getItem(EVAL_STORAGE_KEY))).toHaveLength(0);
+    // No User deletion, enrolment deletion, Attendance, SecurityLog or Booking calls.
+    expect(mockAxios.post).not.toHaveBeenCalled();
+    expect(mockAxios.put).not.toHaveBeenCalled();
+    expect(mockAxios.patch).not.toHaveBeenCalled();
+    expect(mockAxios.delete).not.toHaveBeenCalled();
+    expect(mockAxios.get.mock.calls.every(([url]) => url === "/api/facial-recognition/evaluation-participants")).toBe(true);
+  });
+
+  test("cancelling keeps the local records", () => {
+    localStorage.setItem(EVAL_STORAGE_KEY, JSON.stringify([
+      { id: "C-2", actualLabel: "P02", predictedLabel: "P02", condition: "Front", source: "Live", origin: "Manual", timestamp: "2026-07-10T02:00:00.000Z" },
+    ]));
+    renderPage();
+    const dialog = openDialog();
+    fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
+    expect(JSON.parse(localStorage.getItem(EVAL_STORAGE_KEY))).toHaveLength(1);
   });
 });
 
@@ -371,7 +519,7 @@ describe("filterRecords / toCsv", () => {
       notes: 'said "hi", twice', timestamp: "2026-07-10T09:00:00.000Z",
     }]);
     const [header, row] = csv.split("\n");
-    expect(header).toBe("id,actualLabel,predictedLabel,confidence,condition,latencyMs,source,notes,timestamp");
+    expect(header).toBe("id,actualLabel,predictedLabel,confidence,condition,latencyMs,source,origin,notes,detectionOutcome,timestamp");
     expect(row).toContain('"said ""hi"", twice"');
   });
 });
