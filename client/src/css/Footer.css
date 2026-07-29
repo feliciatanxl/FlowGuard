@@ -1,6 +1,6 @@
 .footer-container {
-  margin-top: 110px;
-  padding: 76px max(28px, calc((100vw - 1200px) / 2)) 30px;
+  margin-top: var(--home-compact-space, clamp(36px, 4vw, 64px));
+  padding: clamp(48px, 5vw, 64px) max(28px, calc((100vw - 1200px) / 2)) 30px;
   border-top: 1px solid rgba(148, 163, 184, 0.12);
   background: #0a1424;
 }
@@ -83,7 +83,7 @@
 
 .footer-bottom {
   max-width: 1200px;
-  margin: 58px auto 0;
+  margin: 44px auto 0;
   padding-top: 25px;
   border-top: 1px solid rgba(148, 163, 184, 0.1);
 }
@@ -97,8 +97,8 @@
 
 @media (max-width: 800px) {
   .footer-container {
-    margin-top: 75px;
-    padding: 55px 20px 25px;
+    margin-top: var(--home-compact-space, 48px);
+    padding: 48px 20px 25px;
   }
 
   .footer-content { grid-template-columns: 1.4fr 1fr; gap: 42px 30px; }

@@ -14,7 +14,10 @@ const HomeFixture = () => (
     <NavBar />
     <section id="mission">Mission</section>
     <section id="how-it-works">How it works</section>
-    <section id="capabilities">Capabilities</section>
+    <section id="capabilities">
+      <span id="technology" className="legacy-hash-anchor" aria-hidden="true" />
+      Capabilities
+    </section>
     <section id="poc-status">PoC status</section>
   </>
 );
@@ -85,12 +88,23 @@ describe('hash navigation', () => {
   test('clicking Solutions opens the public Innovation page', async () => {
     renderNavigation('/');
 
-    fireEvent.click(screen.getByRole('link', { name: 'Solutions' }));
+    const solutionsLink = screen.getByRole('link', { name: 'Solutions' });
+    expect(solutionsLink.getAttribute('aria-current')).toBeNull();
+    fireEvent.click(solutionsLink);
 
     await waitFor(() => {
       expect(screen.getByTestId('location').textContent).toBe('/innovation');
       expect(scrollIntoView).not.toHaveBeenCalled();
     });
+  });
+
+  test('Solutions is the active navigation item on Innovation', () => {
+    renderNavigation('/innovation');
+
+    const solutionsLink = screen.getByRole('link', { name: 'Solutions' });
+    expect(solutionsLink.getAttribute('href')).toBe('/innovation');
+    expect(solutionsLink.getAttribute('aria-current')).toBe('page');
+    expect(solutionsLink.classList.contains('is-active')).toBe(true);
   });
 
   test('a section link from another route navigates home and scrolls', async () => {
@@ -116,6 +130,10 @@ describe('hash navigation', () => {
 
   test('legacy /#technology navigation scrolls to capabilities', async () => {
     renderNavigation('/#technology');
+
+    const legacyAnchor = document.getElementById('technology');
+    expect(legacyAnchor.classList.contains('legacy-hash-anchor')).toBe(true);
+    expect(legacyAnchor.getAttribute('aria-hidden')).toBe('true');
 
     await waitFor(() => {
       expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });

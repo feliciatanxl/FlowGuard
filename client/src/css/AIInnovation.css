@@ -14,7 +14,7 @@
 
 .ai-hero {
   max-width: 920px;
-  margin: 0 auto 82px;
+  margin: 0 auto;
   text-align: center;
 }
 
@@ -77,7 +77,7 @@
 .ai-capabilities-section,
 .ai-interfaces-section,
 .ai-scope-section {
-  padding: 78px 0;
+  padding: var(--home-section-space) 0 0;
 }
 
 .vision-container {
@@ -472,15 +472,11 @@
   .ai-capabilities-section,
   .ai-interfaces-section,
   .ai-scope-section {
-    padding: 60px 0;
+    padding: var(--home-section-space) 0 0;
   }
 }
 
 @media (max-width: 560px) {
-  .ai-hero {
-    margin-bottom: 45px;
-  }
-
   .ai-page-wrapper .gradient-text {
     font-size: clamp(2.45rem, 12vw, 3.3rem);
   }

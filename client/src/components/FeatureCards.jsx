@@ -31,6 +31,7 @@ const FeatureCards = () => {
 
   return (
     <section id="capabilities" className="features-section">
+      <span id="technology" className="legacy-hash-anchor" aria-hidden="true" />
       <div className="features-header">
         <span className="eyebrow">Platform capabilities</span>
         <h2 className="section-title">One platform for factory access, monitoring and response</h2>

@@ -73,12 +73,13 @@ const HashScrollHandler = () => {
       }
 
       if (destination.pathname === pathname && destination.hash === hash && hash) {
+        event.preventDefault();
         scrollToHashTarget(hash);
       }
     };
 
-    document.addEventListener('click', handleSameHashClick);
-    return () => document.removeEventListener('click', handleSameHashClick);
+    document.addEventListener('click', handleSameHashClick, true);
+    return () => document.removeEventListener('click', handleSameHashClick, true);
   }, [pathname, hash]);
 
   return null;

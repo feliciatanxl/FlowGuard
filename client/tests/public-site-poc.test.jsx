@@ -10,7 +10,7 @@ import AIInnovation from '../src/pages/AIInnovation';
 import SystemHealth from '../src/pages/SystemHealth';
 import Contact from '../src/pages/Contact';
 
-const renderPublic = (ui) => render(<MemoryRouter>{ui}</MemoryRouter>);
+const renderPublic = (ui, initialEntry = '/') => render(<MemoryRouter initialEntries={[initialEntry]}>{ui}</MemoryRouter>);
 const forbiddenClaims = /128\+|PPE|Spill|HVAC|temperature|humidity|99\.8|40%|70%|NexusCloud|OptiTemp|AeroNode|Sentinel Security|Available TOL 2027|Opening Soon/i;
 const internalData = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}|\\+65\\s?\\d{4}\\s?\\d{4}|192\\.168\\.|10\\.0\\.|SG[A-Z0-9]{6,}|faceVector|passwordResetTokenHash/i;
 
@@ -53,6 +53,7 @@ describe('public FlowGuard website PoC positioning', () => {
 
     const nav = within(screen.getByRole('navigation', { name: /Primary navigation/i }));
     expect(nav.getByRole('link', { name: 'Solutions' })).toHaveAttribute('href', '/innovation');
+    expect(nav.getByRole('link', { name: 'Solutions' })).not.toHaveAttribute('aria-current');
     expect(nav.getByRole('link', { name: 'Capabilities' })).toHaveAttribute('href', '/#capabilities');
 
     const cta = within(screen.getByRole('region', { name: /See connected factory operations in action/i }));
@@ -63,6 +64,24 @@ describe('public FlowGuard website PoC positioning', () => {
     const assetCard = screen.getAllByTestId('module-card').find((card) => within(card).queryByRole('heading', { name: 'Asset and Space Monitoring' }));
     expect(within(assetCard).getByRole('link', { name: /Explore AI Monitoring/i })).toHaveAttribute('href', '/innovation');
     expect(screen.queryByRole('link', { name: /Explore AI Monitoring/i })).not.toHaveAttribute('href', '/object-detection');
+  });
+
+  test('homepage keeps canonical section ids, hidden legacy support and bounded section sizing', () => {
+    renderPublic(<Home />);
+
+    expect(document.getElementById('capabilities')).toBeInTheDocument();
+    expect(document.getElementById('how-it-works')).toBeInTheDocument();
+    expect(document.getElementById('poc-status')).toBeInTheDocument();
+
+    const legacyAnchor = document.getElementById('technology');
+    expect(legacyAnchor).toHaveClass('legacy-hash-anchor');
+    expect(legacyAnchor).toHaveAttribute('aria-hidden', 'true');
+
+    const css = fs.readFileSync(path.resolve(process.cwd(), 'src/css/Home.css'), 'utf8');
+    expect(css).toContain('--home-section-space: clamp(64px, 7vw, 104px);');
+    expect(css).toContain('--home-compact-space: clamp(36px, 4vw, 64px);');
+    expect(css).toMatch(/\.legacy-hash-anchor\s*\{[^}]*width:\s*0;[^}]*height:\s*0;/s);
+    expect(css).not.toMatch(/\.(?:challenges|features|facility|how|roadmap)-section\s*\{[^}]*min-height:\s*100vh;/s);
   });
 
   test('homepage CSS defines four-two-one responsive grids for public cards', () => {
@@ -105,8 +124,9 @@ describe('public FlowGuard website PoC positioning', () => {
   });
 
   test('innovation page shows four integrated capability areas and illustrative labels', () => {
-    renderPublic(<AIInnovation />);
+    renderPublic(<AIInnovation />, '/innovation');
 
+    expect(screen.getAllByRole('link', { name: 'Solutions' }).some((link) => link.getAttribute('aria-current') === 'page')).toBe(true);
     expect(screen.getByRole('heading', { level: 1, name: /FlowGuard AI & Operations Innovation/i })).toBeInTheDocument();
     expect(screen.getByText(/FlowGuard connects secure access, intelligent space monitoring, smart logistics and operational response in one factory-management platform/i)).toBeInTheDocument();
 
