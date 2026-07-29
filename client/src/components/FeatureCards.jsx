@@ -1,43 +1,52 @@
-import React from 'react';
+import { Link } from 'react-router';
 
 const FeatureCards = () => {
   const features = [
     {
-      title: "Facial Recognition & Access Management",
-      description: "Enrol authorised personnel, verify identity and motion liveness at facility gates, record attendance and review suspicious access events.",
-      items: ["Face ID enrolment", "Gate Scanner", "V-Patrol", "Daily Attendance", "Security Review", "Suspended/unknown-person handling", "Privacy-conscious off-boarding"]
+      number: "01",
+      title: "Secure Access Management",
+      description: "Support checkpoint verification and maintain consistent access records for authorised review.",
+      items: ["Facial enrolment", "Gate verification", "Attendance", "Security logs"]
     },
     {
-      title: "Object Detection & Space Management",
-      description: "Register cameras, configure monitored zones and create detection rules for camera-based operational alerts.",
-      items: ["Camera inventory", "Monitoring zones", "Unattended-object thresholds", "Detection enable/disable", "Severity configuration", "Active alerts", "Alert status updates"]
+      number: "02",
+      title: "Asset and Space Monitoring",
+      description: "Use configured cameras and zones to surface supported events that need human attention.",
+      items: ["Camera zones", "People counting", "Unattended-item alerts", "AI-linked incidents"],
+      link: { label: "Explore AI Monitoring", to: "/innovation" }
     },
     {
-      title: "Smart Logistics & Loading-Bay Management",
-      description: "Coordinate delivery bookings, loading-bay schedules, Driver Passes and gate arrival or completion workflows.",
-      items: ["Booking creation", "Time-slot conflict checking", "Bay A / Bay B scheduling", "Booking reference", "Public Driver Pass", "Gate entry and exit", "Mock-safe WhatsApp notifications", "Next-driver notification"]
+      number: "03",
+      title: "Smart Logistics",
+      description: "Coordinate loading-bay activity from booking through verified arrival and departure records.",
+      items: ["Loading-bay bookings", "Driver Pass QR verification", "PoC plate OCR", "Entry and exit auditing"]
     },
     {
-      title: "AI Helpdesk & Incident Support",
-      description: "Support tenants through AI-assisted helpdesk conversations, ticket escalation, security review and incident-resolution workflows.",
-      items: ["Chat transcripts", "Unresolved-request escalation", "Support tickets", "Knowledge base", "Incident dashboard", "Resolution notes"]
+      number: "04",
+      title: "Incident and Operational Support",
+      description: "Connect alerts to response records and provide teams with a clearer path to follow-up.",
+      items: ["Incident resolution", "Support tickets", "Knowledge assistance", "Command-centre visibility"]
     }
   ];
 
   return (
-    <section id="technology" className="features-section">
+    <section id="capabilities" className="features-section">
+      <span id="technology" className="legacy-hash-anchor" aria-hidden="true" />
       <div className="features-header">
-        <h2 className="section-title">Actual Group Modules</h2>
-        <p className="section-subtitle">Four implemented areas make up the current FlowGuard proof of concept.</p>
+        <span className="eyebrow">Platform capabilities</span>
+        <h2 className="section-title">One platform for factory access, monitoring and response</h2>
+        <p className="section-subtitle">Four connected capability areas support the current FlowGuard proof of concept.</p>
       </div>
       <div className="features-grid module-grid">
         {features.map((f) => (
           <div key={f.title} className="feature-card module-card" data-testid="module-card">
+            <span className="feature-number">{f.number}</span>
             <h3 className="feature-title">{f.title}</h3>
             <p className="feature-description">{f.description}</p>
             <ul className="feature-list">
               {f.items.map((item) => <li key={item}>{item}</li>)}
             </ul>
+            {f.link && <Link className="feature-link" to={f.link.to}>{f.link.label} <span aria-hidden="true">→</span></Link>}
           </div>
         ))}
       </div>

@@ -1,29 +1,37 @@
-import React from 'react';
-
 const Roadmap = () => {
-  const milestones = [
-    { date: "Phase 1", title: "Core Platform", desc: "Authentication and RBAC, facial enrolment and access workflows, camera and monitoring-zone setup." },
-    { date: "Phase 2", title: "Operational Integration", desc: "Attendance, object alerts, Smart Logistics, security review, helpdesk and incident support." },
-    { date: "Phase 3", title: "PoC Validation", desc: "Raspberry Pi camera integration, real-time tracking and motion liveness, automated tests, usability and security review, deployment-readiness assessment." }
+  const currentCapabilities = [
+    "Facial access and attendance",
+    "Object and unattended-item monitoring for supported classes",
+    "Smart Logistics and gate verification",
+    "Incident and support workflows",
+    "Google Cloud deployment"
+  ];
+  const futureCapabilities = [
+    "After-hours motion schedules",
+    "Pest and animal detection",
+    "Pick-up, set-down and push-in action recognition",
+    "Multi-camera person re-identification",
+    "Production hardware and physical-barrier integration"
   ];
 
   return (
-    <section id="roadmap" className="roadmap-section">
+    <section id="poc-status" className="roadmap-section section-shell">
       <div className="roadmap-header">
-        <h2 className="section-title">PoC Development Journey</h2>
-        <p className="section-subtitle">Current project progress is documented as a proof-of-concept journey.</p>
+        <span className="eyebrow">Scope and direction</span>
+        <h2 className="section-title">Current PoC and future roadmap</h2>
+        <p className="section-subtitle">A transparent view of what the academic proof of concept includes today and what remains future work.</p>
       </div>
-      <div className="timeline-container">
-        {milestones.map((item) => (
-          <div key={item.title} className="timeline-item">
-            <div className="timeline-dot"></div>
-            <div className="timeline-content">
-              <span className="timeline-date">{item.date}</span>
-              <h3 className="timeline-title">{item.title}</h3>
-              <p className="timeline-desc">{item.desc}</p>
-            </div>
-          </div>
-        ))}
+      <div className="roadmap-grid">
+        <article className="roadmap-card roadmap-current">
+          <span className="roadmap-label"><span aria-hidden="true" />Current proof of concept</span>
+          <h3>Implemented PoC scope</h3>
+          <ul>{currentCapabilities.map((item) => <li key={item}>{item}</li>)}</ul>
+        </article>
+        <article className="roadmap-card roadmap-future">
+          <span className="roadmap-label">Future deployment and research</span>
+          <h3>Not implemented in the current PoC</h3>
+          <ul>{futureCapabilities.map((item) => <li key={item}>{item}</li>)}</ul>
+        </article>
       </div>
     </section>
   );
