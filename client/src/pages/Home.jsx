@@ -1,14 +1,13 @@
-import React from "react";
 import NavBar from "../components/NavBar";
 import Hero from "../components/Hero";
 import ImpactStats from "../components/ImpactStats";
 import FeatureCards from "../components/FeatureCards";
 import Footer from "../components/Footer";
-import ContactForm from "../components/ContactForm";
 import LiveStatus from "../components/LiveStatus";
 import Roadmap from "../components/Roadmap";
-import TechStack from "../components/TechStack";
 import HowItWorks from "../components/HowItWorks";
+import FacilityWorkflow from "../components/FacilityWorkflow";
+import HomepageCta from "../components/HomepageCta";
 
 const Home = () => {
   return (
@@ -16,12 +15,12 @@ const Home = () => {
       <NavBar />
       <Hero />
       <LiveStatus />
-      <ImpactStats /> 
       <FeatureCards />
+      <FacilityWorkflow />
+      <ImpactStats />
       <HowItWorks />
       <Roadmap />
-      <TechStack />
-      <ContactForm />
+      <HomepageCta />
       <Footer />
     </main>
   );

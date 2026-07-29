@@ -14,7 +14,21 @@ const HomeFixture = () => (
     <NavBar />
     <section id="mission">Mission</section>
     <section id="how-it-works">How it works</section>
-    <section id="technology">Technology</section>
+    <section id="capabilities">
+      <span id="technology" className="legacy-hash-anchor" aria-hidden="true" />
+      Capabilities
+    </section>
+    <section id="poc-status">PoC status</section>
+  </>
+);
+
+const InnovationFixture = () => (
+  <>
+    <NavBar />
+    <section id="solutions">Integrated operational areas</section>
+    <section id="how-it-works">Connected workflow</section>
+    <section id="capabilities">Interface showcase</section>
+    <section id="poc-status">PoC status</section>
   </>
 );
 
@@ -24,7 +38,7 @@ const renderNavigation = (initialEntry) => render(
     <LocationProbe />
     <Routes>
       <Route path="/" element={<HomeFixture />} />
-      <Route path="/innovation" element={<NavBar />} />
+      <Route path="/innovation" element={<InnovationFixture />} />
     </Routes>
   </MemoryRouter>,
 );
@@ -81,36 +95,82 @@ describe('hash navigation', () => {
     }
   });
 
-  test('clicking Overview on the home page scrolls to mission', async () => {
+  test('clicking Solutions opens the public Innovation page', async () => {
     renderNavigation('/');
 
-    fireEvent.click(screen.getByRole('link', { name: 'Overview' }));
+    const solutionsLink = screen.getByRole('link', { name: 'Solutions' });
+    expect(solutionsLink.getAttribute('aria-current')).toBeNull();
+    fireEvent.click(solutionsLink);
 
     await waitFor(() => {
-      expect(screen.getByTestId('location').textContent).toBe('/#mission');
-      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
-      expect(scrollIntoView.mock.instances).toContain(document.getElementById('mission'));
+      expect(screen.getByTestId('location').textContent).toBe('/innovation');
+      expect(scrollIntoView).not.toHaveBeenCalled();
     });
   });
 
-  test('a section link from another route navigates home and scrolls', async () => {
+  test('Innovation navigation targets valid on-page sections and marks Solutions active', async () => {
+    renderNavigation('/innovation');
+
+    const solutionsLink = screen.getByRole('link', { name: 'Solutions' });
+    expect(solutionsLink.getAttribute('href')).toBe('/innovation#solutions');
+    expect(solutionsLink.getAttribute('aria-current')).toBe('page');
+    expect(solutionsLink.classList.contains('is-active')).toBe(true);
+    expect(screen.getByRole('link', { name: 'Capabilities' }).getAttribute('href')).toBe('/innovation#capabilities');
+    expect(screen.getByRole('link', { name: 'How It Works' }).getAttribute('href')).toBe('/innovation#how-it-works');
+    expect(screen.getByRole('link', { name: 'PoC Status' }).getAttribute('href')).toBe('/innovation#poc-status');
+
+    fireEvent.click(solutionsLink);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/innovation#solutions');
+      expect(scrollIntoView.mock.instances).toContain(document.getElementById('solutions'));
+    });
+  });
+
+  test('Innovation section links stay on the page and scroll to their target', async () => {
     renderNavigation('/innovation');
 
     fireEvent.click(screen.getByRole('link', { name: 'How It Works' }));
 
     await waitFor(() => {
-      expect(screen.getByTestId('location').textContent).toBe('/#how-it-works');
+      expect(screen.getByTestId('location').textContent).toBe('/innovation#how-it-works');
       expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
       expect(scrollIntoView.mock.instances).toContain(document.getElementById('how-it-works'));
     });
   });
 
-  test('direct /#technology navigation scrolls to the correct section', async () => {
-    renderNavigation('/#technology');
+  test('direct /#capabilities navigation scrolls to the canonical section', async () => {
+    renderNavigation('/#capabilities');
 
     await waitFor(() => {
       expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
-      expect(scrollIntoView.mock.instances).toContain(document.getElementById('technology'));
+      expect(scrollIntoView.mock.instances).toContain(document.getElementById('capabilities'));
+    });
+  });
+
+  test('legacy /#technology navigation scrolls to capabilities', async () => {
+    renderNavigation('/#technology');
+
+    const legacyAnchor = document.getElementById('technology');
+    expect(legacyAnchor.classList.contains('legacy-hash-anchor')).toBe(true);
+    expect(legacyAnchor.getAttribute('aria-hidden')).toBe('true');
+
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+      expect(scrollIntoView.mock.instances).toContain(document.getElementById('capabilities'));
+    });
+  });
+
+  test('clicking the current capability hash scrolls again', async () => {
+    renderNavigation('/#capabilities');
+    scrollIntoView.mockClear();
+
+    fireEvent.click(screen.getByRole('link', { name: 'Capabilities' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/#capabilities');
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
+      expect(scrollIntoView.mock.instances).toContain(document.getElementById('capabilities'));
     });
   });
 
@@ -124,8 +184,9 @@ describe('hash navigation', () => {
   test('navigation links preserve their labels and destinations', () => {
     renderNavigation('/');
 
-    expect(screen.getByRole('link', { name: 'Overview' }).getAttribute('href')).toBe('/#mission');
+    expect(screen.getByRole('link', { name: 'Solutions' }).getAttribute('href')).toBe('/innovation');
     expect(screen.getByRole('link', { name: 'How It Works' }).getAttribute('href')).toBe('/#how-it-works');
-    expect(screen.getByRole('link', { name: 'Technology' }).getAttribute('href')).toBe('/#technology');
+    expect(screen.getByRole('link', { name: 'Capabilities' }).getAttribute('href')).toBe('/#capabilities');
+    expect(screen.getByRole('link', { name: 'PoC Status' }).getAttribute('href')).toBe('/#poc-status');
   });
 });
