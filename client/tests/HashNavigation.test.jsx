@@ -22,13 +22,23 @@ const HomeFixture = () => (
   </>
 );
 
+const InnovationFixture = () => (
+  <>
+    <NavBar />
+    <section id="solutions">Integrated operational areas</section>
+    <section id="how-it-works">Connected workflow</section>
+    <section id="capabilities">Interface showcase</section>
+    <section id="poc-status">PoC status</section>
+  </>
+);
+
 const renderNavigation = (initialEntry) => render(
   <MemoryRouter initialEntries={[initialEntry]}>
     <HashScrollHandler />
     <LocationProbe />
     <Routes>
       <Route path="/" element={<HomeFixture />} />
-      <Route path="/innovation" element={<NavBar />} />
+      <Route path="/innovation" element={<InnovationFixture />} />
     </Routes>
   </MemoryRouter>,
 );
@@ -98,22 +108,32 @@ describe('hash navigation', () => {
     });
   });
 
-  test('Solutions is the active navigation item on Innovation', () => {
+  test('Innovation navigation targets valid on-page sections and marks Solutions active', async () => {
     renderNavigation('/innovation');
 
     const solutionsLink = screen.getByRole('link', { name: 'Solutions' });
-    expect(solutionsLink.getAttribute('href')).toBe('/innovation');
+    expect(solutionsLink.getAttribute('href')).toBe('/innovation#solutions');
     expect(solutionsLink.getAttribute('aria-current')).toBe('page');
     expect(solutionsLink.classList.contains('is-active')).toBe(true);
+    expect(screen.getByRole('link', { name: 'Capabilities' }).getAttribute('href')).toBe('/innovation#capabilities');
+    expect(screen.getByRole('link', { name: 'How It Works' }).getAttribute('href')).toBe('/innovation#how-it-works');
+    expect(screen.getByRole('link', { name: 'PoC Status' }).getAttribute('href')).toBe('/innovation#poc-status');
+
+    fireEvent.click(solutionsLink);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/innovation#solutions');
+      expect(scrollIntoView.mock.instances).toContain(document.getElementById('solutions'));
+    });
   });
 
-  test('a section link from another route navigates home and scrolls', async () => {
+  test('Innovation section links stay on the page and scroll to their target', async () => {
     renderNavigation('/innovation');
 
     fireEvent.click(screen.getByRole('link', { name: 'How It Works' }));
 
     await waitFor(() => {
-      expect(screen.getByTestId('location').textContent).toBe('/#how-it-works');
+      expect(screen.getByTestId('location').textContent).toBe('/innovation#how-it-works');
       expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
       expect(scrollIntoView.mock.instances).toContain(document.getElementById('how-it-works'));
     });
