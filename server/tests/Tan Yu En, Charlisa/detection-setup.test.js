@@ -399,6 +399,19 @@ describe("detection_type — explicit Detection Setup category", () => {
     expect(res.body.detection_type).toBe("crowd_density");
   });
 
+  test.each(["unattended_object", "crowd_density", "unauthorized_access"])(
+    "POST accepts existing detection_type '%s' (201)",
+    async (detectionType) => {
+      mockMonitoringZone.create.mockResolvedValue(makeZoneInstance({ detection_type: detectionType }));
+      const res = await request(app)
+        .post("/api/zones")
+        .set("Authorization", `Bearer ${fmToken}`)
+        .send({ ...validPayload, detection_type: detectionType });
+      expect(res.status).toBe(201);
+      expect(res.body.detection_type).toBe(detectionType);
+    }
+  );
+
   test("unsupported detection_type returns 400", async () => {
     const res = await request(app)
       .post("/api/zones")

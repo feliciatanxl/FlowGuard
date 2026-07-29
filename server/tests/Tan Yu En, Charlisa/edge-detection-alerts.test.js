@@ -211,3 +211,91 @@ describe("POST /api/edge/detection-alerts", () => {
     expect(mockDetectionAlert.create).not.toHaveBeenCalled();
   });
 });
+
+describe("GET /api/edge/zone-config", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test("rejects missing/wrong bearer token (401)", async () => {
+    const res = await request(app).get("/api/edge/zone-config?zone_name=Loading Bay");
+    expect(res.status).toBe(401);
+    expect(mockMonitoringZone.findOne).not.toHaveBeenCalled();
+  });
+
+  test("requires zone_name (400)", async () => {
+    const res = await request(app)
+      .get("/api/edge/zone-config")
+      .set("Authorization", "Bearer test-edge-token");
+    expect(res.status).toBe(400);
+  });
+
+  test("404s when the zone doesn't exist", async () => {
+    mockMonitoringZone.findOne.mockResolvedValue(null);
+    const res = await request(app)
+      .get("/api/edge/zone-config?zone_name=Nope")
+      .set("Authorization", "Bearer test-edge-token");
+    expect(res.status).toBe(404);
+  });
+
+  test("returns the zone's Detection Setup rule for a SecurePi device to apply", async () => {
+    mockMonitoringZone.findOne.mockResolvedValue({
+      zone_name: "Loading Bay",
+      detection_enabled: true,
+      unattended_threshold_seconds: 90,
+      time_threshold: 5,
+      density_threshold: 4,
+      alert_cooldown_seconds: 45,
+      monitored_classes: '["backpack", "suitcase"]',
+      severity: "Critical",
+    });
+    const res = await request(app)
+      .get("/api/edge/zone-config?zone_name=Loading Bay")
+      .set("Authorization", "Bearer test-edge-token");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      zone_name: "Loading Bay",
+      detection_enabled: true,
+      unattended_threshold_seconds: 90,
+      density_threshold: 4,
+      alert_cooldown_seconds: 45,
+      monitored_classes: ["backpack", "suitcase"],
+      severity: "Critical",
+    });
+  });
+
+  test("falls back to time_threshold*60 when unattended_threshold_seconds is unset", async () => {
+    mockMonitoringZone.findOne.mockResolvedValue({
+      zone_name: "Loading Bay",
+      detection_enabled: true,
+      unattended_threshold_seconds: null,
+      time_threshold: 5,
+      density_threshold: null,
+      alert_cooldown_seconds: null,
+      monitored_classes: null,
+      severity: "Medium",
+    });
+    const res = await request(app)
+      .get("/api/edge/zone-config?zone_name=Loading Bay")
+      .set("Authorization", "Bearer test-edge-token");
+    expect(res.status).toBe(200);
+    expect(res.body.unattended_threshold_seconds).toBe(300);
+    expect(res.body.monitored_classes).toEqual([]);
+  });
+
+  test("tolerates malformed monitored_classes JSON (falls back to [])", async () => {
+    mockMonitoringZone.findOne.mockResolvedValue({
+      zone_name: "Loading Bay",
+      detection_enabled: true,
+      unattended_threshold_seconds: 90,
+      time_threshold: 5,
+      density_threshold: null,
+      alert_cooldown_seconds: null,
+      monitored_classes: "{not valid json",
+      severity: "Low",
+    });
+    const res = await request(app)
+      .get("/api/edge/zone-config?zone_name=Loading Bay")
+      .set("Authorization", "Bearer test-edge-token");
+    expect(res.status).toBe(200);
+    expect(res.body.monitored_classes).toEqual([]);
+  });
+});

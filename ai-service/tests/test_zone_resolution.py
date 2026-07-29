@@ -18,6 +18,9 @@ from zone_rules import resolve_zone_config, DEFAULT_ZONE_THRESHOLD_SEC  # noqa: 
 ZONE_A = (1, "Zone A", 5, 300, True)   # id, name, time_threshold(min), unattended_sec, enabled
 ZONE_B = (2, "Zone B", 1, 60, True)
 ZONE_DISABLED = (3, "Zone C", 5, None, False)
+# Full Detection Setup row: (...base, density_threshold, alert_cooldown_seconds,
+# monitored_classes json, severity)
+ZONE_WITH_RULES = (4, "Zone D", 5, 120, True, 5, 45, '["backpack", "suitcase"]', "Critical")
 
 
 def cam_lookup(mapping):
@@ -100,6 +103,36 @@ class ZoneResolutionTests(unittest.TestCase):
         config = resolve_zone_config(101, None, fetch_cam, fetch_zone)
         self.assertIsNone(config["zone_error"])
         self.assertFalse(config["detection_enabled"])
+
+    def test_zone_without_extra_rules_yields_none_and_empty_defaults(self):
+        # A 5-tuple row (older shape) means the zone never set these Detection Setup
+        # fields — main.py must fall back to its own global defaults, not crash.
+        fetch_cam = cam_lookup({101: 1})
+        fetch_zone = zone_lookup({1: ZONE_A})
+        config = resolve_zone_config(101, None, fetch_cam, fetch_zone)
+        self.assertIsNone(config["density_threshold"])
+        self.assertIsNone(config["alert_cooldown_seconds"])
+        self.assertEqual(config["monitored_classes"], [])
+        self.assertIsNone(config["severity"])
+
+    def test_zone_with_full_detection_setup_rules_resolves_them_all(self):
+        fetch_cam = cam_lookup({101: 4})
+        fetch_zone = zone_lookup({4: ZONE_WITH_RULES})
+        config = resolve_zone_config(101, None, fetch_cam, fetch_zone)
+        self.assertEqual(config["applied_threshold_seconds"], 120)
+        self.assertEqual(config["density_threshold"], 5)
+        self.assertEqual(config["alert_cooldown_seconds"], 45)
+        self.assertEqual(config["monitored_classes"], ["backpack", "suitcase"])
+        self.assertEqual(config["severity"], "Critical")
+
+    def test_error_config_carries_safe_defaults_for_extra_rules(self):
+        fetch_cam = cam_lookup({})
+        fetch_zone = zone_lookup({})
+        config = resolve_zone_config(999, None, fetch_cam, fetch_zone)
+        self.assertIsNone(config["density_threshold"])
+        self.assertIsNone(config["alert_cooldown_seconds"])
+        self.assertEqual(config["monitored_classes"], [])
+        self.assertIsNone(config["severity"])
 
 
 if __name__ == "__main__":

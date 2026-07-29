@@ -90,6 +90,45 @@ async function resolveLinks(zone_name, camera_location) {
     return { links, detectionType };
 }
 
+// Lets an edge device (SecurePi) pull its own Detection Setup rule instead of relying
+// solely on local .env/CLI defaults, so changes made on the Zones page take effect on
+// hardware without re-flashing the Pi's config. Same auth as posting alerts.
+router.get('/zone-config', verifyEdgeIngestToken, async (req, res) => {
+    try {
+        const zoneName = cleanText(req.query.zone_name, 255);
+        if (!zoneName) {
+            return res.status(400).json({ error: 'zone_name is required.' });
+        }
+
+        const zone = await MonitoringZone.findOne({ where: { zone_name: zoneName } });
+        if (!zone) {
+            return res.status(404).json({ error: 'Zone not found.' });
+        }
+
+        let monitoredClasses = [];
+        try {
+            const parsed = JSON.parse(zone.monitored_classes || '[]');
+            if (Array.isArray(parsed)) monitoredClasses = parsed.filter((c) => typeof c === 'string');
+        } catch {
+            monitoredClasses = [];
+        }
+
+        return res.json({
+            zone_name: zone.zone_name,
+            detection_enabled: zone.detection_enabled,
+            unattended_threshold_seconds: zone.unattended_threshold_seconds != null
+                ? zone.unattended_threshold_seconds
+                : zone.time_threshold * 60,
+            density_threshold: zone.density_threshold,
+            alert_cooldown_seconds: zone.alert_cooldown_seconds,
+            monitored_classes: monitoredClasses,
+            severity: zone.severity
+        });
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 router.post('/detection-alerts', verifyEdgeIngestToken, async (req, res) => {
     try {
         const {
