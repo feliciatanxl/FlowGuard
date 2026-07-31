@@ -12,13 +12,12 @@
 //
 // Only values the Incident Dashboard's own "Log Incident" dropdown already understands
 // (client/src/pages/IncidentDashboard.jsx) are ever returned.
-const INCIDENT_TYPE_BY_DETECTION_TYPE = {
-    unattended_object: 'UNATTENDED_OBJECT',
-    crowd_density: 'OVERCROWDING',
-    unauthorized_access: 'UNAUTHORIZED_ACCESS',
-};
+//
+// INCIDENT_TYPE_BY_DETECTION_TYPE comes from ../config/detectionTypes, the backend's
+// single source of truth for detection_type values (shared with routes/zones.js).
+const { INCIDENT_TYPE_BY_DETECTION_TYPE, DEFAULT_DETECTION_TYPE } = require('../config/detectionTypes');
 
-const DEFAULT_INCIDENT_TYPE = 'UNATTENDED_OBJECT';
+const DEFAULT_INCIDENT_TYPE = INCIDENT_TYPE_BY_DETECTION_TYPE[DEFAULT_DETECTION_TYPE];
 
 // Resolves the IncidentLog type for a detection alert. Prefers an explicit
 // Detection Setup detection_type (zone.detection_type) when the caller has one on

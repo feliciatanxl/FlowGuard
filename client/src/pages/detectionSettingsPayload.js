@@ -1,3 +1,8 @@
+// Keys here must match the backend's supported detection_type values — the source of
+// truth is server/config/detectionTypes.js (DETECTION_TYPES), also used by
+// server/routes/zones.js validation and server/utils/detectionAlertBridge.js's alert
+// mapping. This client copy can't import that server module directly (separate Vite
+// bundle), so keep it in sync by hand when detection types change.
 export const DETECTION_TYPES = {
   unauthorized_access: {
     label: 'Unauthorized Access',

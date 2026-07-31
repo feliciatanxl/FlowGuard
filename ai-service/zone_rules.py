@@ -10,8 +10,25 @@ resolve_zone_config() below: it fetches rows from Postgres and hands them to thi
 branching logic, which decides what "the selected camera's Detection Setup rule" means.
 """
 
-# Used only when a requested camera/zone can't be resolved to a rule (5 min fallback).
-DEFAULT_ZONE_THRESHOLD_SEC = 300
+import os
+
+
+def _read_default_zone_threshold_sec():
+    """Used only when a requested camera/zone can't be resolved to a rule (5 min
+    fallback). Configurable via the DEFAULT_ZONE_THRESHOLD_SEC env var; falls back to
+    300 if unset or not a valid positive integer, so old deployments without the
+    variable keep behaving exactly as before."""
+    raw = os.getenv("DEFAULT_ZONE_THRESHOLD_SEC")
+    if raw is None:
+        return 300
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 300
+    return value if value > 0 else 300
+
+
+DEFAULT_ZONE_THRESHOLD_SEC = _read_default_zone_threshold_sec()
 
 
 def zone_row_to_config(row, applied_camera_id=None):

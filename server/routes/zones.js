@@ -4,6 +4,7 @@ const { readLimiter } = require('../middlewares/rateLimit');
 router.use(readLimiter); // route-wide rate limiting
 const { MonitoringZone, Camera, sequelize } = require('../models');
 const { verifyToken, requireRole } = require('../middlewares/auth');
+const { DETECTION_TYPES, DEFAULT_DETECTION_TYPE } = require('../config/detectionTypes');
 
 // Runs fn inside a managed transaction when the connection is available; unit tests that
 // mock ../models without a sequelize instance fall back to running fn untransacted.
@@ -15,10 +16,10 @@ const withTransaction = (fn) => {
 };
 
 const SEVERITIES = ['Low', 'Medium', 'High', 'Critical'];
-// Stable Detection Setup categories — must match client/src/pages/detectionSettingsPayload.js
-// DETECTION_TYPES keys and the values server/utils/detectionAlertBridge.js maps from.
-const DETECTION_TYPES = ['unattended_object', 'crowd_density', 'unauthorized_access'];
-const DEFAULT_DETECTION_TYPE = 'unattended_object';
+// DETECTION_TYPES / DEFAULT_DETECTION_TYPE come from ../config/detectionTypes, the
+// backend's single source of truth — also used by utils/detectionAlertBridge.js.
+// The frontend (client/src/pages/detectionSettingsPayload.js) keeps its own copy in sync
+// by hand, since it can't import server modules.
 
 const isPositiveNumber = (value) => value !== undefined && value !== null && Number.isFinite(Number(value)) && Number(value) > 0;
 
