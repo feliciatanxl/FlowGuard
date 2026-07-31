@@ -220,6 +220,229 @@ function sendBookingCancelled(booking) {
   );
 }
 
+// ===========================================================================
+// SECURITY DETECTION ALERTS (SecurePi / IMX500 / PIR edge events)
+// ===========================================================================
+// These are a SEPARATE message family from the driver/booking notifications
+// above. They are sent to FM/security staff (WHATSAPP_SECURITY_RECIPIENTS), NOT
+// to a driver phone, and they never carry booking details (driver pass, plate,
+// loading bay). The message builder is a PURE function so it is directly unit-
+// testable; everything that touches the network or process.env lives in the
+// send helpers below it.
+
+const SEVERITY_RANK = { Low: 1, Medium: 2, High: 3, Critical: 4 };
+
+// Numeric rank for a severity string (0 for unknown/missing).
+function severityRank(severity) {
+  return SEVERITY_RANK[severity] || 0;
+}
+
+// True when `severity` is at least `min` on the Low < Medium < High < Critical
+// scale. An unknown `min` is treated as Low (the most permissive floor).
+function meetsMinSeverity(severity, min) {
+  return severityRank(severity) >= (SEVERITY_RANK[min] || SEVERITY_RANK.Low);
+}
+
+// Maps an alert type to a security-alert heading. Accepts both the enum-style
+// incident keys (PEST_DETECTION) and the human labels ("Pest Detection"); both
+// normalize to the same key. Unknown types fall back to a generic heading.
+function detectionAlertHeading(alertType) {
+  const key = String(alertType || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  const HEADINGS = {
+    PEST_DETECTION: '🚨 FlowGuard Pest Alert',
+    UNATTENDED_OBJECT: '🚨 FlowGuard Unattended Item Alert',
+    FORGOTTEN_BELONGING: '⚠️ FlowGuard Forgotten Belonging Alert',
+    RESTRICTED_MOTION: '🚨 FlowGuard Restricted-Zone Motion Alert',
+    RESTRICTED_ZONE_MOTION: '🚨 FlowGuard Restricted-Zone Motion Alert',
+    ITEM_PICKED_UP: '⚠️ FlowGuard Item Movement Alert',
+    ITEM_SET_DOWN: '⚠️ FlowGuard Item Movement Alert',
+    ITEM_MOVEMENT: '⚠️ FlowGuard Item Movement Alert',
+  };
+  return { key, heading: HEADINGS[key] || '🚨 FlowGuard Detection Alert' };
+}
+
+// Light title-casing for the object label ("rat" -> "Rat", "backpack" ->
+// "Backpack", "package-like object" -> "Package-like Object"). Never throws.
+function titleCase(text) {
+  return String(text || '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+// Convert a 0–1 confidence into a whole-number percentage. Tolerates a value
+// already expressed as a percentage (>1). Returns null when not a finite number.
+function confidencePercent(confidence) {
+  if (confidence === undefined || confidence === null || confidence === '') return null;
+  const value = Number(confidence);
+  if (!Number.isFinite(value)) return null;
+  const pct = value <= 1 ? value * 100 : value;
+  return Math.max(0, Math.min(100, Math.round(pct)));
+}
+
+// True only for a syntactically valid absolute http(s) URL. A Raspberry Pi local
+// path (runtime/snapshots/...) or a file:/javascript: scheme returns false, so a
+// non-remote snapshot is never presented to a phone as a tappable link.
+function isValidHttpUrl(value) {
+  if (!value) return false;
+  try {
+    const url = new URL(String(value));
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+// The "duration" line label depends on the alert type so it reads naturally.
+function durationLabelForKey(key) {
+  if (key === 'UNATTENDED_OBJECT') return 'Unattended for';
+  if (key === 'FORGOTTEN_BELONGING') return 'Left unattended for';
+  return 'Duration';
+}
+
+// PURE message builder — no network, no process.env. Given a normalized alert
+// object (and an optional dashboard URL), returns the exact WhatsApp text body.
+// Every optional field is omitted safely when missing. Never includes tokens,
+// credentials, driver phone numbers or booking details.
+function buildDetectionAlertMessage(alert = {}, options = {}) {
+  const {
+    alert_type,
+    object_class,
+    severity,
+    zone_name,
+    camera_location,
+    duration_seconds,
+    occurred_at,
+    timestamp,
+    confidence,
+    device_id,
+    person_name,
+    snapshot_url,
+    snapshot_path,
+  } = alert;
+
+  const { heading, key } = detectionAlertHeading(alert_type);
+  const lines = [heading, ''];
+
+  if (object_class) lines.push(`Object: ${titleCase(object_class)}`);
+  if (severity) lines.push(`Severity: ${severity}`);
+  if (zone_name) lines.push(`Location: ${zone_name}`);
+  if (camera_location) lines.push(`Camera: ${camera_location}`);
+
+  // Only show a person line when it identifies someone real (never "UNKNOWN").
+  if (person_name && String(person_name).trim().toUpperCase() !== 'UNKNOWN') {
+    lines.push(`Person: ${person_name}`);
+  }
+
+  if (duration_seconds !== undefined && duration_seconds !== null && duration_seconds !== '') {
+    const seconds = Number(duration_seconds);
+    if (Number.isFinite(seconds)) {
+      lines.push(`${durationLabelForKey(key)}: ${Math.round(seconds)} seconds`);
+    }
+  }
+
+  // Timestamp is always rendered in Asia/Singapore wall-clock, regardless of the
+  // server timezone (Cloud Run runs in UTC).
+  const when = occurred_at || timestamp;
+  const formattedWhen = when ? formatSingaporeDateTime(when) : null;
+  if (formattedWhen) lines.push(`Detected: ${formattedWhen}`);
+
+  const pct = confidencePercent(confidence);
+  if (pct !== null) lines.push(`Confidence: ${pct}%`);
+
+  if (device_id) lines.push(`Device: ${device_id}`);
+
+  // Snapshot handling: only a valid remote URL becomes a tappable link. A local
+  // edge path is acknowledged but never presented as if it were reachable.
+  if (isValidHttpUrl(snapshot_url)) {
+    lines.push('', `Photo: ${snapshot_url}`);
+  } else if (snapshot_path || snapshot_url) {
+    lines.push('', 'Photo captured on edge device; remote upload unavailable.');
+  }
+
+  const dashboardUrl = options.dashboardUrl;
+  lines.push('');
+  if (dashboardUrl) {
+    lines.push(`Review the event in the FlowGuard dashboard:`, dashboardUrl);
+  } else {
+    lines.push('Review the event in the FlowGuard dashboard.');
+  }
+
+  return lines.join('\n');
+}
+
+// Canonical dashboard URL for detection alerts. Uses the same FRONTEND_URL /
+// CLIENT_URL precedence as the driver-pass links, and fails closed (returns '')
+// in production if neither is configured so a localhost link never leaks live.
+function detectionDashboardUrl() {
+  const configuredBase = process.env.FRONTEND_URL || process.env.CLIENT_URL;
+  if (!configuredBase) {
+    if (process.env.NODE_ENV === 'production') return '';
+    return 'http://localhost:5173/object-detection';
+  }
+  return `${String(configuredBase).trim().replace(/\/+$/, '')}/object-detection`;
+}
+
+// Read, normalize and de-duplicate the security recipients from
+// WHATSAPP_SECURITY_RECIPIENTS (comma-separated). Returns [] when unset — the
+// caller then produces a safe "Skipped" result instead of throwing.
+function resolveDetectionRecipients() {
+  const raw = process.env.WHATSAPP_SECURITY_RECIPIENTS || '';
+  const seen = new Set();
+  const recipients = [];
+  for (const part of raw.split(',')) {
+    const normalized = normalizePhone(part);
+    if (normalized && !seen.has(normalized)) {
+      seen.add(normalized);
+      recipients.push(normalized);
+    }
+  }
+  return recipients;
+}
+
+// Collapse an array of per-recipient sendMessage() results into one status:
+//   Skipped   — no recipients attempted
+//   Simulated — every send was simulated (WhatsApp disabled / mock mode)
+//   Sent      — at least one real (non-simulated) success
+//   Failed    — recipients attempted but not one succeeded
+function aggregateSendResults(results) {
+  if (!results.length) return { status: 'Skipped', error: null };
+  const successes = results.filter((r) => r && r.success);
+  if (!successes.length) {
+    const firstError = results.find((r) => r && r.error);
+    return { status: 'Failed', error: firstError ? firstError.error : 'WhatsApp send failed.' };
+  }
+  const allSimulated = successes.every((r) => r.simulated);
+  return { status: allSimulated ? 'Simulated' : 'Sent', error: null };
+}
+
+// Send an already-resolved detection message to a specific recipient list.
+// Builds the message once and reuses it. Never throws.
+async function sendDetectionAlertToRecipients(alert, recipients) {
+  const list = Array.isArray(recipients) ? recipients : [];
+  if (!list.length) {
+    return { status: 'Skipped', recipientCount: 0, error: null, results: [] };
+  }
+  const body = buildDetectionAlertMessage(alert, { dashboardUrl: detectionDashboardUrl() });
+  const results = [];
+  for (const to of list) {
+    // sequential keeps the (already generous) AI-proxy rate window predictable
+    // and avoids a burst against Meta's API for a handful of security numbers.
+    results.push(await sendMessage(to, body));
+  }
+  const { status, error } = aggregateSendResults(results);
+  return { status, recipientCount: list.length, error, results };
+}
+
+// High-level entry point used by the edge route. Resolves the configured
+// security recipients, then sends. Returns a safe result object (never throws);
+// a "Skipped" status when no recipients are configured.
+async function sendDetectionAlert(alert) {
+  const recipients = resolveDetectionRecipients();
+  return sendDetectionAlertToRecipients(alert, recipients);
+}
+
 module.exports = {
   sendMessage,
   sendBookingCreated,
@@ -233,6 +456,14 @@ module.exports = {
   driverPassLink,
   driverPassNetworkLink,
   buildDriverPassUrl,
+  // Security detection alerts (separate family from booking notifications)
+  buildDetectionAlertMessage,
+  resolveDetectionRecipients,
+  sendDetectionAlertToRecipients,
+  sendDetectionAlert,
+  severityRank,
+  meetsMinSeverity,
+  detectionDashboardUrl,
   _maskKey: maskKey,
   _maskToken: maskToken,
   _maskPhone: maskPhone,

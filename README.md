@@ -53,6 +53,7 @@ Primary actors are Facilities Manager (`FM`), `Tenant`, `Staff`, public Driver, 
 - Browser camera/upload analysis through Node's authenticated YOLO proxy, plus optional IMX500/SecurePi edge ingestion.
 - People counting and proximity/timer-based unattended-object detection for model-supported classes.
 - Every current detection-alert creation path atomically creates and links an `IncidentLog` through `DetectionAlert.incident_log_id`; status, severity, person, and soft deletion synchronise in both directions.
+- SecurePi edge events (`POST /api/edge/detection-alerts`, `EDGE_INGEST_TOKEN`) are idempotent on a stable `edge_event_id` and can notify FM/security staff through the existing WhatsApp Cloud API — a separate message family from driver/booking notifications, sent to `WHATSAPP_SECURITY_RECIPIENTS`, never a driver phone. WhatsApp is attempted only after the alert commits, so a send failure never loses the alert; the notification status is stored on the alert and shown on the page. Alert types cover pest, unattended object, forgotten belonging, restricted-zone motion, and item movement. See [docs/Tan Xiu Li, Felicia/securepi-flowguard-integration.md](docs/Tan%20Xiu%20Li,%20Felicia/securepi-flowguard-integration.md). The Raspberry Pi never calls WhatsApp directly; snapshots stored only as local Pi paths are never presented as remote links; and this adds alert *delivery* for these categories, not pest analytics, rat re-identification, or person re-identification (still post-PoC).
 
 ### AI Helpdesk & Facility Support
 

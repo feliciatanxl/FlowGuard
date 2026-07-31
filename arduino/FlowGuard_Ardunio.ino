@@ -1,3 +1,18 @@
+// FlowGuard PIR + ultrasonic sensor node.
+//
+// Emits ONE machine-readable JSON object per line, ~every 500 ms, for the
+// SecurePi sensor bridge (edge/sensor_bridge.py) to parse. No third-party JSON
+// library is used — the line is assembled with plain Serial.print() calls and
+// F() string literals (kept in flash, so no heap/String fragmentation).
+//
+// Serial line schema (one line, terminated by "\n"):
+//   {"type":"sensor_status",
+//    "pir_ready":   bool,          // false during the 30 s PIR warm-up
+//    "motion":      bool,          // PIR motion (always false until pir_ready)
+//    "distance_cm": float | null,  // null when the ultrasonic gets no echo
+//    "object_close":bool,          // distance <= distanceThresholdCm
+//    "uptime_ms":   unsigned long} // millis() since boot
+//
 // HC-SR04 ultrasonic sensor
 const int trigPin = 11;
 const int echoPin = 10;
@@ -88,33 +103,33 @@ void loop() {
   digitalWrite(pirLedPin, motion);
 
   // -------------------------
-  // Serial Monitor output
+  // Machine-readable status line (JSON, one object per line, ~2 Hz)
   // -------------------------
+  // Built with Serial.print() + F() literals — no String concatenation, so no
+  // heap fragmentation. distance_cm is null when there was no echo; motion is
+  // reported false until the PIR has finished warming up.
   if (millis() - lastPrintTime >= 500) {
     lastPrintTime = millis();
 
-    Serial.print("Distance: ");
+    Serial.print(F("{\"type\":\"sensor_status\",\"pir_ready\":"));
+    Serial.print(pirReady ? F("true") : F("false"));
 
+    Serial.print(F(",\"motion\":"));
+    Serial.print((pirReady && motion == HIGH) ? F("true") : F("false"));
+
+    Serial.print(F(",\"distance_cm\":"));
     if (distance < 0) {
-      Serial.print("No echo");
+      Serial.print(F("null"));
     } else {
-      Serial.print(distance);
-      Serial.print(" cm");
+      Serial.print(distance, 1);  // one decimal place
     }
 
-    Serial.print(" | Ultrasonic LED: ");
-    Serial.print(objectClose ? "ON" : "OFF");
+    Serial.print(F(",\"object_close\":"));
+    Serial.print(objectClose ? F("true") : F("false"));
 
-    Serial.print(" | PIR: ");
-
-    if (!pirReady) {
-      Serial.print("Warming up");
-    } else {
-      Serial.print(motion == HIGH ? "Motion" : "No motion");
-    }
-
-    Serial.print(" | PIR LED: ");
-    Serial.println(motion == HIGH ? "ON" : "OFF");
+    Serial.print(F(",\"uptime_ms\":"));
+    Serial.print(millis());
+    Serial.println(F("}"));
   }
 
   delay(100);
