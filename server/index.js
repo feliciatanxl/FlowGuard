@@ -46,6 +46,11 @@ const camerasRoute = require('./routes/cameras');
 app.use("/api/cameras", camerasRoute);
 const detectionAlertsRoute = require('./routes/detectionAlerts');
 app.use("/api/detection-alerts", detectionAlertsRoute);
+// SecurePi snapshot upload (edge-token) + controlled serving of stored snapshots.
+// Mounted BEFORE the /api/edge router so the more-specific prefix matches first and a
+// snapshot request doesn't also pass through the detection-alert router's rate limiter.
+const edgeSnapshotsRoute = require('./routes/edgeSnapshots');
+app.use("/api/edge/snapshots", edgeSnapshotsRoute);
 const edgeDetectionAlertsRoute = require('./routes/edgeDetectionAlerts');
 app.use("/api/edge", edgeDetectionAlertsRoute);
 const userRoute = require('./routes/user');

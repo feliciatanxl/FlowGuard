@@ -5,6 +5,8 @@ router.use(aiProxyLimiter); // high-frequency edge ingest — generous per-clien
 const { DetectionAlert, IncidentLog, MonitoringZone, Camera, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const { resolveIncidentType } = require('../utils/detectionAlertBridge');
+const { verifyEdgeIngestToken } = require('../middlewares/edgeAuth');
+const { DEFAULT_DETECTION_TYPE } = require('../config/detectionTypes');
 const whatsapp = require('../services/whatsappService');
 
 // Mirrors the fallback in detectionAlerts.js so edge and AI alerts get consistent severities
@@ -85,17 +87,9 @@ const parseOccurredAt = (value) => {
     return Number.isNaN(date.getTime()) ? null : date;
 };
 
-const verifyEdgeIngestToken = (req, res, next) => {
-    const authHeader = req.headers.authorization || '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
-    if (!process.env.EDGE_INGEST_TOKEN) {
-        return res.status(503).json({ error: 'Edge ingest is not configured.' });
-    }
-    if (!token || token !== process.env.EDGE_INGEST_TOKEN) {
-        return res.status(401).json({ error: 'Invalid edge ingest token.' });
-    }
-    return next();
-};
+// Edge-ingest bearer-token auth is shared with the snapshot-upload and zone-config
+// routes — see middlewares/edgeAuth.js (single source of truth). Missing server config
+// → 503, wrong/absent token → 401; the token is never logged.
 
 // Mirrors detectionAlerts.js's resolveLinks — also surfaces the zone's Detection Setup
 // detection_type (separate `detectionType` key, not spread into DetectionAlert.create)
@@ -379,5 +373,89 @@ async function handleDuplicate(res, existing, messageAlert, gate) {
     // Sent / Simulated / Pending / Skipped / Not Requested → return as-is, no resend.
     return res.status(200).json(serializeAlert(existing, base));
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/edge/config — live MonitoringZone config for a SecurePi edge device.
+// ---------------------------------------------------------------------------
+// Authenticated with the SAME edge token as ingestion. Lets the Pi pull the zone
+// settings a Facilities Manager changes on the FlowGuard website (unattended
+// threshold, alert cooldown, detection_enabled, monitored_classes, severity) instead
+// of relying on local presets, so a website change reaches the Pi on its next refresh.
+
+// Parse a zone's monitored_classes (stored as a TEXT JSON string) into an array; never throws.
+function parseMonitoredClasses(raw) {
+    try {
+        const parsed = JSON.parse(raw || '[]');
+        return Array.isArray(parsed) ? parsed.map((c) => String(c)) : [];
+    } catch {
+        return [];
+    }
+}
+
+// Compact, secrets-free edge config the Pi consumes. `unattended_threshold_seconds`
+// prefers the explicit seconds column and falls back to the legacy `time_threshold`
+// (stored in MINUTES) so older zones still yield a usable value.
+function serializeEdgeZoneConfig(zone, deviceId) {
+    const plain = (zone && typeof zone.toJSON === 'function') ? zone.toJSON() : zone;
+    const unattended = (plain.unattended_threshold_seconds != null)
+        ? plain.unattended_threshold_seconds
+        : (plain.time_threshold != null ? plain.time_threshold * 60 : null);
+    return {
+        device_id: deviceId || null,
+        zone_id: plain.id,
+        zone_name: plain.zone_name,
+        detection_enabled: plain.detection_enabled !== false, // default true
+        detection_type: plain.detection_type || DEFAULT_DETECTION_TYPE,
+        monitored_classes: parseMonitoredClasses(plain.monitored_classes),
+        unattended_threshold_seconds: unattended,
+        alert_cooldown_seconds: (plain.alert_cooldown_seconds != null) ? plain.alert_cooldown_seconds : null,
+        severity: plain.severity || 'Medium',
+    };
+}
+
+router.get('/config', verifyEdgeIngestToken, async (req, res) => {
+    try {
+        const deviceId = cleanText(req.query.device_id, 100);
+        const zoneIdRaw = req.query.zone_id;
+        const zoneName = cleanText(req.query.zone_name, 255);
+        const cameraLocation = cleanText(req.query.camera_location, 255);
+
+        let zone = null;
+        // 1) Explicit zone_id (the Pi's SECUREPI_ZONE_ID) — the most direct mapping.
+        if (zoneIdRaw !== undefined && /^\d+$/.test(String(zoneIdRaw))) {
+            zone = await MonitoringZone.findByPk(parseInt(zoneIdRaw, 10));
+        }
+        // 2) zone_name.
+        if (!zone && zoneName) {
+            zone = await MonitoringZone.findOne({ where: { zone_name: zoneName } });
+        }
+        // 3) camera_location → Camera → its assigned zone (reuse the existing
+        //    Camera.zone_id relationship rather than inventing a new device map).
+        if (!zone && cameraLocation && Camera && typeof Camera.findOne === 'function') {
+            const camera = await Camera.findOne({
+                where: { [Op.or]: [{ camera_name: cameraLocation }, { location: cameraLocation }] }
+            });
+            if (camera && camera.zone_id) {
+                zone = await MonitoringZone.findByPk(camera.zone_id);
+            }
+        }
+
+        if (!zone) {
+            return res.status(404).json({
+                error: 'No monitoring zone found for the supplied device_id/zone_id/zone_name/camera_location.'
+            });
+        }
+
+        // Safe log — identifiers only, never the token.
+        console.log('[Edge] Zone config fetch', JSON.stringify({
+            device_id: deviceId, zone_id: zone.id, zone_name: zone.zone_name,
+            detection_enabled: zone.detection_enabled !== false,
+        }));
+
+        return res.json(serializeEdgeZoneConfig(zone, deviceId));
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
+});
 
 module.exports = router;

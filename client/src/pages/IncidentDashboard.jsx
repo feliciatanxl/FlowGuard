@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
+import { isRemoteSnapshot, confidencePercent } from '../utils/detectionDisplay';
 import '../css/Dashboard.css';
 import '../css/Management.css';
 import '../css/Users.css';
@@ -699,6 +700,110 @@ const IncidentDashboard = () => {
                   )}
                 </div>
               </div>
+
+              {/* ---- Edge detection details (only when a DetectionAlert is linked) ---- */}
+              {/* Renders the rich fields that live on the linked DetectionAlert (object */}
+              {/* class such as `rat`, confidence, zone, device id, snapshot). Every item */}
+              {/* is guarded on presence, and the whole block is gated on detectionAlert, */}
+              {/* so facial-recognition / manual / legacy incidents (no linked alert) are */}
+              {/* rendered exactly as before. */}
+              {selectedIncident.detectionAlert && (
+                <div className="inc-edge-section">
+                  <span className="inc-detail-label inc-section-title">Edge Detection Details</span>
+                  <div className="inc-detail-grid">
+                    {selectedIncident.detectionAlert.object_class && (
+                      <div className="inc-detail-item">
+                        <span className="inc-detail-label">Object Class</span>
+                        <span className="inc-detail-value" style={{ fontWeight: 600, textTransform: 'capitalize' }}>
+                          {selectedIncident.detectionAlert.object_class}
+                        </span>
+                      </div>
+                    )}
+                    {selectedIncident.detectionAlert.alert_type && (
+                      <div className="inc-detail-item">
+                        <span className="inc-detail-label">Alert Type</span>
+                        <span className="inc-detail-value">{selectedIncident.detectionAlert.alert_type}</span>
+                      </div>
+                    )}
+                    {confidencePercent(selectedIncident.detectionAlert.confidence) != null && (
+                      <div className="inc-detail-item">
+                        <span className="inc-detail-label">Detection Confidence</span>
+                        <span className="inc-detail-value" style={{ fontFamily: 'monospace' }}>
+                          {confidencePercent(selectedIncident.detectionAlert.confidence)}%
+                        </span>
+                      </div>
+                    )}
+                    {selectedIncident.detectionAlert.zone_name && (
+                      <div className="inc-detail-item">
+                        <span className="inc-detail-label">Zone</span>
+                        <span className="inc-detail-value">{selectedIncident.detectionAlert.zone_name}</span>
+                      </div>
+                    )}
+                    {selectedIncident.detectionAlert.camera_location && (
+                      <div className="inc-detail-item">
+                        <span className="inc-detail-label">Camera</span>
+                        <span className="inc-detail-value">{selectedIncident.detectionAlert.camera_location}</span>
+                      </div>
+                    )}
+                    {selectedIncident.detectionAlert.device_id && (
+                      <div className="inc-detail-item">
+                        <span className="inc-detail-label">Device ID</span>
+                        <span className="inc-detail-value" style={{ fontFamily: 'monospace' }}>
+                          {selectedIncident.detectionAlert.device_id}
+                        </span>
+                      </div>
+                    )}
+                    {selectedIncident.detectionAlert.duration_seconds != null && (
+                      <div className="inc-detail-item">
+                        <span className="inc-detail-label">Duration</span>
+                        <span className="inc-detail-value">{selectedIncident.detectionAlert.duration_seconds}s</span>
+                      </div>
+                    )}
+                    {selectedIncident.detectionAlert.occurred_at && (
+                      <div className="inc-detail-item">
+                        <span className="inc-detail-label">Event Timestamp</span>
+                        <span className="inc-detail-value" style={{ fontFamily: 'monospace' }}>
+                          {new Date(selectedIncident.detectionAlert.occurred_at).toLocaleString('en-SG')}
+                        </span>
+                      </div>
+                    )}
+                    {selectedIncident.detectionAlert.source && (
+                      <div className="inc-detail-item">
+                        <span className="inc-detail-label">Detection Source</span>
+                        <span className="inc-detail-value">{selectedIncident.detectionAlert.source}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Snapshot: only a real remote http(s) URL becomes a link/preview; a */}
+                  {/* Raspberry Pi local path shows an informational note instead. */}
+                  <div className="inc-snapshot-block">
+                    <span className="inc-detail-label">Snapshot</span>
+                    {isRemoteSnapshot(selectedIncident.detectionAlert.snapshot_url) ? (
+                      <a
+                        className="inc-snapshot-link"
+                        href={selectedIncident.detectionAlert.snapshot_url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <img
+                          className="inc-snapshot-thumb"
+                          src={selectedIncident.detectionAlert.snapshot_url}
+                          alt={`Snapshot for incident #${selectedIncident.id}`}
+                          loading="lazy"
+                        />
+                        <span>Open full snapshot ↗</span>
+                      </a>
+                    ) : selectedIncident.detectionAlert.snapshot_url ? (
+                      <p className="inc-snapshot-note">
+                        Snapshot captured on the edge device; remote upload unavailable.
+                      </p>
+                    ) : (
+                      <p className="inc-snapshot-note">No snapshot available.</p>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="inc-notes-section">
                 <span className="inc-detail-label">Notes</span>

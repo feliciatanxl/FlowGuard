@@ -13,9 +13,16 @@
 // Only values the Incident Dashboard's own "Log Incident" dropdown already understands
 // (client/src/pages/IncidentDashboard.jsx) are ever returned.
 //
-// INCIDENT_TYPE_BY_DETECTION_TYPE comes from ../config/detectionTypes, the backend's
-// single source of truth for detection_type values (shared with routes/zones.js).
-const { INCIDENT_TYPE_BY_DETECTION_TYPE, DEFAULT_DETECTION_TYPE } = require('../config/detectionTypes');
+// DEFAULT_DETECTION_TYPE comes from ../config/detectionTypes, the backend's single
+// source of truth for zone detection_type values (shared with routes/zones.js).
+// NOTE: we deliberately do NOT re-import config's INCIDENT_TYPE_BY_DETECTION_TYPE —
+// this module owns a SUPERSET that also maps the SecurePi edge categories
+// (pest_detection / restricted_motion / forgotten_belonging / item_movement) which
+// zones.js does not need to validate. Importing the same name and then re-declaring
+// it below is a `const` redeclaration SyntaxError that prevents this module (and the
+// edge-ingestion route that requires it) from loading at all.
+const { DEFAULT_DETECTION_TYPE } = require('../config/detectionTypes');
+// Only values the Incident Dashboard's own "Log Incident" dropdown already understands
 // (client/src/pages/IncidentDashboard.jsx) are ever returned — including the SecurePi
 // edge types PEST_DETECTION / RESTRICTED_MOTION / FORGOTTEN_BELONGING / ITEM_MOVEMENT,
 // which were added to that dropdown alongside this mapping.

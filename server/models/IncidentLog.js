@@ -40,5 +40,22 @@ module.exports = (sequelize, DataTypes) => {
         tableName: 'incident_logs',
         paranoid: true
     });
+
+    // Reverse side of DetectionAlert.belongsTo(IncidentLog, as: 'incident').
+    // An IncidentLog created alongside an edge/AI DetectionAlert can be joined back to
+    // it so the Incident API can surface the rich detection fields (object_class such
+    // as `rat`, confidence, device_id, zone, snapshot_url) that live ONLY on the alert.
+    // hasOne (not hasMany) because the edge/AI routes create exactly one alert per
+    // incident. Nullable FK — manual/facial-recognition incidents simply have no linked
+    // alert and this association resolves to null, so those incidents keep rendering.
+    IncidentLog.associate = (models) => {
+        if (models.DetectionAlert) {
+            IncidentLog.hasOne(models.DetectionAlert, {
+                foreignKey: 'incident_log_id',
+                as: 'detectionAlert'
+            });
+        }
+    };
+
     return IncidentLog;
 }

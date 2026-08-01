@@ -430,3 +430,9 @@ C:\Users\Admin\Downloads\FlowGuard\ai-service\.venv
 !.env.example
 server/.env
 client/.env.local
+
+# Edge snapshot uploads — runtime images written by POST /api/edge/snapshots.
+# Dev-only local storage (production should use cloud object storage). Keep the
+# directory tracked (via .gitkeep) but never commit the uploaded images.
+server/uploads/edge-snapshots/*
+!server/uploads/edge-snapshots/.gitkeep

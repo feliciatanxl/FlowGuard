@@ -32,6 +32,19 @@ const withTransaction = (fn) => {
     return fn(null);
 };
 
+// Eager-load spec for the DetectionAlert linked to an incident (edge/AI alerts). This
+// is what surfaces the rich detection fields the Incident detail panel needs but that
+// live ONLY on the alert: object_class (e.g. `rat`), confidence, device_id, zone_name,
+// alert_type, duration_seconds, occurred_at and snapshot_url.
+//   required:false → LEFT JOIN: manual / facial-recognition / legacy incidents with no
+//   linked alert still return (detectionAlert === null), so nothing else breaks.
+//   Guarded on DetectionAlert being present so unit tests that mock ../models without it
+//   simply omit the join (their findAll/findByPk mocks ignore query options anyway).
+const incidentInclude = () =>
+    (DetectionAlert && typeof DetectionAlert.findOne === 'function'
+        ? [{ model: DetectionAlert, as: 'detectionAlert', required: false }]
+        : []);
+
 // Finds the DetectionAlert linked to this incident (the inverse of
 // detectionAlerts.js's findLinkedIncident). Returns null (never throws) for incidents
 // that predate the link, or when ../models is mocked without DetectionAlert.
@@ -179,7 +192,8 @@ router.get("/", verifyToken, requireRole('FM'), async (req, res) => {
     try {
         let list = await IncidentLog.findAll({
             where: condition,
-            order: [['createdAt', 'DESC']]
+            order: [['createdAt', 'DESC']],
+            include: incidentInclude()
         });
         res.json(list);
     } catch (err) {
@@ -192,7 +206,7 @@ router.get("/", verifyToken, requireRole('FM'), async (req, res) => {
 router.get("/:id", verifyToken, requireRole('FM'), async (req, res) => {
     let id = req.params.id;
     try {
-        let log = await IncidentLog.findByPk(id);
+        let log = await IncidentLog.findByPk(id, { include: incidentInclude() });
         if (!log) {
             res.sendStatus(404);
             return;
