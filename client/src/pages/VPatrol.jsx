@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import axios from 'axios';
 import VideocamOffIcon from '@mui/icons-material/VideocamOff';
 import Sidebar from '../components/Sidebar';
@@ -70,6 +70,9 @@ const VPatrol = () => {
   const [cameraSource, setCameraSource] = useState(CAMERA_SOURCES.PI);
   const [cameraStatusMsg, setCameraStatusMsg] = useState("Connecting to Raspberry Pi Camera Module 3…");
   const cameraSourceRef = useRef(CAMERA_SOURCES.PI);
+  const mediaStreamRef = useRef(null);
+  const webcamStartPromiseRef = useRef(null);
+  const webcamStartSessionRef = useRef(null);
   const piFailSinceRef = useRef(0);
 
   // Staged States: SYSTEM_ACTIVE, PRESENCE_DETECTED, TARGET_LOCKING, LIVENESS_CHECK, AUTHORIZING, SECURE_MATCH, UNKNOWN_QUERY
@@ -82,6 +85,7 @@ const VPatrol = () => {
   const scanStatusRef = useRef("SYSTEM_ACTIVE");
   const lockTimerRef = useRef(null);
   const progressIntervalRef = useRef(null);
+  const resetTimerRef = useRef(null);
   const lockPendingRef = useRef(false);
 
   // Two INDEPENDENT in-flight locks: tracking (box/liveness) and full
@@ -143,48 +147,6 @@ const VPatrol = () => {
     scanStatusRef.current = nextState;
   };
 
-  useEffect(() => {
-    initCameraSource();
-
-    // FETCH PERMANENT LOGS ON LOAD
-    axios.get(NODE_SERVER_URL, { headers: { Authorization: `Bearer ${token}` } })
-      .then(res => {
-        if (res.data && res.data.length > 0) {
-          setIncidentLogs(res.data);
-        } else {
-          setIncidentLogs([{ id: 'SYS-001', occurredAt: new Date().toISOString(), type: 'System Online', desc: 'Biometric sensors initialized.', severity: 'safe', icon: 'OK' }]);
-        }
-      })
-      .catch(err => {
-        console.error("Database connection waiting...", err);
-        setIncidentLogs([{ id: 'SYS-001', occurredAt: new Date().toISOString(), type: 'System Offline', desc: 'Cannot connect to security database.', severity: 'critical', icon: 'WARNING' }]);
-      });
-
-    const clockInterval = setInterval(() => {
-      setSystemTime(new Date().toLocaleTimeString('en-SG', {
-        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
-      }));
-    }, 1000);
-
-    const trackInterval = setInterval(() => {
-      performTrackingScan();
-    }, TRACK_INTERVAL_MS);
-
-    const scanInterval = setInterval(() => {
-      performRecognitionScan();
-    }, SCAN_INTERVAL_MS);
-
-    return () => {
-      scanSessionRef.current += 1; // any in-flight tracking/recognition response is now stale
-      stopCCTV();
-      clearInterval(clockInterval);
-      clearInterval(trackInterval);
-      clearInterval(scanInterval);
-      if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-    };
-  }, []);
-
   const applyCameraSource = (source, statusMsg) => {
     cameraSourceRef.current = source;
     setCameraSource(source);
@@ -206,7 +168,9 @@ const VPatrol = () => {
   // Primary source: Raspberry Pi Gate Camera. Probe the snapshot endpoint on
   // load; if unreachable, automatically fall back to the laptop webcam.
   const initCameraSource = async () => {
+    const scanSession = scanSessionRef.current;
     const piReachable = await isPiCameraReachableCached();
+    if (scanSession !== scanSessionRef.current) return;
     if (piReachable) {
       stopCCTV();
       applyCameraSource(CAMERA_SOURCES.PI, CAMERA_STATUS_MESSAGES.PI_CONNECTED);
@@ -223,8 +187,10 @@ const VPatrol = () => {
     scanSessionRef.current += 1; // invalidate responses captured from the old source
     resetScanner();
     clearTrackingState();
+    const scanSession = scanSessionRef.current;
     if (source === CAMERA_SOURCES.PI) {
       const piReachable = await isPiCameraReachableCached();
+      if (scanSession !== scanSessionRef.current) return;
       if (piReachable) {
         stopCCTV();
         applyCameraSource(CAMERA_SOURCES.PI, CAMERA_STATUS_MESSAGES.PI_CONNECTED);
@@ -240,38 +206,89 @@ const VPatrol = () => {
   };
 
   const startCCTV = async () => {
+    const scanSession = scanSessionRef.current;
+    if (
+      webcamStartPromiseRef.current &&
+      webcamStartSessionRef.current === scanSession
+    ) {
+      return webcamStartPromiseRef.current;
+    }
     // Guard: browser without camera API (insecure context / no webcam support)
     if (!navigator.mediaDevices?.getUserMedia) {
       changeScanState("HARDWARE_ERR");
       return;
     }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          frameRate: { ideal: 15, max: 20 },
-          facingMode: "user"
+    const startPromise = (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 15, max: 20 },
+            facingMode: "user"
+          }
+        });
+
+        if (
+          scanSession !== scanSessionRef.current ||
+          cameraSourceRef.current !== CAMERA_SOURCES.WEBCAM
+        ) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
         }
-      });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current.play().catch(() => changeScanState("HARDWARE_ERR"));
-        };
+
+        stopCCTV();
+        mediaStreamRef.current = stream;
+        const video = videoRef.current;
+        if (video) {
+          video.srcObject = stream;
+          video.onloadedmetadata = () => {
+            if (mediaStreamRef.current !== stream) return;
+            video.play().catch(() => {
+              if (mediaStreamRef.current === stream) changeScanState("HARDWARE_ERR");
+            });
+          };
+        }
+        changeScanState("SYSTEM_ACTIVE");
+      } catch (err) {
+        // Permission denied, no device, or device busy - surface it instead of a black feed.
+        if (scanSession === scanSessionRef.current) {
+          console.error("CCTV camera unavailable:", err);
+          changeScanState("HARDWARE_ERR");
+        }
       }
-      changeScanState("SYSTEM_ACTIVE");
-    } catch (err) {
-      // Permission denied, no device, or device busy - surface it instead of a black feed
-      console.error("CCTV camera unavailable:", err);
-      changeScanState("HARDWARE_ERR");
+    })();
+
+    webcamStartPromiseRef.current = startPromise;
+    webcamStartSessionRef.current = scanSession;
+    try {
+      await startPromise;
+    } finally {
+      if (webcamStartPromiseRef.current === startPromise) {
+        webcamStartPromiseRef.current = null;
+        webcamStartSessionRef.current = null;
+      }
     }
   };
 
   const stopCCTV = () => {
-    if (videoRef.current?.srcObject) {
-      videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+    const stream = mediaStreamRef.current || videoRef.current?.srcObject;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
     }
+    mediaStreamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.onloadedmetadata = null;
+      videoRef.current.srcObject = null;
+    }
+  };
+
+  const scheduleScannerReset = (delayMs) => {
+    if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    resetTimerRef.current = setTimeout(() => {
+      resetTimerRef.current = null;
+      resetScanner();
+    }, delayMs);
   };
 
   const playFeedback = (type) => {
@@ -288,14 +305,14 @@ const VPatrol = () => {
     setIdentifiedUser(subject.identityLabel);
     setScanProgress(100);
 
-    const currentTimestamp = Date.now();
+    const currentTimestamp = nowMs();
 
     if (lastLogRef.current.name !== verifiedUser.name || (currentTimestamp - lastLogRef.current.timestamp > 30000)) {
       // Local timeline entry ONLY - the persisted safe access log is created by
       // the SERVER during the access-event call below, so the browser never
       // posts audit rows (no duplicate client+server logs).
       const newLog = {
-        id: `ACC-${Date.now()}`,
+        id: `ACC-${currentTimestamp}`,
         // This is a NEW event happening right now - stamping it is correct.
         occurredAt: new Date(currentTimestamp).toISOString(),
         type: 'Gantry Access',
@@ -321,7 +338,7 @@ const VPatrol = () => {
         .catch(e => console.log("Access-event sync failed", e));
     }
 
-    setTimeout(() => { resetScanner(); }, 3500);
+    scheduleScannerReset(3500);
   };
 
   // Capture one frame from the active camera source onto the given hidden
@@ -340,7 +357,7 @@ const VPatrol = () => {
         // Pi snapshot failed mid-session - once failures persist past the
         // fallback window, switch to the webcam and cache the failure so the
         // Pi isn't re-probed on every cycle.
-        const now = Date.now();
+        const now = nowMs();
         if (!piFailSinceRef.current) {
           piFailSinceRef.current = now;
         } else if (now - piFailSinceRef.current >= PI_FAIL_FALLBACK_MS) {
@@ -643,7 +660,7 @@ const VPatrol = () => {
         lastLogRef.current = { name: dedupName, timestamp: currentTimestamp };
       }
 
-      setTimeout(() => { resetScanner(); }, 3500);
+      scheduleScannerReset(3500);
     }
   };
 
@@ -692,7 +709,7 @@ const VPatrol = () => {
     playFeedback('denied');
     changeScanState("UNKNOWN_QUERY");
     setIdentifiedUser("LIVENESS TIMEOUT — NOT CONFIRMED");
-    setTimeout(() => { resetScanner(); }, 3500);
+    scheduleScannerReset(3500);
   };
 
   // ------------------------------------------------------------------
@@ -749,7 +766,7 @@ const VPatrol = () => {
     playFeedback('denied');
     changeScanState("UNKNOWN_QUERY");
     setIdentifiedUser("IDENTITY NOT CONFIRMED");
-    setTimeout(() => { resetScanner(); }, 3500);
+    scheduleScannerReset(3500);
   };
 
   // Frontend filtering of the loaded timeline records (PoC).
@@ -759,6 +776,10 @@ const VPatrol = () => {
   const resetScanner = () => {
     if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
     if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+    if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    lockTimerRef.current = null;
+    progressIntervalRef.current = null;
+    resetTimerRef.current = null;
     lockPendingRef.current = false;
     setIdentifiedUser(null);
     setFaceBox(null);
@@ -812,6 +833,86 @@ const VPatrol = () => {
       gate.end();
     }
   };
+
+  const initializeCamera = useEffectEvent(async () => {
+    await initCameraSource();
+  });
+
+  const loadIncidentTimeline = useEffectEvent(async (signal) => {
+    try {
+      const res = await axios.get(NODE_SERVER_URL, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal,
+      });
+      if (signal.aborted) return;
+      if (res.data && res.data.length > 0) {
+        setIncidentLogs(res.data);
+      } else {
+        setIncidentLogs([{
+          id: 'SYS-001',
+          occurredAt: new Date(nowMs()).toISOString(),
+          type: 'System Online',
+          desc: 'Biometric sensors initialized.',
+          severity: 'safe',
+          icon: 'OK'
+        }]);
+      }
+    } catch (err) {
+      if (signal.aborted) return;
+      console.error("Database connection waiting...", err);
+      setIncidentLogs([{
+        id: 'SYS-001',
+        occurredAt: new Date(nowMs()).toISOString(),
+        type: 'System Offline',
+        desc: 'Cannot connect to security database.',
+        severity: 'critical',
+        icon: 'WARNING'
+      }]);
+    }
+  });
+
+  const runTrackingScan = useEffectEvent(() => {
+    void performTrackingScan();
+  });
+
+  const runRecognitionScan = useEffectEvent(() => {
+    void performRecognitionScan();
+  });
+
+  const releaseCamera = useEffectEvent(() => {
+    stopCCTV();
+  });
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const initialize = async () => {
+      await Promise.all([
+        initializeCamera(),
+        loadIncidentTimeline(controller.signal),
+      ]);
+    };
+
+    void initialize();
+    const clockInterval = setInterval(() => {
+      setSystemTime(new Date().toLocaleTimeString('en-SG', {
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
+      }));
+    }, 1000);
+    const trackInterval = setInterval(runTrackingScan, TRACK_INTERVAL_MS);
+    const scanInterval = setInterval(runRecognitionScan, SCAN_INTERVAL_MS);
+
+    return () => {
+      controller.abort();
+      scanSessionRef.current += 1;
+      clearInterval(clockInterval);
+      clearInterval(trackInterval);
+      clearInterval(scanInterval);
+      if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+      releaseCamera();
+    };
+  }, []);
 
   return (
     <div className="dashboard-layout">

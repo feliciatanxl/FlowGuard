@@ -8,7 +8,7 @@ const { Booking, User } = require('../models');
 const { verifyToken, requireRole } = require('../middlewares/auth');
 const whatsapp = require('../services/whatsappService');
 const { verifyGate } = require('../services/gateVerification');
-const { normalizeSlots, parseBookingDateTime } = require('../utils/bookingDateTime');
+const { normalizeSlots, parseBookingDateTime, validateBookingWindow } = require('../utils/bookingDateTime');
 
 const STATUSES = ['Pending', 'Confirmed', 'Arrived', 'Completed', 'Cancelled'];
 
@@ -54,25 +54,26 @@ router.post('/create', verifyToken, requireRole('FM', 'Tenant', 'Staff'), async 
         // never re-parsed with the host machine's timezone (Cloud Run = UTC).
         const slots = normalizeSlots({ slot_start, slot_end });
         if (slots.error) return res.status(400).json({ error: slots.error });
-        const startAt = slots.slot_start;
-        const endAt = slots.slot_end;
 
-        // Optional slot-conflict guard (409) when a time window is supplied.
-        if (startAt && endAt) {
-            if (endAt <= startAt) {
-                return res.status(400).json({ error: 'slot_end must be after slot_start.' });
+        // Every new booking MUST carry a 1–2 hour window. Backend validation is
+        // authoritative (the frontend also guards, but is never trusted). Duration is
+        // validated BEFORE the overlap query so an invalid window is never persisted.
+        const window = validateBookingWindow(slots.slot_start, slots.slot_end);
+        if (!window.ok) return res.status(400).json({ error: window.error });
+        const startAt = window.startAt;
+        const endAt = window.endAt;
+
+        // Slot-conflict guard (409) on the validated window.
+        const clash = await Booking.findOne({
+            where: {
+                loading_bay,
+                status: { [Op.ne]: 'Cancelled' },
+                slot_start: { [Op.lt]: endAt },
+                slot_end: { [Op.gt]: startAt }
             }
-            const clash = await Booking.findOne({
-                where: {
-                    loading_bay,
-                    status: { [Op.ne]: 'Cancelled' },
-                    slot_start: { [Op.lt]: endAt },
-                    slot_end: { [Op.gt]: startAt }
-                }
-            });
-            if (clash) {
-                return res.status(409).json({ error: `${loading_bay} is already booked for that time window.` });
-            }
+        });
+        if (clash) {
+            return res.status(409).json({ error: `${loading_bay} is already booked for that time window.` });
         }
 
         // Link the booking to a tenant/unit so the right people can see it
@@ -232,6 +233,9 @@ router.patch('/:id', verifyToken, requireRole('FM', 'Tenant'), async (req, res) 
 
         // Normalise any edited slot times to absolute UTC instants (same
         // Singapore wall-clock contract as create) before validation/persistence.
+        // parseBookingDateTime turns '' / null into a null date — an attempt to CLEAR
+        // the slot, which is rejected below (a booking may never lose a slot on edit).
+        const editingSlots = ('slot_start' in updates) || ('slot_end' in updates);
         if ('slot_start' in updates) {
             const parsed = parseBookingDateTime(updates.slot_start);
             if (!parsed.ok) return res.status(400).json({ error: 'slot_start is not a valid date/time.' });
@@ -243,21 +247,42 @@ router.patch('/:id', verifyToken, requireRole('FM', 'Tenant'), async (req, res) 
             updates.slot_end = parsed.date;
         }
 
-        // Slot-conflict validation on the resulting time window/bay. Existing
-        // values from the DB are already absolute instants; coerce both sides to
-        // Date so the comparison never depends on string parsing.
+        // Resulting window/bay after applying the edits. Existing DB values are already
+        // absolute instants.
         const newStart = 'slot_start' in updates ? updates.slot_start : booking.slot_start;
         const newEnd = 'slot_end' in updates ? updates.slot_end : booking.slot_end;
         const newBay = 'loading_bay' in updates ? updates.loading_bay : booking.loading_bay;
-        if (newStart && newEnd) {
-            const startAt = newStart instanceof Date ? newStart : new Date(newStart);
-            const endAt = newEnd instanceof Date ? newEnd : new Date(newEnd);
-            if (endAt <= startAt) {
-                return res.status(400).json({ error: 'slot_end must be after slot_start.' });
-            }
+
+        if (editingSlots) {
+            // When an edit touches either slot, the RESULTING complete window must be a
+            // valid 1–2 hour window (backend-authoritative). This also covers editing
+            // only one side, and blocks clearing a slot (a null side fails validation).
+            // Duration is validated BEFORE the overlap query so an invalid edit never
+            // reaches the DB conflict check.
+            const window = validateBookingWindow(newStart, newEnd);
+            if (!window.ok) return res.status(400).json({ error: window.error });
             const clash = await Booking.findOne({
                 where: {
                     id: { [Op.ne]: booking.id }, // ignore the booking being edited
+                    loading_bay: newBay,
+                    status: { [Op.ne]: 'Cancelled' },
+                    slot_start: { [Op.lt]: window.endAt },
+                    slot_end: { [Op.gt]: window.startAt }
+                }
+            });
+            if (clash) {
+                return res.status(409).json({ error: `${newBay} is already booked for that time window.` });
+            }
+        } else if (newStart && newEnd) {
+            // No slot fields edited (e.g. a driver-name or bay change). Keep the overlap
+            // guard so a bay change still can't collide, but do NOT force pre-existing
+            // (possibly historical, null- or short-slot) bookings to be re-validated for
+            // duration — those stay editable/readable until their slots are actually set.
+            const startAt = newStart instanceof Date ? newStart : new Date(newStart);
+            const endAt = newEnd instanceof Date ? newEnd : new Date(newEnd);
+            const clash = await Booking.findOne({
+                where: {
+                    id: { [Op.ne]: booking.id },
                     loading_bay: newBay,
                     status: { [Op.ne]: 'Cancelled' },
                     slot_start: { [Op.lt]: endAt },

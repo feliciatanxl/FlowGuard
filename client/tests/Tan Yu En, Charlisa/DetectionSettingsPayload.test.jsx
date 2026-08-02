@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { buildZonePayload } from '../../src/pages/detectionSettingsPayload';
-import { buildAnalyzeFramePayload, resolveAlertSource } from '../../src/pages/ObjectDetection';
+import { buildAnalyzeFramePayload } from '../../src/utils/analyzeFrame';
+import { resolveAlertSource } from '../../src/utils/alertSource';
 
 describe('Detection Setup payload mapping', () => {
   test('Unattended Pallet / Object threshold maps to unattended seconds', () => {

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
@@ -230,7 +230,7 @@ const IncidentDashboard = () => {
   // On mount: fetch from DB (no seed — live AI data only)
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    fetchIncidents();
+    (async () => { await fetchIncidents(); })();
   }, [fetchIncidents]);
 
   // ---------------------------------------------------------------------------

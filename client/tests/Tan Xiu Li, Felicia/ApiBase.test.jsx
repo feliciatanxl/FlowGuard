@@ -1,12 +1,11 @@
 // Frontend tests — Smart Logistics and Driver Pass use the ONE shared API base
 // (VITE_API_BASE_URL): blank locally (Vite proxy), a deployed Node URL on Vercel.
-import React from "react";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../src/components/Sidebar", () => ({ default: () => <div data-testid="sidebar" /> }));
-vi.mock("react-qr-code", () => ({ default: ({ value }) => <div data-testid="qr-code" /> }));
+vi.mock("react-qr-code", () => ({ default: () => <div data-testid="qr-code" /> }));
 
 const mockAxios = { get: vi.fn(), post: vi.fn(), patch: vi.fn() };
 vi.mock("axios", () => ({ default: mockAxios }));

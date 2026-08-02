@@ -45,6 +45,10 @@ const validBody = {
   license_plate: "GBG 1234M",
   driver_phone: "+6591234567",
   loading_bay: "Bay A",
+  // Every booking now needs a 1–2 hour window (backend-authoritative). A valid
+  // 60-minute window keeps these create assertions focused on their own concern.
+  slot_start: "2026-08-10T02:00:00.000Z",
+  slot_end: "2026-08-10T03:00:00.000Z",
 };
 
 describe("Booking routes", () => {

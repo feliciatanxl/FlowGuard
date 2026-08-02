@@ -404,6 +404,28 @@
 }
 .booking-modal-actions .submit-booking-btn { width: auto; margin-top: 0; }
 
+/* 1–2 hour booking-window helper block (Slot Start / Slot End). */
+.booking-window-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 16px;
+  margin: -4px 0 12px;
+  padding: 10px 12px;
+  background: #0b1220;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+}
+.booking-window-rule { margin: 0; color: #94a3b8; font-size: 0.8rem; }
+.booking-window-duration { margin: 0; color: #cbd5e1; font-size: 0.8rem; }
+.booking-window-duration strong { color: #e2e8f0; }
+.booking-window-error {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+  color: #fca5a5;
+  font-size: 0.8rem;
+}
+
 @media (max-width: 1024px) {
   .logistics-stats { grid-template-columns: repeat(2, 1fr); }
 }

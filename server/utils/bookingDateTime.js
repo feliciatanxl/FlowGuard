@@ -14,6 +14,14 @@
 const SG_TIME_ZONE = 'Asia/Singapore';
 const SG_OFFSET_MS = 8 * 60 * 60 * 1000; // Asia/Singapore: fixed +08:00, no DST
 
+// Business rule for Smart Logistics loading-bay slots: every booking window must be
+// between 1 and 2 hours. Both bounds are INCLUSIVE — exactly 60 and exactly 120 minutes
+// are valid; 59 and 121 minutes are not. Kept here (backend, timezone-independent) so it
+// is authoritative regardless of anything the frontend does.
+const MIN_BOOKING_MINUTES = 60;
+const MAX_BOOKING_MINUTES = 120;
+const MS_PER_MINUTE = 60 * 1000;
+
 // A trailing timezone designator: "…Z" or "…+08:00" / "…-0500".
 const HAS_TZ = /([zZ])$|([+-]\d{2}:?\d{2})$/;
 // A timezone-LESS datetime-local value: 2026-07-27T18:01(:00)(.000)?
@@ -70,6 +78,58 @@ function normalizeSlots(body = {}) {
   return { slot_start: start.date, slot_end: end.date };
 }
 
+/**
+ * Authoritative 1–2 hour booking-window validation. Accepts already-normalised
+ * Date instants (what normalizeSlots / parseBookingDateTime return) OR raw string
+ * inputs, which it will parse the same way. Returns:
+ *   { ok: true, startAt, endAt, durationMinutes }  on a valid window, or
+ *   { ok: false, error }                            with a clear, stable message.
+ *
+ * Checks (in order):
+ *   - missing start                 → "slot_start and slot_end are required."
+ *   - missing end                   → "slot_start and slot_end are required."
+ *   - unparseable start/end         → "slot_start is not a valid date/time." / slot_end
+ *   - end not after start           → "slot_end must be after slot_start."
+ *   - duration below 60 minutes     → "Booking duration must be at least 1 hour."
+ *   - duration above 120 minutes    → "Booking duration cannot exceed 2 hours."
+ *
+ * 60 and 120 minutes are both accepted (inclusive bounds).
+ */
+function validateBookingWindow(startAt, endAt) {
+  const missingStart = startAt === null || startAt === undefined || startAt === '';
+  const missingEnd = endAt === null || endAt === undefined || endAt === '';
+  if (missingStart || missingEnd) {
+    return { ok: false, error: 'slot_start and slot_end are required.' };
+  }
+
+  const startParsed = parseBookingDateTime(startAt);
+  if (!startParsed.ok || !startParsed.date) {
+    return { ok: false, error: 'slot_start is not a valid date/time.' };
+  }
+  const endParsed = parseBookingDateTime(endAt);
+  if (!endParsed.ok || !endParsed.date) {
+    return { ok: false, error: 'slot_end is not a valid date/time.' };
+  }
+
+  const start = startParsed.date;
+  const end = endParsed.date;
+  const durationMs = end.getTime() - start.getTime();
+
+  if (durationMs <= 0) {
+    return { ok: false, error: 'slot_end must be after slot_start.' };
+  }
+
+  const durationMinutes = durationMs / MS_PER_MINUTE;
+  if (durationMinutes < MIN_BOOKING_MINUTES) {
+    return { ok: false, error: 'Booking duration must be at least 1 hour.' };
+  }
+  if (durationMinutes > MAX_BOOKING_MINUTES) {
+    return { ok: false, error: 'Booking duration cannot exceed 2 hours.' };
+  }
+
+  return { ok: true, startAt: start, endAt: end, durationMinutes };
+}
+
 // --- Display helpers (always Asia/Singapore, host-timezone independent) ---
 
 /** "27 Jul 2026, 6:01 PM" — or '' for missing/invalid input. */
@@ -103,8 +163,11 @@ function formatSingaporeTime(value) {
 module.exports = {
   SG_TIME_ZONE,
   SG_OFFSET_MS,
+  MIN_BOOKING_MINUTES,
+  MAX_BOOKING_MINUTES,
   parseBookingDateTime,
   normalizeSlots,
+  validateBookingWindow,
   formatSingaporeDateTime,
   formatSingaporeTime,
 };

@@ -1,4 +1,3 @@
-import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { vi, describe, test, expect, beforeEach } from 'vitest';
@@ -115,16 +114,23 @@ describe('Dashboard - Phase 2 role-aware variants', () => {
     localStorage.setItem('accessToken', 'token');
     localStorage.setItem('userRole', 'FM');
     localStorage.setItem('userName', 'Test User');
+    // Single source of truth: recent High/Critical alerts now arrive inside the
+    // dashboard summary payload — the client no longer makes a separate
+    // /api/detection-alerts request.
     mockApi({
-      detectionAlerts: () => Promise.resolve({
-        data: [{
-          id: 1,
-          status: 'Active',
-          alert_type: 'unattended_object',
-          object_class: 'pallet',
-          zone_name: 'Zone A',
-          camera_location: 'Loading Bay 1'
-        }]
+      summary: () => Promise.resolve({
+        data: {
+          ...responses.FM,
+          recentHighPriorityAlerts: [{
+            id: 1,
+            status: 'Active',
+            severity: 'High',
+            alert_type: 'unattended_object',
+            object_class: 'pallet',
+            zone_name: 'Zone A',
+            camera_location: 'Loading Bay 1'
+          }]
+        }
       })
     });
     render(<MemoryRouter><Dashboard /></MemoryRouter>);

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
@@ -12,9 +12,10 @@ import {
   SCANNER_STATE, DECODER_SOURCE,
 } from '../utils/gateCamera';
 import {
-  CAMERA_SOURCE, SOURCE_LABELS, isPiConfigured,
-  fetchPiSnapshotBitmap, markPiUnavailable,
-  fallbackMessage, FALLBACK_REASON,
+  CAMERA_SOURCE, SOURCE_LABELS, sourceLabel, isPiConfigured,
+  markPiUnavailable, fallbackMessage, FALLBACK_REASON,
+  CAMERA_STATUS, resolvePreferredCameraSource, fetchPiSnapshotBitmap,
+  PI_CAMERA_STREAM_URL,
 } from '../utils/cameraSource';
 import { recognizePlate } from '../utils/plateOcr';
 import { formatSingaporeBookingDateTime } from '../constants/datetime';
@@ -68,6 +69,15 @@ const REASON_TEXT = {
 
 const AUTO_STEPS = ['Scan QR', 'Capture Plate', 'Verify Booking', 'Access Decision'];
 
+// Human labels for the actual capture source surfaced in the status card / audit.
+const CAPTURE_SOURCE_LABEL = {
+  pi: SOURCE_LABELS.pi,
+  webcam: SOURCE_LABELS.webcam,
+  upload: SOURCE_LABELS.upload,
+  manual: SOURCE_LABELS.manual,
+  simulation: SOURCE_LABELS.simulation,
+};
+
 const fmtSlot = (v) => formatSingaporeBookingDateTime(v);
 
 const GateVerification = () => {
@@ -84,20 +94,30 @@ const GateVerification = () => {
   const [bookingRef, setBookingRef] = useState('');
   const [manualPlate, setManualPlate] = useState('');
 
+  // Unified camera-source state (Pi Camera Module 3 preferred; webcam fallback).
+  const piConfigured = isPiConfigured();
+  const [primarySource, setPrimarySource] = useState(CAMERA_SOURCE.WEBCAM); // auto-selected preferred
+  const [sourceStatus, setSourceStatus] = useState(
+    piConfigured ? CAMERA_STATUS.CHECKING_PI : CAMERA_STATUS.WEBCAM_ACTIVE
+  );
+  const [piReachable, setPiReachable] = useState(null);    // null = checking / unknown
+  const [actualQrSource, setActualQrSource] = useState(null);   // pi | webcam | manual
+  const [actualPlateSource, setActualPlateSource] = useState(null); // pi|webcam|upload|simulation|manual
+
   // QR scanner
   const [scanning, setScanning] = useState(false);
   const [qrError, setQrError] = useState('');
   const [qrSource, setQrSource] = useState(CAMERA_SOURCE.WEBCAM); // webcam | pi
   const [scannerState, setScannerState] = useState(null);
   const [qrMetrics, setQrMetrics] = useState(null);
-  const piConfigured = isPiConfigured();
 
   // PoC OCR
+  const [plateCamSource, setPlateCamSource] = useState(CAMERA_SOURCE.WEBCAM); // webcam | pi
   const [plateCamActive, setPlateCamActive] = useState(false);
   const [ocr, setOcr] = useState(null);                   // { raw, normalized, confidence, simulated? }
   const [ocrBusy, setOcrBusy] = useState(false);
   const [ocrError, setOcrError] = useState('');
-  const [plateSource, setPlateSource] = useState('ocr');  // ocr | simulation
+  const [plateSource, setPlateSource] = useState('ocr');  // ocr | simulation (server plateSource)
   const [simInput, setSimInput] = useState('');
 
   // Verification result
@@ -112,6 +132,7 @@ const GateVerification = () => {
   const plateVideoRef = useRef(null);
   const qrStopRef = useRef(null);
   const plateStopRef = useRef(null);
+  const mountedRef = useRef(true);
 
   const stopQr = () => {
     try { qrStopRef.current?.(); } catch { /* ignore */ }
@@ -125,6 +146,9 @@ const GateVerification = () => {
     setPlateCamActive(false);
   };
   const stopAllCameras = () => { stopQr(); stopPlateCam(); };
+  const releaseAllCameras = useEffectEvent(() => {
+    stopAllCameras();
+  });
 
   // Release cameras on unmount (route navigation) and when the tab is hidden.
   // Also warm the QR scanner (download @zxing/browser + probe BarcodeDetector)
@@ -132,14 +156,38 @@ const GateVerification = () => {
   // opens a camera — it only preloads code.
   useEffect(() => {
     preloadQrScanner();
-    const onVisibility = () => { if (document.hidden) stopAllCameras(); };
+    const onVisibility = () => { if (document.hidden) releaseAllCameras(); };
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
-      stopAllCameras();
+      releaseAllCameras();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Auto-select the preferred camera source ONCE at page start. When the Pi is not
+  // configured this returns instantly (no network probe, no Pi timeout wait) so the
+  // laptop webcam is available immediately. The FM can still switch sources manually
+  // after this runs. Probing happens once here, never on every render.
+  useEffect(() => {
+    mountedRef.current = true;
+    // The initial status ("Checking…" / "Laptop Webcam active") is already set by the
+    // sourceStatus useState initializer, so the effect only updates state AFTER the
+    // async probe resolves (never synchronously in the effect body).
+    (async () => {
+      const pref = await resolvePreferredCameraSource();
+      if (!mountedRef.current) return;
+      setPrimarySource(pref.source);
+      setPiReachable(pref.source === CAMERA_SOURCE.PI);
+      setQrSource(pref.source);
+      setPlateCamSource(pref.source);
+      setSourceStatus(
+        pref.source === CAMERA_SOURCE.PI ? CAMERA_STATUS.PI_CONNECTED
+          : piConfigured ? CAMERA_STATUS.PI_FALLBACK
+            : CAMERA_STATUS.WEBCAM_ACTIVE
+      );
+    })();
+    return () => { mountedRef.current = false; };
+  }, [piConfigured]);
 
   if (role !== ROLES.FM) {
     return (
@@ -155,6 +203,15 @@ const GateVerification = () => {
     );
   }
 
+  // When the Pi fails during a capture, drop back to the webcam for the whole page and
+  // reflect it in the shared status line + cooldown (so we don't re-probe immediately).
+  const activatePiFallback = () => {
+    markPiUnavailable();
+    setPiReachable(false);
+    setPrimarySource(CAMERA_SOURCE.WEBCAM);
+    setSourceStatus(CAMERA_STATUS.PI_FALLBACK);
+  };
+
   // --- QR scanning ---
   // Uploads a still to the Node /api/qr/decode proxy (which forwards to the
   // FastAPI OpenCV decoder) and returns a CANDIDATE ref or null. Cold/unavailable
@@ -169,7 +226,7 @@ const GateVerification = () => {
     }
   };
 
-  const onQrResult = (text) => {
+  const onQrResult = (text, capturedFrom = CAMERA_SOURCE.WEBCAM) => {
     const ref = normalizeBookingRef(text);
     if (!isValidBookingRef(ref)) {
       setQrError('Unrecognised QR code. Expected a FlowGuard booking reference (e.g. FG-ABC123).');
@@ -177,6 +234,7 @@ const GateVerification = () => {
     }
     setQrError('');
     setBookingRef(ref);
+    setActualQrSource(capturedFrom);
     stopQr();
     setScannerState(SCANNER_STATE.QR_DETECTED);
     setStep(1);
@@ -190,7 +248,7 @@ const GateVerification = () => {
     setScanning(true);
     const stop = await startQrScan({
       videoElement: qrVideoRef.current,
-      onResult: onQrResult,
+      onResult: (text) => onQrResult(text, CAMERA_SOURCE.WEBCAM),
       onError: ({ message }) => { setQrError(message); setScanning(false); },
       onState: setScannerState,
       onMetrics: setQrMetrics,
@@ -201,10 +259,10 @@ const GateVerification = () => {
     qrStopRef.current = stop;
   };
 
-  // Raspberry Pi Camera Module 3 automatic QR: grab one fresh still and send it
-  // to the cloud decoder (a Pi MJPEG frame can't be BarcodeDetector-scanned in
-  // the browser). Falls back to the laptop webcam if the Pi is unreachable.
-  // Never persists the snapshot.
+  // Raspberry Pi Camera Module 3 automatic QR: grab one fresh still (in-memory canvas,
+  // never persisted) and send it to the cloud decoder (a Pi MJPEG frame can't be
+  // BarcodeDetector-scanned in the browser). Auto-falls-back to the laptop webcam if
+  // the Pi is unreachable, and shows the reason.
   const captureQrFromPi = async () => {
     setQrError('');
     setScannerState(SCANNER_STATE.STARTING);
@@ -212,29 +270,32 @@ const GateVerification = () => {
     try {
       bitmap = await fetchPiSnapshotBitmap();
     } catch {
-      markPiUnavailable();
-      setScannerState(SCANNER_STATE.UNAVAILABLE);
-      setQrError(`${fallbackMessage(FALLBACK_REASON.PI_UNREACHABLE)} Or use manual entry.`);
+      activatePiFallback();
       setQrSource(CAMERA_SOURCE.WEBCAM);
+      setScannerState(SCANNER_STATE.UNAVAILABLE);
+      setQrError(`${fallbackMessage(FALLBACK_REASON.PI_UNREACHABLE)} Switched to the laptop webcam — or use manual entry.`);
       return;
     }
     try {
+      // Draw the fresh Pi still onto an in-memory canvas, then RELEASE the bitmap.
+      // Nothing is persisted; the canvas is discarded when this returns.
       const canvas = document.createElement('canvas');
       canvas.width = bitmap.width;
       canvas.height = bitmap.height;
-      canvas.getContext('2d').drawImage(bitmap, 0, 0);
+      canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
       bitmap.close?.();
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
       setScannerState(SCANNER_STATE.CLOUD);
       const ref = await decodeViaCloud(dataUrl);
       if (ref && isValidBookingRef(ref)) {
         setQrMetrics({ decoder: DECODER_SOURCE.PI_CAMERA_CLOUD });
-        onQrResult(ref);
+        onQrResult(ref, CAMERA_SOURCE.PI);
       } else {
         setScannerState(SCANNER_STATE.MANUAL);
         setQrError('No valid FlowGuard QR detected in the Raspberry Pi snapshot. Capture again or use manual entry.');
       }
     } catch {
+      bitmap.close?.();
       setScannerState(SCANNER_STATE.UNAVAILABLE);
       setQrError('Could not process the Raspberry Pi snapshot. Try again or use manual entry.');
     }
@@ -256,6 +317,7 @@ const GateVerification = () => {
     }
     setQrError('');
     setBookingRef(normalizeBookingRef(bookingRef));
+    setActualQrSource(CAMERA_SOURCE.MANUAL);
     setStep(1);
   };
 
@@ -273,18 +335,17 @@ const GateVerification = () => {
     }
   };
 
-  const runOcrOn = async (source) => {
+  const runOcrOn = async (source, capturedFrom) => {
     setOcrBusy(true);
     setOcrError('');
     try {
       const result = await recognizePlate(source);
+      setOcr({ ...result, simulated: false });
       if (!result.normalized) {
-        setOcr({ ...result, simulated: false });
         setOcrError('No plate text could be read. Retake the photo, or use manual verification.');
-      } else {
-        setOcr({ ...result, simulated: false });
       }
       setPlateSource('ocr');
+      setActualPlateSource(capturedFrom);
     } catch (e) {
       setOcrError(e.message || 'OCR failed. Please retake the photo.');
     } finally {
@@ -294,8 +355,35 @@ const GateVerification = () => {
 
   const captureAndRead = async () => {
     if (!plateVideoRef.current) return;
-    await runOcrOn(plateVideoRef.current);
+    await runOcrOn(plateVideoRef.current, CAMERA_SOURCE.WEBCAM);
     stopPlateCam();
+  };
+
+  // Raspberry Pi Camera Module 3 plate capture: grab one fresh still onto an in-memory
+  // canvas (released immediately, never saved), then run the existing OCR on it. On Pi
+  // failure, automatically activate the laptop-webcam fallback.
+  const capturePlateFromPi = async () => {
+    setOcrError('');
+    stopQr();
+    setOcrBusy(true);
+    let bitmap;
+    try {
+      bitmap = await fetchPiSnapshotBitmap();
+    } catch {
+      activatePiFallback();
+      setPlateCamSource(CAMERA_SOURCE.WEBCAM);
+      setOcrBusy(false);
+      setOcrError(`${fallbackMessage(FALLBACK_REASON.PI_UNREACHABLE)} Switched to the laptop webcam — press Start Camera.`);
+      return;
+    }
+    // Draw the fresh Pi still onto an in-memory canvas and release the bitmap before
+    // OCR (the canvas holds its own pixels). The frame is never saved anywhere.
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
+    bitmap.close?.();
+    await runOcrOn(canvas, CAMERA_SOURCE.PI);
   };
 
   const onUploadImage = async (e) => {
@@ -311,7 +399,7 @@ const GateVerification = () => {
       });
       img.src = url;
       await loaded;
-      await runOcrOn(img);
+      await runOcrOn(img, CAMERA_SOURCE.UPLOAD);
     } catch (err) {
       setOcrError(err.message || 'Could not read that image.');
     } finally {
@@ -325,6 +413,7 @@ const GateVerification = () => {
     setOcrError('');
     setOcr({ raw: simInput.trim(), normalized, confidence: null, simulated: true });
     setPlateSource('simulation');
+    setActualPlateSource('simulation');
   };
 
   const retakePlate = () => {
@@ -333,6 +422,14 @@ const GateVerification = () => {
     setOcrError('');
     setSimInput('');
     setPlateSource('ocr');
+    setActualPlateSource(null);
+  };
+
+  const switchPlateSource = (next) => {
+    if (next === plateCamSource) return;
+    stopPlateCam();
+    setOcrError('');
+    setPlateCamSource(next);
   };
 
   // --- Verification ---
@@ -372,6 +469,10 @@ const GateVerification = () => {
       plateConfidence: ocr?.confidence ?? null,
       manualOverride: false,
       overrideReason: null,
+      // Informational capture-source metadata for the audit trail (server ignores
+      // any field it doesn't recognise; plateSource stays the authoritative enum).
+      qrCaptureSource: actualQrSource,
+      plateCaptureSource: actualPlateSource,
     });
   };
 
@@ -385,6 +486,8 @@ const GateVerification = () => {
       plateSource: 'manual',
       manualOverride: false,
       overrideReason: null,
+      qrCaptureSource: CAMERA_SOURCE.MANUAL,
+      plateCaptureSource: CAMERA_SOURCE.MANUAL,
     });
   };
 
@@ -417,7 +520,10 @@ const GateVerification = () => {
     setSubmitError('');
     setScannerState(null);
     setQrMetrics(null);
-    setQrSource(CAMERA_SOURCE.WEBCAM);
+    setActualQrSource(null);
+    setActualPlateSource(null);
+    setQrSource(primarySource);
+    setPlateCamSource(primarySource);
     setStep(0);
   };
 
@@ -430,6 +536,19 @@ const GateVerification = () => {
   const decisionGranted = decision?.access === 'GRANTED';
   const decisionOverride = Boolean(decision?.overrideUsed);
   const reviewable = Boolean(decision && decision.access === 'DENIED' && decision.manualReviewRequired);
+
+  // Manual-tab field validity (Section 5: disable Verify until both are valid).
+  const manualRefValid = isValidBookingRef(bookingRef);
+  const manualPlateNorm = normalizePlate(manualPlate);
+  const manualPlateValid = manualPlateNorm.length > 0;
+  const manualValid = manualRefValid && manualPlateValid;
+
+  // Connection state for the compact source card.
+  const connectionState = piReachable === null
+    ? (piConfigured ? 'Checking…' : 'Webcam only')
+    : piReachable ? 'Pi connected' : (piConfigured ? 'Pi unavailable — webcam fallback' : 'Webcam only');
+
+  const fallbackSourceLabel = piConfigured ? SOURCE_LABELS.webcam : SOURCE_LABELS.upload;
 
   return (
     <div className="dashboard-layout">
@@ -445,7 +564,33 @@ const GateVerification = () => {
           </div>
         </header>
 
-        {/* Entry / Exit selector */}
+        {/* Compact camera-source status card — one place shows the primary source,
+            the fallback, and the live connection state (no scattered buttons). */}
+        <section className="gate-source-card" aria-label="Camera source status">
+          <div className="gate-source-card-main">
+            <span className={`gate-source-dot ${piReachable ? 'ok' : piReachable === null ? 'checking' : 'fallback'}`} aria-hidden="true" />
+            <div>
+              <p className="gate-source-status" aria-live="polite">{sourceStatus}</p>
+              <p className="gate-source-detail">
+                Primary: <strong>{sourceLabel(primarySource)}</strong>
+                <span className="gate-source-sep">·</span>
+                Fallback: <strong>{fallbackSourceLabel}</strong>
+                <span className="gate-source-sep">·</span>
+                <span>{connectionState}</span>
+              </p>
+            </div>
+          </div>
+          <div className="gate-source-badges">
+            {actualQrSource && (
+              <span className="gate-source-chip">QR: {CAPTURE_SOURCE_LABEL[actualQrSource] || actualQrSource}</span>
+            )}
+            {actualPlateSource && (
+              <span className="gate-source-chip">Plate: {CAPTURE_SOURCE_LABEL[actualPlateSource] || actualPlateSource}</span>
+            )}
+          </div>
+        </section>
+
+        {/* Entry / Exit segmented control */}
         <div className="gate-action-selector" role="group" aria-label="Gate action">
           <button
             type="button"
@@ -475,7 +620,7 @@ const GateVerification = () => {
           >Manual Verification</button>
         </div>
 
-        {submitError && <div className="error-banner" style={{ margin: '12px 0' }}>⚠️ {submitError}</div>}
+        {submitError && <div className="error-banner gate-submit-error">⚠️ {submitError}</div>}
 
         <div className="gate-grid">
           {/* LEFT: capture / input workflow */}
@@ -496,15 +641,10 @@ const GateVerification = () => {
                 <div className="gate-block">
                   <h3>1 · Scan Driver QR</h3>
 
-                  {/* Camera source: laptop webcam (default) or Raspberry Pi Camera Module 3. */}
+                  {/* Camera source: Raspberry Pi Camera Module 3 (preferred when
+                      reachable) or the laptop webcam. */}
                   <div className="gate-source-select" role="group" aria-label="QR camera source">
                     <span className="gate-source-label">Camera source:</span>
-                    <button
-                      type="button"
-                      className={`gate-source-btn ${qrSource === CAMERA_SOURCE.WEBCAM ? 'active' : ''}`}
-                      aria-pressed={qrSource === CAMERA_SOURCE.WEBCAM}
-                      onClick={() => switchQrSource(CAMERA_SOURCE.WEBCAM)}
-                    >{SOURCE_LABELS.webcam}</button>
                     {piConfigured && (
                       <button
                         type="button"
@@ -513,12 +653,24 @@ const GateVerification = () => {
                         onClick={() => switchQrSource(CAMERA_SOURCE.PI)}
                       >{SOURCE_LABELS.pi}</button>
                     )}
+                    <button
+                      type="button"
+                      className={`gate-source-btn ${qrSource === CAMERA_SOURCE.WEBCAM ? 'active' : ''}`}
+                      aria-pressed={qrSource === CAMERA_SOURCE.WEBCAM}
+                      onClick={() => switchQrSource(CAMERA_SOURCE.WEBCAM)}
+                    >{SOURCE_LABELS.webcam}</button>
                   </div>
 
                   <div className="gate-video-wrap">
-                    <video ref={qrVideoRef} className="gate-video" muted playsInline aria-label="QR scanner preview" />
+                    {/* A Pi MJPEG stream is shown via an <img> (never attached to a
+                        MediaStream <video>); processing always uses a fresh /snapshot. */}
+                    {qrSource === CAMERA_SOURCE.PI && PI_CAMERA_STREAM_URL ? (
+                      <img className="gate-video" src={PI_CAMERA_STREAM_URL} alt="Raspberry Pi Camera Module 3 live preview" />
+                    ) : (
+                      <video ref={qrVideoRef} className="gate-video" muted playsInline aria-label="QR scanner preview" />
+                    )}
                     {qrSource === CAMERA_SOURCE.PI
-                      ? <div className="gate-video-idle">{SOURCE_LABELS.pi} — capture a snapshot to scan</div>
+                      ? (!PI_CAMERA_STREAM_URL && <div className="gate-video-idle">{SOURCE_LABELS.pi} — capture a snapshot to scan</div>)
                       : (!scanning && <div className="gate-video-idle">Camera is off</div>)}
                   </div>
 
@@ -579,13 +731,45 @@ const GateVerification = () => {
                     <strong>PoC Plate OCR.</strong> Recognition accuracy may vary with lighting, glare,
                     camera angle and plate condition. Manual verification is available.
                   </p>
+
+                  {/* Plate camera source: Pi Camera Module 3 (preferred) or laptop webcam. */}
+                  <div className="gate-source-select" role="group" aria-label="Plate camera source">
+                    <span className="gate-source-label">Camera source:</span>
+                    {piConfigured && (
+                      <button
+                        type="button"
+                        className={`gate-source-btn ${plateCamSource === CAMERA_SOURCE.PI ? 'active' : ''}`}
+                        aria-pressed={plateCamSource === CAMERA_SOURCE.PI}
+                        aria-label={`Plate camera source: ${SOURCE_LABELS.pi}`}
+                        onClick={() => switchPlateSource(CAMERA_SOURCE.PI)}
+                      >{SOURCE_LABELS.pi}</button>
+                    )}
+                    <button
+                      type="button"
+                      className={`gate-source-btn ${plateCamSource === CAMERA_SOURCE.WEBCAM ? 'active' : ''}`}
+                      aria-pressed={plateCamSource === CAMERA_SOURCE.WEBCAM}
+                      aria-label={`Plate camera source: ${SOURCE_LABELS.webcam}`}
+                      onClick={() => switchPlateSource(CAMERA_SOURCE.WEBCAM)}
+                    >{SOURCE_LABELS.webcam}</button>
+                  </div>
+
                   <div className="gate-video-wrap">
-                    <video ref={plateVideoRef} className="gate-video" muted playsInline aria-label="Plate camera preview" />
-                    {!plateCamActive && <div className="gate-video-idle">Camera is off</div>}
+                    {plateCamSource === CAMERA_SOURCE.PI && PI_CAMERA_STREAM_URL ? (
+                      <img className="gate-video" src={PI_CAMERA_STREAM_URL} alt="Raspberry Pi Camera Module 3 plate preview" />
+                    ) : (
+                      <video ref={plateVideoRef} className="gate-video" muted playsInline aria-label="Plate camera preview" />
+                    )}
+                    {plateCamSource === CAMERA_SOURCE.PI
+                      ? (!PI_CAMERA_STREAM_URL && <div className="gate-video-idle">{SOURCE_LABELS.pi} — capture a snapshot to read</div>)
+                      : (!plateCamActive && <div className="gate-video-idle">Camera is off</div>)}
                   </div>
                   {ocrError && <div className="gate-inline-error" role="alert">⚠️ {ocrError}</div>}
                   <div className="gate-btn-row">
-                    {!plateCamActive ? (
+                    {plateCamSource === CAMERA_SOURCE.PI ? (
+                      <button type="button" className="new-booking-btn" onClick={capturePlateFromPi} disabled={ocrBusy}>
+                        {ocrBusy ? 'Reading…' : `Capture Plate from ${SOURCE_LABELS.pi}`}
+                      </button>
+                    ) : !plateCamActive ? (
                       <button type="button" className="edit-btn" onClick={startPlateCam}>Start Camera</button>
                     ) : (
                       <button type="button" className="new-booking-btn" onClick={captureAndRead} disabled={ocrBusy}>
@@ -639,35 +823,63 @@ const GateVerification = () => {
                 </div>
               </>
             ) : (
-              /* MANUAL TAB */
-              <div className="gate-block">
-                <h3>Manual Verification</h3>
-                <p className="gate-note">
-                  Manually confirm the booking reference and the plate you observe on the vehicle.
-                  A mismatch is denied unless you perform an audited manual override.
-                </p>
-                <div className="form-group">
-                  <label htmlFor="gate-ref-m">Booking Reference *</label>
-                  <input
-                    id="gate-ref-m"
-                    aria-label="Booking reference"
-                    placeholder="FG-ABC123"
-                    value={bookingRef}
-                    onChange={(e) => setBookingRef(e.target.value)}
-                  />
+              /* MANUAL TAB — polished dark card (Section 5) */
+              <div className="gate-manual-card">
+                <div className="gate-manual-head">
+                  <h3>Manual gate check</h3>
+                  <p className="gate-note">
+                    Manually confirm the booking reference and the plate you observe on the vehicle.
+                    A mismatch is denied unless you perform an audited manual override.
+                  </p>
                 </div>
-                <div className="form-group">
-                  <label htmlFor="gate-plate-m">Observed Vehicle Plate *</label>
-                  <input
-                    id="gate-plate-m"
-                    aria-label="Observed vehicle plate"
-                    placeholder="e.g. GBG 1234M"
-                    value={manualPlate}
-                    onChange={(e) => setManualPlate(e.target.value)}
-                  />
+
+                <div className="gate-field-grid">
+                  <div className={`gate-field ${bookingRef && !manualRefValid ? 'has-error' : ''}`}>
+                    <label htmlFor="gate-ref-m">Booking Reference <span className="gate-req" aria-hidden="true">*</span></label>
+                    <input
+                      id="gate-ref-m"
+                      className="gate-input"
+                      aria-label="Booking reference"
+                      aria-required="true"
+                      aria-invalid={Boolean(bookingRef) && !manualRefValid}
+                      placeholder="FG-ABC123"
+                      value={bookingRef}
+                      onChange={(e) => setBookingRef(e.target.value)}
+                    />
+                    <small className="gate-field-hint">Format: FG- followed by 4–12 letters/digits. Example: FG-ABC123</small>
+                    {bookingRef && !manualRefValid && (
+                      <p className="gate-field-error" role="alert">Enter a valid FlowGuard reference (e.g. FG-ABC123).</p>
+                    )}
+                  </div>
+
+                  <div className={`gate-field ${manualPlate && !manualPlateValid ? 'has-error' : ''}`}>
+                    <label htmlFor="gate-plate-m">Observed Vehicle Plate <span className="gate-req" aria-hidden="true">*</span></label>
+                    <input
+                      id="gate-plate-m"
+                      className="gate-input gate-input-plate"
+                      aria-label="Observed vehicle plate"
+                      aria-required="true"
+                      aria-invalid={Boolean(manualPlate) && !manualPlateValid}
+                      placeholder="GBG 1234M"
+                      value={manualPlate}
+                      onChange={(e) => setManualPlate(e.target.value)}
+                    />
+                    <small className="gate-field-hint">
+                      As shown on the vehicle. Example: GBG 1234M{manualPlateNorm ? ` → normalised ${manualPlateNorm}` : ''}
+                    </small>
+                    {manualPlate && !manualPlateValid && (
+                      <p className="gate-field-error" role="alert">Enter the plate you can read on the vehicle.</p>
+                    )}
+                  </div>
                 </div>
-                <button type="button" className="new-booking-btn gate-verify-btn" onClick={submitManual} disabled={busy}>
-                  {busy ? 'Verifying…' : `Verify ${action === 'entry' ? 'Entry' : 'Exit'}`}
+
+                <button
+                  type="button"
+                  className="new-booking-btn gate-verify-btn"
+                  onClick={submitManual}
+                  disabled={busy || !manualValid}
+                >
+                  {busy ? (<><span className="gate-spinner" aria-hidden="true" /> Verifying…</>) : `Verify ${action === 'entry' ? 'Entry' : 'Exit'}`}
                 </button>
               </div>
             )}
@@ -725,6 +937,18 @@ const GateVerification = () => {
                     </strong>
                   </div>
                 </div>
+
+                {/* Actual capture sources recorded for this decision (audit visibility). */}
+                {(lastPayload?.qrCaptureSource || lastPayload?.plateCaptureSource) && (
+                  <div className="gate-source-provenance">
+                    {lastPayload?.qrCaptureSource && (
+                      <span className="gate-source-chip">QR: {CAPTURE_SOURCE_LABEL[lastPayload.qrCaptureSource] || lastPayload.qrCaptureSource}</span>
+                    )}
+                    {lastPayload?.plateCaptureSource && (
+                      <span className="gate-source-chip">Plate: {CAPTURE_SOURCE_LABEL[lastPayload.plateCaptureSource] || lastPayload.plateCaptureSource}</span>
+                    )}
+                  </div>
+                )}
 
                 {lastPayload?.plateSource === 'simulation' && (
                   <span className="gate-badge sim">Simulated LPR — PoC demonstration</span>

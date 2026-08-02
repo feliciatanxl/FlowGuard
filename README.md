@@ -119,6 +119,83 @@ cd ai-service && uvicorn main:app --host 0.0.0.0 --port 8501
 
 For local development, Node reaches FastAPI through `FACE_AI_URL=http://127.0.0.1:8501`. Production uses the private Cloud Run AI URL and Google identity-token authentication in addition to `X-AI-Service-Key`.
 
+## Gate camera source (Raspberry Pi Camera Module 3)
+
+The Gate Verification page uses ONE camera-source workflow for both QR capture and
+number-plate OCR. Source priority is:
+
+1. Raspberry Pi Camera Module 3 — only when configured **and** reachable
+2. Laptop webcam
+3. Photo upload / manual entry
+
+At page start the page probes the Pi once (cooldown-aware) and shows the state:
+`Checking Raspberry Pi Camera Module 3...` → `Pi Camera connected`, or
+`Pi Camera unavailable — Laptop Webcam fallback active`, or `Laptop Webcam active`.
+The webcam is never delayed by a Pi timeout; the FM can switch sources manually
+afterwards. Pi snapshots are decoded through the authenticated `/api/qr/decode`
+proxy (never the private AI service directly) and are held in memory only — no frame
+is ever written to disk or `localStorage`. An MJPEG preview uses an `<img>` on
+`VITE_PI_CAMERA_STREAM_URL`; processing always pulls a fresh `/snapshot` still with a
+cache-busting query. Switching away from the webcam stops its `MediaStream` tracks,
+and QR and plate webcam streams are never active at the same time.
+
+Canonical client env vars (`client/.env.local`, see `client/.env.example`):
+
+```bash
+VITE_PI_CAMERA_STREAM_URL=http://<PI-IP>:8081/video_feed
+VITE_PI_CAMERA_SNAPSHOT_URL=http://<PI-IP>:8081/snapshot
+VITE_ENABLE_PI_CAMERA=true
+```
+
+Local Raspberry Pi 4 setup (Camera Module 3, Picamera2), serving port 8081:
+
+```bash
+sudo apt install -y python3-picamera2 python3-opencv python3-flask
+cd raspberry-pi
+python3 pi_camera_steam.py
+# routes: /  /health  /video_feed  /snapshot   (hostname -I gives <PI-IP>)
+```
+
+**Deployment limitation (do not misread this as broken):** a public HTTPS cloud
+frontend cannot fetch an HTTP private-LAN Pi, and there is deliberately **no** cloud
+backend proxy to a private Pi address. Pi mode is for the local laptop/kiosk frontend
+on the same network or hotspot. A cloud build with no `VITE_PI_CAMERA_*` URLs performs
+**no** Pi probe and uses the laptop webcam immediately. SecurePi alert ingestion is
+unaffected — the Pi pushes outbound to the authenticated edge route; the cloud never
+reaches into the LAN.
+
+## FM dashboard live data
+
+`GET /api/dashboard/summary` is the single authoritative FM payload (camera totals,
+attendance, urgent High/Critical active-alert count, today's bookings, active vehicles,
+open incidents/tickets, the newest five active High/Critical alerts, the seven-day
+High/Critical trend, top High/Critical zones, `generatedAt`, and `analyticsAvailable`).
+It is served with `no-store` cache headers. The client fetches on mount, then polls every
+15 s while the tab is visible, pauses when hidden, refreshes on becoming visible again,
+never overlaps requests, and keeps the last good data on a transient failure (showing
+"Live data temporarily unavailable" instead of fake zeroes). There is a Refresh button
+and a Singapore-time "Last updated" stamp. "Urgent" everywhere means severity
+High/Critical **and** an active workflow status (Active/Acknowledged/Investigating/
+Escalated/Dispatched) — never Low/Medium and never Cleared.
+
+Verifying the frontend and the alert-ingestion service share the SAME deployed database:
+the Node server (dashboard reads) and the detection-alert ingest routes both use the
+single `server/models` Sequelize connection configured from `DB_HOST`/`DB_PORT`/`DB_NAME`/
+`DB_USER`/`DB_PWD`. Confirm the deployed client's `VITE_API_BASE_URL` (or same-origin
+Nginx proxy) points at that same Node service, and that the AI/edge ingest uses the same
+`DB_*` values — then an alert created through the API appears in the dashboard.
+
+Safe manual verification (no unauthenticated test endpoint is added):
+
+1. As FM, create one Active High test alert via the existing authenticated
+   `POST /api/detection-alerts` (`{ zone_name, camera_location, severity: "High",
+   status: "Active", alert_type, object_class }`).
+2. Reload the dashboard (or wait for the 15 s poll).
+3. Confirm the Urgent Alerts count, the recent-alerts list, the seven-day trend, and the
+   top-zones chart all change to reflect the new alert.
+4. Remove the test data with the existing FM-only `DELETE /api/detection-alerts/:id`
+   (soft-deletes the alert and its linked incident).
+
 ## Tests and latest audited results
 
 Audit date: 28 July 2026. No camera or private face images were required.

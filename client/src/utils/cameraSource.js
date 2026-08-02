@@ -109,6 +109,16 @@ export function fallbackMessage(reason) {
   return FALLBACK_MESSAGES[reason] || '';
 }
 
+// Canonical user-facing camera-source status lines, shared by every scanner page so
+// the wording never drifts. These are the four states a gate scanner moves through
+// while it decides between the Raspberry Pi Camera Module 3 and the laptop webcam.
+export const CAMERA_STATUS = Object.freeze({
+  CHECKING_PI: 'Checking Raspberry Pi Camera Module 3...',
+  PI_CONNECTED: 'Pi Camera connected',
+  PI_FALLBACK: 'Pi Camera unavailable — Laptop Webcam fallback active',
+  WEBCAM_ACTIVE: 'Laptop Webcam active',
+});
+
 // A Vite env flag that lets a deployment turn the Pi source off entirely, even
 // if a URL leaked into the build. Explicit "false" disables it; anything else
 // leaves the URL to decide.
@@ -124,6 +134,51 @@ const PI_EXPLICITLY_DISABLED =
 export function isPiConfigured() {
   if (PI_EXPLICITLY_DISABLED) return false;
   return Boolean(PI_CAMERA_SNAPSHOT_URL || PI_CAMERA_STREAM_URL);
+}
+
+/**
+ * Decide the PREFERRED camera source at page start.
+ *
+ * Source priority is Pi → webcam → upload/manual. A deployed browser can NEVER reach a
+ * private-LAN Pi, so when the Pi is not configured this returns 'webcam' IMMEDIATELY
+ * with NO network probe (no Pi timeout wait) — a cloud build always goes straight to
+ * the laptop webcam. When the Pi IS configured, the cooldown-aware reachability probe
+ * decides: a recent failure short-circuits to 'webcam' without re-probing. Never throws.
+ *
+ * @returns {Promise<{source:'pi'|'webcam', reason:(string|null), probed:boolean}>}
+ */
+export async function resolvePreferredCameraSource(now = Date.now()) {
+  if (!isPiConfigured()) {
+    return { source: CAMERA_SOURCE.WEBCAM, reason: FALLBACK_REASON.PI_NOT_CONFIGURED, probed: false };
+  }
+  const reachable = await isPiCameraReachableCached(now);
+  return reachable
+    ? { source: CAMERA_SOURCE.PI, reason: null, probed: true }
+    : { source: CAMERA_SOURCE.WEBCAM, reason: FALLBACK_REASON.PI_UNREACHABLE, probed: true };
+}
+
+/**
+ * Draw ONE fresh Raspberry Pi snapshot onto an in-memory canvas (for OCR / QR decode),
+ * then RELEASE the ImageBitmap. The frame is never written to disk, localStorage or
+ * any network store — it lives only as long as the returned canvas. Cache-busting is
+ * handled inside fetchPiSnapshotBitmap (?t=…). Throws if the Pi snapshot cannot be
+ * fetched, so the caller can fall back to the laptop webcam and show the reason.
+ *
+ * @returns {Promise<HTMLCanvasElement>}
+ */
+export async function capturePiSnapshotCanvas() {
+  const bitmap = await fetchPiSnapshotBitmap();
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d');
+    if (ctx) ctx.drawImage(bitmap, 0, 0);
+    return canvas;
+  } finally {
+    // Always release the bitmap, whether the draw succeeded or threw.
+    try { bitmap.close?.(); } catch { /* ignore */ }
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,14 +1,13 @@
 // Frontend tests — Driver Pass QR quality (Phase 3).
 // The QR encodes ONLY the short booking reference, renders large (~360 px) and
 // crisp, and a Copy Reference action provides a manual gate fallback.
-import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router";
 import { vi, describe, test, expect, afterEach } from "vitest";
 
 import DriverPass from "../../src/pages/DriverPass";
 
-const renderPass = (ref = "FG-052B13", body) =>
+const renderPass = (ref = "FG-052B13") =>
   render(
     <MemoryRouter initialEntries={[`/driver-pass/${ref}`]}>
       <Routes>

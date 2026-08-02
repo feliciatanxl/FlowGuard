@@ -2,7 +2,6 @@
 // escape hatch. "Today" is pinned via a partial mock of getSingaporeTodayDateKey
 // so the behaviour is deterministic; the helper's real timezone-independence is
 // proven in DatetimeSingapore.test.js (run under TZ=UTC).
-import React from "react";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { vi, describe, test, expect, beforeEach, afterEach } from "vitest";
@@ -21,7 +20,7 @@ vi.mock("../../src/constants/datetime", async (importOriginal) => {
 import TenantLogistics from "../../src/pages/TenantLogistics";
 
 // UTC instants that resolve to specific Singapore calendar days.
-const TODAY = { id: 1, booking_ref: "FG-TODAY", license_plate: "P1", transport_company: "C1", driver_name: "D1", driver_phone: "+6591234567", loading_bay: "Bay A", slot_start: "2026-07-27T02:00:00.000Z", status: "Pending" };
+const TODAY = { id: 1, booking_ref: "FG-TODAY", license_plate: "P1", transport_company: "C1", driver_name: "D1", driver_phone: "+6591234567", loading_bay: "Bay A", slot_start: "2026-07-27T02:00:00.000Z", slot_end: "2026-07-27T03:00:00.000Z", status: "Pending" };
 const TOMORROW = { id: 2, booking_ref: "FG-TMRW", license_plate: "P2", transport_company: "C2", driver_name: "D2", driver_phone: "+6591234567", loading_bay: "Bay B", slot_start: "2026-07-28T02:00:00.000Z", status: "Pending" };
 const PAST = { id: 3, booking_ref: "FG-PAST", license_plate: "P3", transport_company: "C3", driver_name: "D3", driver_phone: "+6591234567", loading_bay: "Bay A", slot_start: "2026-07-20T02:00:00.000Z", status: "Completed" };
 const ALL = [TODAY, TOMORROW, PAST];

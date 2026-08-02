@@ -5,6 +5,7 @@ import Sidebar from '../components/Sidebar';
 import { getHardwareStreamUrl, getHardwareHealthUrl, getHardwarePeopleCountUrl } from '../utils/securepiStream';
 import { validateVideoFile, createTemporaryObjectUrl, revokeTemporaryObjectUrl } from '../utils/mediaPreview';
 import { buildAnalyzeFramePayload, buildBearerHeaders } from '../utils/analyzeFrame';
+import { resolveAlertSource } from '../utils/alertSource';
 import '../css/Dashboard.css';
 import '../css/ObjectDetection.css';
 
@@ -85,21 +86,6 @@ const alertTimestamp = (alert) => {
   return date.toLocaleString('en-SG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
 };
 
-// Keep the existing page export for callers/tests while the implementation is
-// shared with CameraFeed so both surfaces obey one Node/FastAPI contract.
-export { buildAnalyzeFramePayload } from '../utils/analyzeFrame';
-
-// Canonical alert-source label per sourceMode — the AI service whitelists these before
-// forwarding them into POST /api/detection-alerts, so keep values in sync with
-// ai-service/main.py's _ALLOWED_BROWSER_SOURCES.
-export const ALERT_SOURCE_BY_MODE = {
-  camera: 'Browser Webcam',
-  file: 'Uploaded Video',
-  hardware: 'SecurePi Edge Node',
-};
-
-export const resolveAlertSource = (sourceMode) => ALERT_SOURCE_BY_MODE[sourceMode] || 'Browser Webcam';
-
 const ObjectDetection = () => {
   const [zones, setZones] = useState([]);
   const [cameras, setCameras] = useState([]);
@@ -133,13 +119,15 @@ const ObjectDetection = () => {
   const aiHealthFailuresRef = useRef(0);
 
   const token = localStorage.getItem('accessToken');
-  const headers = buildBearerHeaders(token);
+  // Memoised so the fetch callbacks below can list `headers` as a stable
+  // dependency without being recreated (and re-polling) on every render.
+  const headers = useMemo(() => buildBearerHeaders(token), [token]);
 
   const fetchZones = useCallback(() => {
     axios.get(ZONES_URL, { headers })
       .then(res => { setZones(res.data); setNodeOffline(false); })
       .catch(() => setNodeOffline(true));
-  }, []);
+  }, [headers]);
 
   const fetchCameras = useCallback(() => {
     axios.get(CAMERAS_URL, { headers })
@@ -149,13 +137,13 @@ const ObjectDetection = () => {
         setSelectedCameraId((prev) => (list.some((cam) => String(cam.id) === String(prev)) ? prev : (list[0]?.id ?? '')));
       })
       .catch(() => setCameras([]));
-  }, []);
+  }, [headers]);
 
   const fetchAlerts = useCallback(() => {
     axios.get(ALERTS_URL, { headers })
       .then(res => { setAlerts(res.data); setNodeOffline(false); })
       .catch(() => setNodeOffline(true));
-  }, []);
+  }, [headers]);
 
   const handleRefreshAlerts = useCallback(() => {
     setAlertsRefreshing(true);
@@ -163,7 +151,7 @@ const ObjectDetection = () => {
       .then(res => { setAlerts(res.data); setNodeOffline(false); })
       .catch(() => setNodeOffline(true))
       .finally(() => setAlertsRefreshing(false));
-  }, []);
+  }, [headers]);
 
   // Read by fetchPeopleCount to skip the browser-YOLO poll while SecurePi hardware mode
   // owns peopleCount/detectionActive (see the hardware people-count effect below) — a
@@ -192,7 +180,7 @@ const ObjectDetection = () => {
           setAiOffline(true);
         }
       });
-  }, []);
+  }, [headers]);
 
   const monitoredCamera = useMemo(
     () => cameras.find((cam) => String(cam.id) === String(selectedCameraId)) || null,
@@ -231,7 +219,7 @@ const ObjectDetection = () => {
       clearInterval(peopleInterval);
       clearInterval(alertsInterval);
     };
-  }, []);
+  }, [fetchZones, fetchCameras, fetchAlerts, fetchPeopleCount]);
 
   useEffect(() => {
     let stream;
@@ -365,16 +353,22 @@ const ObjectDetection = () => {
       clearInterval(frameInterval);
       stopBrowserCamera();
     };
-  }, [sourceMode, uploadedVideoUrl]);
+  }, [sourceMode, uploadedVideoUrl, headers]);
 
   useEffect(() => () => {
     if (uploadedVideoUrl) URL.revokeObjectURL(uploadedVideoUrl);
   }, [uploadedVideoUrl]);
 
-  // Hardware connection state reacts to the selected inventory camera changing
-  // without restarting the browser-camera/uploaded-video effect above.
+  // Synchronises the SecurePi connection UI to the external hardware selection:
+  // when the operator switches to hardware mode or picks a different inventory
+  // camera, the stream/health effects below need a clean "connecting" (or
+  // "not configured") baseline before their async probes report live/offline.
+  // This is an external-system reset, not derivable during render (cameraStatus
+  // is also written by the async health poll), so the synchronous reset is
+  // intentional here.
   useEffect(() => {
     if (sourceMode !== 'hardware') return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- external-system (SecurePi) selection reset; see comment above
     setStreamError(false);
     setCameraReady(false);
     setCameraStatus(hardwareStreamUrl ? 'connecting_securepi_edge' : 'securepi_stream_not_configured');

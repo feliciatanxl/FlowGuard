@@ -39,7 +39,6 @@ const fakeStream = () => {
 
 const waitFor = async (assertion, timeout = 1500) => {
   const start = Date.now();
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     try { assertion(); return; } catch (e) {
       if (Date.now() - start > timeout) throw e;

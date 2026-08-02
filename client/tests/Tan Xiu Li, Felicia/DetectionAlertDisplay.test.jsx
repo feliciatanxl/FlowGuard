@@ -4,7 +4,7 @@
 // LOCAL snapshot path is never rendered as a clickable link while a valid remote
 // https URL is. Mirrors the axios/env mocking of the Charlisa ObjectDetection test.
 import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import '@testing-library/jest-dom';
 

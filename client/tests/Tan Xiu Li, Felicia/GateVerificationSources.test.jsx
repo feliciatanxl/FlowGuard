@@ -2,7 +2,6 @@
 // Additive to the existing GateVerification suite: the webcam path wires the
 // cloud snapshot fallback, and a Raspberry Pi Camera Module 3 source decodes a
 // snapshot via the Node /api/qr/decode proxy. Utils are mocked at the boundary.
-import React from "react";
 import { render, screen, fireEvent, act, cleanup } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { vi, describe, test, expect, beforeEach, afterEach } from "vitest";

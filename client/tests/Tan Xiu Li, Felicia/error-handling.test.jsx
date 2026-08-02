@@ -1,6 +1,5 @@
 // Frontend error-handling tests — 404 page, SystemError page, and the ErrorBoundary
 // fallback that prevents blank white screens on render crashes.
-import React from "react";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, test, expect, vi } from "vitest";

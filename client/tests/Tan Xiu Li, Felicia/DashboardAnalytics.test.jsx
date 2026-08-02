@@ -1,5 +1,4 @@
 // Frontend tests — FM dashboard operational analytics panels (7-day trend + top zones).
-import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { vi, describe, test, expect, beforeEach } from 'vitest';
@@ -76,7 +75,8 @@ describe('FM dashboard analytics panels', () => {
       topAlertZones7Days: []
     });
     expect(await screen.findByText(/No high or critical alerts recorded/i)).toBeTruthy();
-    expect(screen.getByText(/No detection-alert history/i)).toBeTruthy();
+    // Top zones is now scoped to High/Critical only, with its own distinct empty copy.
+    expect(screen.getByText(/No high or critical zone activity/i)).toBeTruthy();
   });
 
   test('does not crash when analytics key is absent from the response', async () => {

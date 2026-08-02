@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import SafeMuiIcon from './SafeMuiIcon';
@@ -51,7 +51,7 @@ const LiveConfusionMatrixPanel = ({ origin, participantLabels = [], children }) 
       window.removeEventListener('storage', reload);
       if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     };
-  }, [reload]);
+  }, [origin, reload]);
 
   // Strictly Live records from THIS origin only; small case/spacing
   // differences are normalised, other origins and Simulated records excluded.

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { Link } from 'react-router';
 import VideocamIcon from '@mui/icons-material/Videocam';
@@ -72,25 +72,19 @@ const QUICK_LINK_ICONS = {
   '/settings': SettingsIcon,
 };
 
-const ALERTS_URL = '/api/detection-alerts';
+// How often the FM dashboard re-polls the single authoritative summary endpoint
+// while the browser tab is visible. Polling pauses when the tab is hidden.
+const POLL_INTERVAL_MS = 15000;
 
-const URGENT_ALERT_STATUSES = [
-  'Active',
-  'Acknowledged',
-  'Investigating',
-  'Escalated',
-  'Dispatched',
-];
-
-// Distinguishes why the detection-alert fetch failed so the banner never blames
-// an "offline server" for auth or backend errors.
-const alertsErrorMessage = (err) => {
-  const status = err?.response?.status;
-  if (status === 401) return 'Detection alerts are unavailable: your session has expired. Please log in again.';
-  if (status === 403) return 'Detection alerts are unavailable: your account does not have permission to view them.';
-  if (status >= 500) return 'Detection alerts are unavailable: the server reported an internal error.';
-  if (status) return `Detection alerts are unavailable (HTTP ${status}).`;
-  return 'Detection alerts are unavailable: the server could not be reached.';
+// "Last updated 6:01:12 PM" in Singapore time (host-timezone independent). The stamp
+// comes from the server's generatedAt so it reflects when the data was actually built.
+const formatLastUpdated = (value) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-SG', {
+    timeZone: 'Asia/Singapore', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true,
+  }).format(date).replace(/\b(am|pm)\b/i, (m) => m.toUpperCase());
 };
 
 const alertTitle = (alert) => {
@@ -114,52 +108,82 @@ const Dashboard = () => {
   }));
   const [currentTime, setCurrentTime] = useState(new Date());
   const [dashboard, setDashboard] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [detectionAlerts, setDetectionAlerts] = useState([]);
-  const [alertsError, setAlertsError] = useState('');
+  const [loading, setLoading] = useState(true);      // initial load only
+  const [error, setError] = useState('');            // hard error before any data
+  const [staleError, setStaleError] = useState('');  // soft error while keeping last data
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState('');
+
+  // Refs guard against overlapping requests and against setState-after-unmount /
+  // stale responses arriving out of order.
+  const inFlightRef = useRef(false);
+  const mountedRef = useRef(true);
+  const abortRef = useRef(null);
+  const hasDataRef = useRef(false);
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  const fetchSummary = async () => {
-    setLoading(true);
-    setError('');
+  // Single authoritative fetch of /api/dashboard/summary. Never runs two at once; a
+  // temporary failure keeps the last good data and surfaces a soft "unavailable" state
+  // instead of blanking the screen with fake zeroes.
+  const fetchSummary = useCallback(async () => {
+    if (inFlightRef.current) return; // no overlapping requests
+    inFlightRef.current = true;
+    if (hasDataRef.current) setRefreshing(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
       const token = localStorage.getItem('accessToken');
       const res = await axios.get(`${API_BASE_URL}/api/dashboard/summary`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
       });
+      if (!mountedRef.current) return;
       setDashboard(res.data);
+      hasDataRef.current = true;
+      setLastUpdated(res.data?.generatedAt || new Date().toISOString());
+      setError('');
+      setStaleError('');
     } catch (err) {
+      if (axios.isCancel?.(err) || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') return;
+      if (!mountedRef.current) return;
       console.error('Dashboard summary failed:', err);
-      setError(err.response?.data?.error || 'Unable to load dashboard summary.');
+      // Keep the last good data on a transient failure; only show the hard error/Retry
+      // state if we have never loaded anything yet.
+      if (hasDataRef.current) {
+        setStaleError('Live data temporarily unavailable — showing the last update.');
+      } else {
+        setError(err.response?.data?.error || 'Unable to load dashboard summary.');
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) { setLoading(false); setRefreshing(false); }
+      inFlightRef.current = false;
     }
-  };
+  }, []);
 
-  useEffect(() => { fetchSummary(); }, []);
+  // Mount: fetch immediately, then poll every 15s WHILE the tab is visible. Polling
+  // pauses when the tab is hidden and refreshes immediately when it becomes visible
+  // again. Everything is cleaned up on unmount (interval, listener, in-flight request).
+  useEffect(() => {
+    mountedRef.current = true;
+    (async () => { await fetchSummary(); })();
+    const interval = setInterval(() => {
+      if (!document.hidden) fetchSummary();
+    }, POLL_INTERVAL_MS);
+    const onVisibility = () => { if (!document.hidden) fetchSummary(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      mountedRef.current = false;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibility);
+      try { abortRef.current?.abort(); } catch { /* ignore */ }
+    };
+  }, [fetchSummary]);
 
   const role = dashboard?.role || user.role;
-  const isFM = role === 'FM';
-
-  useEffect(() => {
-    if (!isFM) return;
-    const token = localStorage.getItem('accessToken');
-    axios.get(`${API_BASE_URL}${ALERTS_URL}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((res) => {
-        setDetectionAlerts(Array.isArray(res.data) ? res.data : []);
-        setAlertsError('');
-      })
-      .catch((err) => setAlertsError(alertsErrorMessage(err)));
-  }, [isFM]);
-
-  const urgentDetectionAlerts = detectionAlerts
-    .filter((alert) => URGENT_ALERT_STATUSES.includes(alert.status))
-    .slice(0, 3);
   const title = role === 'FM' ? 'Operations Dashboard' : role === 'Tenant' ? 'Tenant Dashboard' : 'Staff Dashboard';
 
   const content = useMemo(() => {
@@ -167,9 +191,10 @@ const Dashboard = () => {
     const summary = dashboard.summary || {};
 
     if (dashboard.role === 'FM') {
-      const alertsToShow = urgentDetectionAlerts.length > 0
-        ? urgentDetectionAlerts
-        : (dashboard.recentHighPriorityAlerts || []);
+      // Single source of truth: the summary payload already carries the newest five
+      // active High/Critical alerts (safe metadata only) — no separate fetch.
+      const alertsToShow = dashboard.recentHighPriorityAlerts || [];
+      const analyticsUnavailable = dashboard.analyticsAvailable === false;
 
       return (
         <>
@@ -193,7 +218,6 @@ const Dashboard = () => {
               </div>
               <Link to="/object-detection">Open live console</Link>
             </div>
-            {alertsError && <p className="dashboard-alert-offline">{alertsError}</p>}
             <div className="dashboard-alert-grid">
               {alertsToShow.map((alert) => (
                 <Link className="dashboard-alert-card" key={alert.id} to="/object-detection">
@@ -204,14 +228,20 @@ const Dashboard = () => {
                 </Link>
               ))}
               {alertsToShow.length === 0 && (
-                <div className="dashboard-alert-empty"><h2>No high-priority alerts</h2><p>Urgent operational alerts will appear here when active.</p></div>
+                // Distinguishes a temporary outage (keep last data + banner above) from a
+                // genuine "there really are no active urgent alerts right now".
+                staleError ? (
+                  <div className="dashboard-alert-empty"><h2>Live data temporarily unavailable</h2><p>Showing the last successful update. Retrying automatically…</p></div>
+                ) : (
+                  <div className="dashboard-alert-empty"><h2>No high-priority alerts</h2><p>Urgent operational alerts will appear here when active.</p></div>
+                )
               )}
             </div>
           </section>
 
           <section className="dashboard-analytics-grid" aria-label="Operational alert analytics">
-            <AlertTrendChart data={dashboard.analytics?.alertTrend7Days} />
-            <TopAlertZonesChart data={dashboard.analytics?.topAlertZones7Days} />
+            <AlertTrendChart data={dashboard.analytics?.alertTrend7Days} unavailable={analyticsUnavailable} />
+            <TopAlertZonesChart data={dashboard.analytics?.topAlertZones7Days} unavailable={analyticsUnavailable} />
           </section>
         </>
       );
@@ -274,7 +304,7 @@ const Dashboard = () => {
         </section>
       </>
     );
-  }, [dashboard, urgentDetectionAlerts, alertsError]);
+  }, [dashboard, staleError]);
 
   return (
     <div className="dashboard-layout">
@@ -290,6 +320,25 @@ const Dashboard = () => {
             <p className="timezone-text">Region: Singapore (JTC Factory)</p>
           </div>
         </header>
+
+        <div className="dashboard-refresh-bar">
+          <span className="dashboard-last-updated">
+            {lastUpdated ? `Last updated: ${formatLastUpdated(lastUpdated)} SGT` : 'Live dashboard'}
+          </span>
+          <button
+            type="button"
+            className="dashboard-refresh-btn"
+            onClick={fetchSummary}
+            disabled={refreshing || loading}
+          >
+            {refreshing ? 'Refreshing…' : '↻ Refresh'}
+          </button>
+        </div>
+
+        {/* Soft banner: a poll failed but the last good data is still shown below. */}
+        {staleError && !error && (
+          <div className="dashboard-stale-banner" role="status">{staleError}</div>
+        )}
 
         {loading && <div className="dashboard-loading">Loading dashboard summary...</div>}
         {error && (
