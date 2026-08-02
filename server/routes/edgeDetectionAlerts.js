@@ -1,5 +1,8 @@
 const express = require('express');
 const router = express.Router();
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
 const { aiProxyLimiter } = require('../middlewares/rateLimit');
 router.use(aiProxyLimiter); // high-frequency edge ingest — generous per-client policy
 const { DetectionAlert, IncidentLog, MonitoringZone, Camera, sequelize } = require('../models');
@@ -53,6 +56,29 @@ const withTransaction = (fn) => {
 
 const SEVERITIES = ['Low', 'Medium', 'High', 'Critical'];
 const VALID_STATUSES = ['Active', 'Acknowledged', 'Investigating', 'Dispatched', 'Escalated', 'Cleared'];
+const SNAPSHOT_MAX_BYTES = Number(process.env.DETECTION_SNAPSHOT_MAX_BYTES || 5 * 1024 * 1024);
+const SNAPSHOT_DIR = path.resolve(
+    process.env.DETECTION_SNAPSHOT_DIR || path.join(__dirname, '..', 'uploads', 'detection-snapshots')
+);
+
+fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
+
+const snapshotUpload = multer({
+    dest: SNAPSHOT_DIR,
+    limits: { fileSize: SNAPSHOT_MAX_BYTES },
+    fileFilter: (req, file, cb) => {
+        if (/^image\/jpe?g$/i.test(file.mimetype)) return cb(null, true);
+        return cb(new Error('snapshot must be a JPEG image.'));
+    }
+});
+
+const handleSnapshotUpload = (req, res, next) => {
+    snapshotUpload.single('snapshot')(req, res, (err) => {
+        if (!err) return next();
+        cleanupUploadedSnapshot(req.file);
+        return res.status(400).json({ error: err.message });
+    });
+};
 
 // Stable edge event id: SecurePi sends the same value on Wi-Fi retries. Keep the
 // charset tight (alnum plus the separators used by the deterministic id format
@@ -83,6 +109,29 @@ const parseOccurredAt = (value) => {
     if (!value) return null;
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const snapshotUrlFor = (alertId, filename) => `/api/detection-alerts/${alertId}/snapshot/${filename}`;
+
+const persistUploadedSnapshot = async (alert, file) => {
+    if (!file || !alert?.id) return null;
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const safeExt = ['.jpg', '.jpeg'].includes(ext) ? ext : '.jpg';
+    const filename = `alert-${alert.id}-${path.basename(file.filename)}${safeExt}`;
+    const destination = path.join(SNAPSHOT_DIR, filename);
+    await fs.promises.rename(file.path, destination);
+    const snapshotUrl = snapshotUrlFor(alert.id, filename);
+    if (typeof alert.update === 'function') {
+        await alert.update({ snapshot_url: snapshotUrl });
+    } else {
+        alert.snapshot_url = snapshotUrl;
+    }
+    return snapshotUrl;
+};
+
+const cleanupUploadedSnapshot = (file) => {
+    if (!file?.path) return;
+    fs.promises.unlink(file.path).catch(() => {});
 };
 
 const verifyEdgeIngestToken = (req, res, next) => {
@@ -190,7 +239,7 @@ async function attemptSecurityWhatsapp(alert, messageAlert) {
     return { status: result.status, recipientCount: result.recipientCount, error: result.error || null, sent_at: sentAt };
 }
 
-router.post('/detection-alerts', verifyEdgeIngestToken, async (req, res) => {
+router.post('/detection-alerts', verifyEdgeIngestToken, handleSnapshotUpload, async (req, res) => {
     try {
         const {
             event_id,
@@ -266,7 +315,7 @@ router.post('/detection-alerts', verifyEdgeIngestToken, async (req, res) => {
             confidence: parsedConfidence,
             device_id: cleanedDevice,
             person_name: cleanedPerson,
-            snapshot_url: snapshot_url || null,
+            snapshot_url: null,
             snapshot_path: snapshot_path || null,
         };
 
@@ -318,7 +367,7 @@ router.post('/detection-alerts', verifyEdgeIngestToken, async (req, res) => {
                     severity: resolvedSeverity,
                     source: EDGE_SOURCE,
                     confidence: parsedConfidence,
-                    snapshot_url: cleanText(snapshot_url || snapshot_path, 500),
+                    snapshot_url: null,
                     device_id: cleanedDevice,
                     occurred_at: parsedOccurredAt,
                     edge_event_id: eventId,
@@ -351,6 +400,11 @@ router.post('/detection-alerts', verifyEdgeIngestToken, async (req, res) => {
             throw err;
         }
 
+        const uploadedSnapshotUrl = await persistUploadedSnapshot(alert, req.file);
+        if (uploadedSnapshotUrl) {
+            messageAlert.snapshot_url = uploadedSnapshotUrl;
+        }
+
         // Post-commit WhatsApp. A failure here never rolls back or fails the 201.
         let whatsappResult = { status: initialWhatsappStatus };
         if (gate.willSend) {
@@ -359,6 +413,7 @@ router.post('/detection-alerts', verifyEdgeIngestToken, async (req, res) => {
 
         return res.status(201).json(serializeAlert(alert, whatsappResult));
     } catch (err) {
+        cleanupUploadedSnapshot(req.file);
         return res.status(500).json({ error: err.message });
     }
 });

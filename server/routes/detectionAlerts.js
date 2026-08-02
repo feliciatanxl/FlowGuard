@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const path = require('path');
 const { readLimiter } = require('../middlewares/rateLimit');
 router.use(readLimiter); // route-wide rate limiting (trusted AI service POSTs are skipped)
 const { DetectionAlert, IncidentLog, MonitoringZone, Camera, sequelize } = require('../models');
@@ -14,6 +15,9 @@ const { Op } = require('sequelize');
 const { verifyToken, requireRole, verifyServiceOrRole } = require('../middlewares/auth');
 const SEVERITIES = ['Low', 'Medium', 'High', 'Critical'];
 const VALID_STATUSES = ['Active', 'Acknowledged', 'Investigating', 'Dispatched', 'Escalated', 'Cleared'];
+const SNAPSHOT_DIR = path.resolve(
+    process.env.DETECTION_SNAPSHOT_DIR || path.join(__dirname, '..', 'uploads', 'detection-snapshots')
+);
 
 // This route is reachable by the AI engine's service key AND by an FM/Staff JWT — never
 // by the SecurePi edge device (that's the dedicated EDGE_INGEST_TOKEN route in
@@ -95,6 +99,27 @@ router.get('/:id', verifyToken, requireRole('FM', 'Staff'), async (req, res) => 
         const alert = await DetectionAlert.findByPk(req.params.id);
         if (!alert) return res.sendStatus(404);
         res.json(alert);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+router.get('/:id/snapshot/:filename', verifyToken, requireRole('FM', 'Staff'), async (req, res) => {
+    try {
+        if (!/^\d+$/.test(req.params.id)) return res.sendStatus(404);
+        const filename = path.basename(req.params.filename || '');
+        if (!filename || filename !== req.params.filename) return res.sendStatus(404);
+
+        const alert = await DetectionAlert.findByPk(req.params.id);
+        if (!alert || alert.snapshot_url !== `/api/detection-alerts/${req.params.id}/snapshot/${filename}`) {
+            return res.sendStatus(404);
+        }
+
+        const filePath = path.resolve(SNAPSHOT_DIR, filename);
+        if (!filePath.startsWith(`${SNAPSHOT_DIR}${path.sep}`)) return res.sendStatus(404);
+        return res.sendFile(filePath, { headers: { 'Content-Type': 'image/jpeg' } }, (err) => {
+            if (err && !res.headersSent) res.sendStatus(err.statusCode || 404);
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

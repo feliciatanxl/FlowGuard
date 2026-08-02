@@ -9,6 +9,10 @@ const INCIDENT_TYPE_BY_DETECTION_TYPE = {
   unattended_object: 'UNATTENDED_OBJECT',
   crowd_density: 'OVERCROWDING',
   unauthorized_access: 'UNAUTHORIZED_ACCESS',
+  pest_detection: 'PEST_DETECTION',
+  restricted_motion: 'RESTRICTED_MOTION',
+  forgotten_belonging: 'FORGOTTEN_BELONGING',
+  item_movement: 'ITEM_MOVEMENT',
 };
 
 const DETECTION_TYPES = Object.keys(INCIDENT_TYPE_BY_DETECTION_TYPE);

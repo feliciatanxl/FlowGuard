@@ -5,6 +5,7 @@ import Sidebar from '../components/Sidebar';
 import { getHardwareStreamUrl, getHardwareHealthUrl, getHardwarePeopleCountUrl } from '../utils/securepiStream';
 import { validateVideoFile, createTemporaryObjectUrl, revokeTemporaryObjectUrl } from '../utils/mediaPreview';
 import { buildAnalyzeFramePayload, buildBearerHeaders } from '../utils/analyzeFrame';
+import { API_BASE_URL } from '../constants/api';
 import '../css/Dashboard.css';
 import '../css/ObjectDetection.css';
 
@@ -65,6 +66,8 @@ const alertTitle = (alert) => {
 // A Raspberry Pi local path (runtime/snapshots/...) must NEVER be turned into an
 // href — it isn't reachable from a browser and could be a misleading dead link.
 const isRemoteSnapshot = (url) => typeof url === 'string' && /^https?:\/\//i.test(url.trim());
+const isProtectedSnapshot = (url) => typeof url === 'string' && /^\/api\/detection-alerts\/\d+\/snapshot\/[^/]+$/i.test(url.trim());
+const snapshotRequestUrl = (url) => `${API_BASE_URL}${url}`;
 
 // WhatsApp security-alert notification status (persisted on the alert by the edge route).
 const whatsappStatusOf = (alert) => alert?.whatsapp_status || 'Not Requested';
@@ -113,10 +116,13 @@ const ObjectDetection = () => {
   const [alertsRefreshing, setAlertsRefreshing] = useState(false);
   const [alertTypeFilter, setAlertTypeFilter] = useState('all');
   const [alertSeverityFilter, setAlertSeverityFilter] = useState('all');
+  const [snapshotPreview, setSnapshotPreview] = useState({ url: '', source: '' });
+  const [snapshotError, setSnapshotError] = useState(false);
 
   const [streamError, setStreamError] = useState(false);
   const [aiOffline, setAiOffline] = useState(false);
   const [nodeOffline, setNodeOffline] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [cameraStatus, setCameraStatus] = useState('starting');
   const [detections, setDetections] = useState([]);
   const [frameSize, setFrameSize] = useState({ width: 640, height: 480 });
@@ -519,6 +525,37 @@ const ObjectDetection = () => {
     if (!displayedAlert) return '';
     return alertTitle(displayedAlert);
   }, [displayedAlert]);
+  useEffect(() => {
+    const snapshotUrl = displayedAlert?.snapshot_url || '';
+    setSnapshotError(false);
+
+    if (!isProtectedSnapshot(snapshotUrl)) {
+      setSnapshotPreview({ url: isRemoteSnapshot(snapshotUrl) ? snapshotUrl : '', source: snapshotUrl });
+      return undefined;
+    }
+
+    setSnapshotPreview({ url: '', source: snapshotUrl });
+    let cancelled = false;
+    let objectUrl = '';
+    axios.get(snapshotRequestUrl(snapshotUrl), { headers, responseType: 'blob' })
+      .then((res) => {
+        if (cancelled) return;
+        if (typeof URL.createObjectURL !== 'function') {
+          setSnapshotError(true);
+          return;
+        }
+        objectUrl = URL.createObjectURL(res.data);
+        setSnapshotPreview({ url: objectUrl, source: snapshotUrl });
+      })
+      .catch(() => {
+        if (!cancelled) setSnapshotError(true);
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [displayedAlert?.id, displayedAlert?.snapshot_url]);
   const sourceTitle = sourceMode === 'hardware'
     ? 'SecurePi Edge Live'
     : sourceMode === 'file'
@@ -763,10 +800,19 @@ const ObjectDetection = () => {
                       )}
                       <span>WhatsApp <strong className={whatsappStatusClass(whatsappStatusOf(displayedAlert))}>{whatsappStatusOf(displayedAlert)}</strong></span>
                     </div>
-                    {isRemoteSnapshot(displayedAlert.snapshot_url) ? (
-                      <a className="od-snapshot-link" href={displayedAlert.snapshot_url} target="_blank" rel="noreferrer">
-                        View edge snapshot
-                      </a>
+                    {snapshotPreview.url ? (
+                      <div className="od-snapshot-preview">
+                        <img
+                          src={snapshotPreview.url}
+                          alt={`${displayedAlert.object_class || 'Object'} detection snapshot`}
+                          className="od-snapshot-img"
+                        />
+                        <a className="od-snapshot-link" href={snapshotPreview.url} target="_blank" rel="noreferrer">
+                          View edge snapshot
+                        </a>
+                      </div>
+                    ) : snapshotError ? (
+                      <p className="od-snapshot-note">Snapshot upload found, but the image could not be loaded.</p>
                     ) : displayedAlert.snapshot_url ? (
                       <p className="od-snapshot-note">Snapshot captured on the edge device; remote upload unavailable.</p>
                     ) : null}

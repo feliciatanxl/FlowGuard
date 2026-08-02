@@ -4,9 +4,13 @@
 const request = require("supertest");
 const express = require("express");
 const jwt = require("jsonwebtoken");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
 process.env.EDGE_INGEST_TOKEN = "test-edge-token";
 process.env.APP_SECRET = "test-secret";
+process.env.DETECTION_SNAPSHOT_DIR = path.join(os.tmpdir(), "flowguard-edge-alert-test-snapshots");
 
 const mockDetectionAlert = {
   create: jest.fn(),
@@ -68,6 +72,9 @@ const primeCreateMocks = () => {
 
 describe("POST /api/edge/detection-alerts", () => {
   beforeEach(() => jest.clearAllMocks());
+  afterAll(() => {
+    fs.rmSync(process.env.DETECTION_SNAPSHOT_DIR, { recursive: true, force: true });
+  });
 
   test("rejects missing bearer token (401)", async () => {
     const res = await request(app)
@@ -114,11 +121,36 @@ describe("POST /api/edge/detection-alerts", () => {
       object_class: "package-like object",
       severity: "High",
       confidence: 0.87,
-      snapshot_url: "alerts/loading-bay/event.jpg",
+      snapshot_url: null,
       device_id: "securepi-loading-bay-01",
       duration_seconds: 65,
     }));
     expect(mockDetectionAlert.create.mock.calls[0][0]).not.toHaveProperty("ignored_extra");
+  });
+
+  test("stores an uploaded JPEG as a protected snapshot URL", async () => {
+    const created = primeCreateMocks();
+    const res = await request(app)
+      .post("/api/edge/detection-alerts")
+      .set("Authorization", "Bearer test-edge-token")
+      .field("zone_name", "Loading Bay")
+      .field("camera_location", "Loading Bay Camera 01")
+      .field("alert_type", "Pest Detection")
+      .field("object_class", "rat")
+      .field("severity", "High")
+      .field("confidence", "0.87")
+      .attach("snapshot", Buffer.from([0xff, 0xd8, 0xff, 0xd9]), {
+        filename: "pest_rat.jpg",
+        contentType: "image/jpeg",
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockDetectionAlert.create.mock.calls[0][0].snapshot_url).toBeNull();
+    expect(created.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        snapshot_url: expect.stringMatching(/^\/api\/detection-alerts\/9\/snapshot\/alert-9-.+\.jpg$/),
+      })
+    );
   });
 
   test("creates both records with matching severity, linked, in one transaction", async () => {

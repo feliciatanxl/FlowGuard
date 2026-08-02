@@ -19,17 +19,6 @@ const { INCIDENT_TYPE_BY_DETECTION_TYPE, DEFAULT_DETECTION_TYPE } = require('../
 // (client/src/pages/IncidentDashboard.jsx) are ever returned — including the SecurePi
 // edge types PEST_DETECTION / RESTRICTED_MOTION / FORGOTTEN_BELONGING / ITEM_MOVEMENT,
 // which were added to that dropdown alongside this mapping.
-const INCIDENT_TYPE_BY_DETECTION_TYPE = {
-    unattended_object: 'UNATTENDED_OBJECT',
-    crowd_density: 'OVERCROWDING',
-    unauthorized_access: 'UNAUTHORIZED_ACCESS',
-    // SecurePi / edge detection categories:
-    pest_detection: 'PEST_DETECTION',
-    restricted_motion: 'RESTRICTED_MOTION',
-    forgotten_belonging: 'FORGOTTEN_BELONGING',
-    item_movement: 'ITEM_MOVEMENT',
-};
-
 const DEFAULT_INCIDENT_TYPE = INCIDENT_TYPE_BY_DETECTION_TYPE[DEFAULT_DETECTION_TYPE];
 
 // Resolves the IncidentLog type for a detection alert. Prefers an explicit
