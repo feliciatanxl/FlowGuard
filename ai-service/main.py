@@ -635,6 +635,7 @@ _person_alert_state = {
 # Zone threshold cache — refreshed from DB every 60 s
 _zone_threshold_sec = 300   # default 5 min
 _zone_name_cache = "Zone A"
+_zone_density_cache = None   # zone's configured max-occupancy rule, None = unset
 _threshold_fetched_at = 0.0
 _THRESHOLD_TTL = 60
 
@@ -687,15 +688,15 @@ def _open_camera():
 
 
 def _refresh_zone_info():
-    global _zone_threshold_sec, _zone_name_cache, _threshold_fetched_at
+    global _zone_threshold_sec, _zone_name_cache, _zone_density_cache, _threshold_fetched_at
     now = time.time()
     if now - _threshold_fetched_at < _THRESHOLD_TTL:
-        return _zone_threshold_sec, _zone_name_cache
+        return _zone_threshold_sec, _zone_name_cache, _zone_density_cache
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            SELECT zone_name, time_threshold, unattended_threshold_seconds
+            SELECT zone_name, time_threshold, unattended_threshold_seconds, density_threshold
             FROM monitoring_zones
             WHERE "deletedAt" IS NULL
             ORDER BY time_threshold ASC
@@ -709,10 +710,11 @@ def _refresh_zone_info():
             # Detection Setup's seconds-based threshold takes precedence when configured;
             # otherwise fall back to the legacy minutes-based time_threshold.
             _zone_threshold_sec = row[2] if row[2] is not None else int(row[1]) * 60
+            _zone_density_cache = row[3]
     except Exception as e:
         print(f"Zone info fetch error: {e}")
     _threshold_fetched_at = now
-    return _zone_threshold_sec, _zone_name_cache
+    return _zone_threshold_sec, _zone_name_cache, _zone_density_cache
 
 
 def _fetch_camera_zone_id(camera_id):
@@ -739,7 +741,8 @@ def _fetch_zone_row(zone_id):
         cur = conn.cursor()
         cur.execute(
             """
-            SELECT id, zone_name, time_threshold, unattended_threshold_seconds, detection_enabled
+            SELECT id, zone_name, time_threshold, unattended_threshold_seconds, detection_enabled,
+                   density_threshold
             FROM monitoring_zones
             WHERE id = %s AND "deletedAt" IS NULL
             """,
@@ -762,12 +765,13 @@ def resolve_zone_for_request(camera_id=None, zone_id=None):
     webcam-loop thread) keep their old behaviour.
     """
     if camera_id is None and zone_id is None:
-        threshold_sec, zone_name = _refresh_zone_info()
+        threshold_sec, zone_name, density_threshold = _refresh_zone_info()
         return {
             "applied_camera_id": None,
             "applied_zone_id": None,
             "applied_zone_name": zone_name,
             "applied_threshold_seconds": threshold_sec,
+            "applied_density_threshold": density_threshold,
             "detection_enabled": True,
             "zone_error": None,
         }
@@ -815,14 +819,20 @@ def _fire_alert(class_name, zone_name, duration_sec, person_name=None, severity=
         print(f"Alert POST failed: {e}")
 
 
-def _maybe_fire_person_alert(person_count, zone_name, source=None):
-    """Create one warning/critical alert per cooldown window based on detected people."""
+def _maybe_fire_person_alert(person_count, zone_name, source=None, density_threshold=None):
+    """Create one warning/critical alert per cooldown window based on detected people.
+
+    density_threshold is the zone's own Detection Setup "Density threshold" (max
+    occupancy) rule; falls back to the global PERSON_CRITICAL_COUNT default when the
+    zone has none configured.
+    """
     if person_count <= 0:
         _person_alert_state["level"] = None
         return
 
+    critical_count = density_threshold if density_threshold is not None else _PERSON_CRITICAL_COUNT
     now = time.time()
-    level = "Critical" if person_count >= _PERSON_CRITICAL_COUNT else "Warning"
+    level = "Critical" if person_count >= critical_count else "Warning"
     recently_sent = now - _person_alert_state["last_sent_at"] < _PERSON_ALERT_COOLDOWN
     if recently_sent and _person_alert_state["level"] == level:
         return
@@ -884,12 +894,13 @@ def _annotate_detection_frame(frame, recognize_faces=True, zone_config=None, sou
     if zone_config is None:
         # No camera/zone id supplied (e.g. the background webcam-loop thread) — keep the
         # legacy global-smallest-threshold behaviour, always enabled.
-        threshold_sec, zone_name = _refresh_zone_info()
+        threshold_sec, zone_name, density_threshold = _refresh_zone_info()
         detection_enabled = True
     else:
         threshold_sec = zone_config["applied_threshold_seconds"]
         zone_name = zone_config["applied_zone_name"] or _zone_name_cache
         detection_enabled = zone_config["detection_enabled"]
+        density_threshold = zone_config.get("applied_density_threshold")
 
     person_boxes = []
     object_detections = []
@@ -1027,7 +1038,7 @@ def _annotate_detection_frame(frame, recognize_faces=True, zone_config=None, sou
     # Detection Setup's "detection enabled" toggle only gates ALERT CREATION — YOLO still
     # annotates/counts so the live console stays informative while a rule is paused.
     if detection_enabled:
-        _maybe_fire_person_alert(people_count, zone_name, source)
+        _maybe_fire_person_alert(people_count, zone_name, source, density_threshold)
     cv2.putText(frame, f"People: {people_count}", (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2)
     _people_count = people_count
@@ -1094,7 +1105,7 @@ def _yolo_detection_loop():
             classes=_YOLO_CLASS_IDS,
             verbose=False
         )[0]
-        threshold_sec, zone_name = _refresh_zone_info()
+        threshold_sec, zone_name, density_threshold = _refresh_zone_info()
 
         person_boxes = []
         object_detections = []
@@ -1214,7 +1225,7 @@ def _yolo_detection_loop():
 
         # Evict objects that left the frame
         _tracked_objects = {k: v for k, v in _tracked_objects.items() if k in seen_keys}
-        _maybe_fire_person_alert(people_count, zone_name)
+        _maybe_fire_person_alert(people_count, zone_name, density_threshold=density_threshold)
 
         # People count HUD
         cv2.putText(frame, f"People: {people_count}", (10, 30),
@@ -1319,6 +1330,7 @@ async def yolo_analyze_frame(request: AnalyzeFrameRequest):
         "applied_zone_id": zone_config["applied_zone_id"],
         "applied_zone_name": zone_config["applied_zone_name"],
         "applied_threshold_seconds": zone_config["applied_threshold_seconds"],
+        "applied_density_threshold": zone_config["applied_density_threshold"],
         "zone_detection_enabled": zone_config["detection_enabled"],
         "zone_error": zone_config["zone_error"]
     }

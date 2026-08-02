@@ -6,6 +6,7 @@ import { getHardwareStreamUrl, getHardwareHealthUrl, getHardwarePeopleCountUrl }
 import { validateVideoFile, createTemporaryObjectUrl, revokeTemporaryObjectUrl } from '../utils/mediaPreview';
 import { buildAnalyzeFramePayload, buildBearerHeaders } from '../utils/analyzeFrame';
 import { resolveAlertSource } from '../utils/alertSource';
+import { API_BASE_URL } from '../constants/api';
 import '../css/Dashboard.css';
 import '../css/ObjectDetection.css';
 
@@ -66,6 +67,8 @@ const alertTitle = (alert) => {
 // A Raspberry Pi local path (runtime/snapshots/...) must NEVER be turned into an
 // href — it isn't reachable from a browser and could be a misleading dead link.
 const isRemoteSnapshot = (url) => typeof url === 'string' && /^https?:\/\//i.test(url.trim());
+const isProtectedSnapshot = (url) => typeof url === 'string' && /^\/api\/detection-alerts\/\d+\/snapshot\/[^/]+$/i.test(url.trim());
+const snapshotRequestUrl = (url) => `${API_BASE_URL}${url}`;
 
 // WhatsApp security-alert notification status (persisted on the alert by the edge route).
 const whatsappStatusOf = (alert) => alert?.whatsapp_status || 'Not Requested';
@@ -99,6 +102,7 @@ const ObjectDetection = () => {
   const [alertsRefreshing, setAlertsRefreshing] = useState(false);
   const [alertTypeFilter, setAlertTypeFilter] = useState('all');
   const [alertSeverityFilter, setAlertSeverityFilter] = useState('all');
+  const [snapshotPreview, setSnapshotPreview] = useState({ url: '', source: '', error: false });
 
   const [streamError, setStreamError] = useState(false);
   const [aiOffline, setAiOffline] = useState(false);
@@ -117,6 +121,14 @@ const ObjectDetection = () => {
   const canvasRef = useRef(null);
   const processingFrameRef = useRef(false);
   const aiHealthFailuresRef = useRef(0);
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const token = localStorage.getItem('accessToken');
   // Memoised so the fetch callbacks below can list `headers` as a stable
@@ -125,32 +137,55 @@ const ObjectDetection = () => {
 
   const fetchZones = useCallback(() => {
     axios.get(ZONES_URL, { headers })
-      .then(res => { setZones(res.data); setNodeOffline(false); })
-      .catch(() => setNodeOffline(true));
+      .then(res => {
+        if (!mountedRef.current) return;
+        setZones(res.data);
+        setNodeOffline(false);
+      })
+      .catch(() => {
+        if (mountedRef.current) setNodeOffline(true);
+      });
   }, [headers]);
 
   const fetchCameras = useCallback(() => {
     axios.get(CAMERAS_URL, { headers })
       .then(res => {
+        if (!mountedRef.current) return;
         const list = Array.isArray(res.data) ? res.data : [];
         setCameras(list);
         setSelectedCameraId((prev) => (list.some((cam) => String(cam.id) === String(prev)) ? prev : (list[0]?.id ?? '')));
       })
-      .catch(() => setCameras([]));
+      .catch(() => {
+        if (mountedRef.current) setCameras([]);
+      });
   }, [headers]);
 
   const fetchAlerts = useCallback(() => {
     axios.get(ALERTS_URL, { headers })
-      .then(res => { setAlerts(res.data); setNodeOffline(false); })
-      .catch(() => setNodeOffline(true));
+      .then(res => {
+        if (!mountedRef.current) return;
+        setAlerts(res.data);
+        setNodeOffline(false);
+      })
+      .catch(() => {
+        if (mountedRef.current) setNodeOffline(true);
+      });
   }, [headers]);
 
   const handleRefreshAlerts = useCallback(() => {
     setAlertsRefreshing(true);
     axios.get(ALERTS_URL, { headers })
-      .then(res => { setAlerts(res.data); setNodeOffline(false); })
-      .catch(() => setNodeOffline(true))
-      .finally(() => setAlertsRefreshing(false));
+      .then(res => {
+        if (!mountedRef.current) return;
+        setAlerts(res.data);
+        setNodeOffline(false);
+      })
+      .catch(() => {
+        if (mountedRef.current) setNodeOffline(true);
+      })
+      .finally(() => {
+        if (mountedRef.current) setAlertsRefreshing(false);
+      });
   }, [headers]);
 
   // Read by fetchPeopleCount to skip the browser-YOLO poll while SecurePi hardware mode
@@ -166,6 +201,7 @@ const ObjectDetection = () => {
     if (sourceModeRef.current === 'hardware') return;
     axios.get(PEOPLE_URL, { timeout: 8000, headers })
       .then(res => {
+        if (!mountedRef.current) return;
         aiHealthFailuresRef.current = 0;
         setPeopleCount(res.data.count ?? 0);
         setDetectionActive(res.data.detection_active ?? false);
@@ -173,6 +209,7 @@ const ObjectDetection = () => {
         setStreamError(false);
       })
       .catch(() => {
+        if (!mountedRef.current) return;
         aiHealthFailuresRef.current += 1;
         setPeopleCount(0);
         setDetectionActive(false);
@@ -224,6 +261,7 @@ const ObjectDetection = () => {
   useEffect(() => {
     let stream;
     let frameInterval;
+    let sourceCancelled = false;
 
     const stopBrowserCamera = () => {
       if (stream) {
@@ -257,6 +295,7 @@ const ObjectDetection = () => {
 
       try {
         const res = await axios.post(ANALYZE_FRAME_URL, payload, { timeout: 20000, headers });
+        if (sourceCancelled || !mountedRef.current) return;
         setDetections(res.data.detections ?? []);
         setPeopleCount(res.data.count ?? 0);
         setDetectionActive(res.data.detection_active ?? false);
@@ -268,6 +307,7 @@ const ObjectDetection = () => {
         setAiOffline(false);
         setStreamError(false);
       } catch (err) {
+        if (sourceCancelled || !mountedRef.current) return;
         setDetectionActive(false);
         setCameraStatus(err.response ? 'analysis_error' : 'analysis_retrying');
       } finally {
@@ -289,22 +329,31 @@ const ObjectDetection = () => {
           audio: false,
         });
 
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.onloadedmetadata = async () => {
+        if (sourceCancelled || !mountedRef.current) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+
+        const video = videoRef.current;
+        if (video) {
+          video.srcObject = stream;
+          video.onloadedmetadata = async () => {
+            if (sourceCancelled || !mountedRef.current) return;
             try {
-              await videoRef.current.play();
+              await video.play();
+              if (sourceCancelled || !mountedRef.current) return;
               setCameraReady(true);
               setCameraStatus('browser_camera_active');
               analyzeCurrentFrame();
             } catch {
-              setCameraStatus('browser_camera_paused');
+              if (!sourceCancelled && mountedRef.current) setCameraStatus('browser_camera_paused');
             }
           };
           setBrowserCameraError(false);
           frameInterval = setInterval(analyzeCurrentFrame, 2200);
         }
       } catch {
+        if (sourceCancelled || !mountedRef.current) return;
         setBrowserCameraError(true);
         setCameraStatus('browser_camera_denied');
       }
@@ -324,12 +373,14 @@ const ObjectDetection = () => {
       video.src = uploadedVideoUrl;
       video.loop = true;
       video.onloadedmetadata = async () => {
+        if (sourceCancelled || !mountedRef.current) return;
         try {
           await video.play();
+          if (sourceCancelled || !mountedRef.current) return;
           setCameraReady(true);
           analyzeCurrentFrame();
         } catch {
-          setCameraStatus('uploaded_video_paused');
+          if (!sourceCancelled && mountedRef.current) setCameraStatus('uploaded_video_paused');
         }
       };
       frameInterval = setInterval(analyzeCurrentFrame, 2200);
@@ -350,6 +401,7 @@ const ObjectDetection = () => {
     }
 
     return () => {
+      sourceCancelled = true;
       clearInterval(frameInterval);
       stopBrowserCamera();
     };
@@ -435,13 +487,14 @@ const ObjectDetection = () => {
     setWorkflowMessage('');
     try {
       const res = await axios.put(`${ALERTS_URL}/${id}`, { status }, { headers });
+      if (!mountedRef.current) return;
       setAlerts(prev => prev.map(a => a.id === id ? res.data : a));
       setWorkflowMessage(status === 'Cleared' ? 'Alert marked cleared.' : `Alert marked ${status.toLowerCase()}.`);
     } catch (err) {
       console.error('Update alert error:', err);
-      setWorkflowMessage('Could not update this alert. Check that the Node.js server is running.');
+      if (mountedRef.current) setWorkflowMessage('Could not update this alert. Check that the Node.js server is running.');
     } finally {
-      setAlertActionBusy(false);
+      if (mountedRef.current) setAlertActionBusy(false);
     }
   };
 
@@ -470,6 +523,7 @@ const ObjectDetection = () => {
       const results = await Promise.all(
         openAlerts.map((a) => axios.put(`${ALERTS_URL}/${a.id}`, { status: 'Cleared' }, { headers }))
       );
+      if (!mountedRef.current) return;
       setAlerts((prev) => prev.map((a) => {
         const updated = results.find((r) => r.data.id === a.id);
         return updated ? updated.data : a;
@@ -477,9 +531,9 @@ const ObjectDetection = () => {
       setWorkflowMessage('All active alerts cleared.');
     } catch (err) {
       console.error('Clear all alerts error:', err);
-      setWorkflowMessage('Could not clear all alerts. Check that the Node.js server is running.');
+      if (mountedRef.current) setWorkflowMessage('Could not clear all alerts. Check that the Node.js server is running.');
     } finally {
-      setAlertActionBusy(false);
+      if (mountedRef.current) setAlertActionBusy(false);
     }
   };
 
@@ -513,6 +567,37 @@ const ObjectDetection = () => {
     if (!displayedAlert) return '';
     return alertTitle(displayedAlert);
   }, [displayedAlert]);
+  const displayedSnapshotUrl = displayedAlert?.snapshot_url || '';
+  const activeSnapshotPreview = isRemoteSnapshot(displayedSnapshotUrl)
+    ? { url: displayedSnapshotUrl, error: false }
+    : snapshotPreview.source === displayedSnapshotUrl
+      ? snapshotPreview
+      : { url: '', error: false };
+  useEffect(() => {
+    const snapshotUrl = displayedSnapshotUrl;
+    if (!isProtectedSnapshot(snapshotUrl)) return undefined;
+
+    let cancelled = false;
+    let objectUrl = '';
+    axios.get(snapshotRequestUrl(snapshotUrl), { headers, responseType: 'blob' })
+      .then((res) => {
+        if (cancelled) return;
+        if (typeof URL.createObjectURL !== 'function') {
+          setSnapshotPreview({ url: '', source: snapshotUrl, error: true });
+          return;
+        }
+        objectUrl = URL.createObjectURL(res.data);
+        setSnapshotPreview({ url: objectUrl, source: snapshotUrl, error: false });
+      })
+      .catch(() => {
+        if (!cancelled) setSnapshotPreview({ url: '', source: snapshotUrl, error: true });
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [displayedSnapshotUrl, headers]);
   const sourceTitle = sourceMode === 'hardware'
     ? 'SecurePi Edge Live'
     : sourceMode === 'file'
@@ -757,10 +842,19 @@ const ObjectDetection = () => {
                       )}
                       <span>WhatsApp <strong className={whatsappStatusClass(whatsappStatusOf(displayedAlert))}>{whatsappStatusOf(displayedAlert)}</strong></span>
                     </div>
-                    {isRemoteSnapshot(displayedAlert.snapshot_url) ? (
-                      <a className="od-snapshot-link" href={displayedAlert.snapshot_url} target="_blank" rel="noreferrer">
-                        View edge snapshot
-                      </a>
+                    {activeSnapshotPreview.url ? (
+                      <div className="od-snapshot-preview">
+                        <img
+                          src={activeSnapshotPreview.url}
+                          alt={`${displayedAlert.object_class || 'Object'} detection snapshot`}
+                          className="od-snapshot-img"
+                        />
+                        <a className="od-snapshot-link" href={activeSnapshotPreview.url} target="_blank" rel="noreferrer">
+                          View edge snapshot
+                        </a>
+                      </div>
+                    ) : activeSnapshotPreview.error ? (
+                      <p className="od-snapshot-note">Snapshot upload found, but the image could not be loaded.</p>
                     ) : displayedAlert.snapshot_url ? (
                       <p className="od-snapshot-note">Snapshot captured on the edge device; remote upload unavailable.</p>
                     ) : null}
