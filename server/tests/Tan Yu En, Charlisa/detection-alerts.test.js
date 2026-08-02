@@ -150,6 +150,18 @@ describe("GET /api/detection-alerts/:id/snapshot/:filename", () => {
     expect(res.body).toEqual(bytes);
   });
 
+  test("returns a stable safe 404 when an ephemeral snapshot has expired", async () => {
+    mockDetectionAlert.findByPk.mockResolvedValue({ id: 4, snapshot_url: snapshotUrl });
+    fs.rmSync(process.env.DETECTION_SNAPSHOT_DIR, { recursive: true, force: true });
+
+    const res = await request(app).get(snapshotUrl).set("Authorization", `Bearer ${staffToken}`);
+
+    expect(res.status).toBe(404);
+    expect(res.text).toBe("Not Found");
+    expect(JSON.stringify({ body: res.body, text: res.text })).not.toMatch(/\/tmp|\/app|ENOENT|stack|detection-snapshots/i);
+    expect(fs.existsSync(process.env.DETECTION_SNAPSHOT_DIR)).toBe(false);
+  });
+
   test.each([
     "..%2Fescape.jpg",
     "..%5Cescape.jpg",

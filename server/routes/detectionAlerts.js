@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const fs = require('fs');
 const { sendUnexpectedError } = require('../utils/safeHttpError');
-const path = require('path');
 const { readLimiter } = require('../middlewares/rateLimit');
 router.use(readLimiter); // route-wide rate limiting (trusted AI service POSTs are skipped)
 const { DetectionAlert, IncidentLog, MonitoringZone, Camera, sequelize } = require('../models');
@@ -14,19 +14,12 @@ function severityFromDuration(seconds) {
 }
 const { Op } = require('sequelize');
 const { verifyToken, requireRole, verifyServiceOrRole } = require('../middlewares/auth');
+const {
+    GENERATED_SNAPSHOT_RE,
+    resolveStoredSnapshotPath,
+} = require('../utils/detectionSnapshotStorage');
 const SEVERITIES = ['Low', 'Medium', 'High', 'Critical'];
 const VALID_STATUSES = ['Active', 'Acknowledged', 'Investigating', 'Dispatched', 'Escalated', 'Cleared'];
-const SNAPSHOT_DIR = path.resolve(
-    process.env.DETECTION_SNAPSHOT_DIR || path.join(__dirname, '..', 'uploads', 'detection-snapshots')
-);
-const GENERATED_SNAPSHOT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.jpg$/i;
-
-const resolveStoredSnapshotPath = (filename) => {
-    if (!GENERATED_SNAPSHOT_RE.test(filename)) return null;
-    const resolved = path.resolve(SNAPSHOT_DIR, filename);
-    if (resolved === SNAPSHOT_DIR || !resolved.startsWith(`${SNAPSHOT_DIR}${path.sep}`)) return null;
-    return resolved;
-};
 
 // This route is reachable by the AI engine's service key AND by an FM/Staff JWT — never
 // by the SecurePi edge device (that's the dedicated EDGE_INGEST_TOKEN route in
@@ -132,9 +125,17 @@ router.get('/:id/snapshot/:filename', verifyToken, requireRole('FM', 'Staff'), a
         if (storedFilename !== requestedFilename) return res.sendStatus(404);
         const filePath = resolveStoredSnapshotPath(storedFilename);
         if (!filePath) return res.sendStatus(404);
-        return res.sendFile(filePath, { headers: { 'Content-Type': 'image/jpeg' } }, (err) => {
-            if (err && !res.headersSent) res.sendStatus(err.statusCode || 404);
-        });
+
+        // Cloud Run temporary storage is instance-local and may disappear after a
+        // restart or when another instance handles this request. Treat every local
+        // read failure as an expired snapshot without exposing its path or error.
+        let snapshotBytes;
+        try {
+            snapshotBytes = await fs.promises.readFile(filePath);
+        } catch {
+            return res.sendStatus(404);
+        }
+        return res.type('jpg').send(snapshotBytes);
     } catch (err) {
         return sendUnexpectedError(res, 'Detection alert snapshot lookup failed:', err);
     }

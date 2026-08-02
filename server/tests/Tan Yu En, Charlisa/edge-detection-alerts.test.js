@@ -35,7 +35,13 @@ jest.mock("../../models", () => ({
   sequelize: mockSequelize,
 }));
 
+const importMkdirSyncSpy = jest.spyOn(fs, "mkdirSync");
+const importMkdirSpy = jest.spyOn(fs.promises, "mkdir");
 const edgeDetectionAlertsRouter = require("../../routes/edgeDetectionAlerts");
+const importMkdirSyncCalls = importMkdirSyncSpy.mock.calls.length;
+const importMkdirCalls = importMkdirSpy.mock.calls.length;
+importMkdirSyncSpy.mockRestore();
+importMkdirSpy.mockRestore();
 // Mounted alongside the incident router so the test can confirm an edge-ingested
 // incident is visible through the Incident Dashboard API.
 const incidentRouter = require("../../routes/incident");
@@ -76,6 +82,9 @@ const primeCreateMocks = () => {
 };
 
 const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+const snapshotFiles = () => fs.existsSync(process.env.DETECTION_SNAPSHOT_DIR)
+  ? fs.readdirSync(process.env.DETECTION_SNAPSHOT_DIR)
+  : [];
 const uploadSnapshot = ({ filename = "edge.jpg", contentType = "image/jpeg", bytes = jpegBytes } = {}) => request(app)
   .post("/api/edge/detection-alerts")
   .set("Authorization", "Bearer test-edge-token")
@@ -118,12 +127,17 @@ describe("POST /api/edge/detection-alerts", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     fs.rmSync(process.env.DETECTION_SNAPSHOT_DIR, { recursive: true, force: true });
-    fs.mkdirSync(process.env.DETECTION_SNAPSHOT_DIR, { recursive: true });
   });
   afterAll(() => {
     fs.rmSync(process.env.DETECTION_SNAPSHOT_DIR, { recursive: true, force: true });
     if (originalSnapshotMaxBytes === undefined) delete process.env.DETECTION_SNAPSHOT_MAX_BYTES;
     else process.env.DETECTION_SNAPSHOT_MAX_BYTES = originalSnapshotMaxBytes;
+  });
+
+  test("imports the edge route without creating a snapshot directory", () => {
+    expect(importMkdirSyncCalls).toBe(0);
+    expect(importMkdirCalls).toBe(0);
+    expect(fs.existsSync(process.env.DETECTION_SNAPSHOT_DIR)).toBe(false);
   });
 
   test("rejects missing bearer token (401)", async () => {
@@ -180,9 +194,11 @@ describe("POST /api/edge/detection-alerts", () => {
 
   test("stores an uploaded JPEG as a protected snapshot URL", async () => {
     const created = primeCreateMocks();
+    expect(fs.existsSync(process.env.DETECTION_SNAPSHOT_DIR)).toBe(false);
     const res = await uploadSnapshot({ filename: "pest_rat.jpeg" });
 
     expect(res.status).toBe(201);
+    expect(fs.existsSync(process.env.DETECTION_SNAPSHOT_DIR)).toBe(true);
     expect(mockDetectionAlert.create.mock.calls[0][0].snapshot_url).toBeNull();
     expect(created.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -210,7 +226,7 @@ describe("POST /api/edge/detection-alerts", () => {
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "snapshot filename is invalid." });
     expect(mockDetectionAlert.create).not.toHaveBeenCalled();
-    expect(fs.readdirSync(process.env.DETECTION_SNAPSHOT_DIR)).toHaveLength(0);
+    expect(snapshotFiles()).toHaveLength(0);
   });
 
   test("rejects a non-JPEG extension even with a JPEG MIME type", async () => {
@@ -218,7 +234,7 @@ describe("POST /api/edge/detection-alerts", () => {
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "snapshot filename must use a .jpg or .jpeg extension." });
     expect(mockDetectionAlert.create).not.toHaveBeenCalled();
-    expect(fs.readdirSync(process.env.DETECTION_SNAPSHOT_DIR)).toHaveLength(0);
+    expect(snapshotFiles()).toHaveLength(0);
   });
 
   test("rejects a non-JPEG MIME type even with a .jpg extension", async () => {
@@ -226,7 +242,7 @@ describe("POST /api/edge/detection-alerts", () => {
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "snapshot must be a JPEG image." });
     expect(mockDetectionAlert.create).not.toHaveBeenCalled();
-    expect(fs.readdirSync(process.env.DETECTION_SNAPSHOT_DIR)).toHaveLength(0);
+    expect(snapshotFiles()).toHaveLength(0);
   });
 
   test("rejects spoofed JPEG metadata when the bytes lack JPEG markers", async () => {
@@ -234,7 +250,7 @@ describe("POST /api/edge/detection-alerts", () => {
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "snapshot content is not a valid JPEG image." });
     expect(mockDetectionAlert.create).not.toHaveBeenCalled();
-    expect(fs.readdirSync(process.env.DETECTION_SNAPSHOT_DIR)).toHaveLength(0);
+    expect(snapshotFiles()).toHaveLength(0);
   });
 
   test("preserves the configured snapshot upload-size limit", async () => {
@@ -247,7 +263,7 @@ describe("POST /api/edge/detection-alerts", () => {
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "snapshot exceeds the configured maximum size." });
     expect(mockDetectionAlert.create).not.toHaveBeenCalled();
-    expect(fs.readdirSync(process.env.DETECTION_SNAPSHOT_DIR)).toHaveLength(0);
+    expect(snapshotFiles()).toHaveLength(0);
   });
 
   test("cleans the generated file when post-commit snapshot linking fails", async () => {
@@ -260,7 +276,7 @@ describe("POST /api/edge/detection-alerts", () => {
     try {
       const res = await uploadSnapshot();
       expect(res.status).toBe(201);
-      expect(fs.readdirSync(process.env.DETECTION_SNAPSHOT_DIR)).toHaveLength(0);
+      expect(snapshotFiles()).toHaveLength(0);
       expect(JSON.stringify(res.body)).not.toMatch(/private|snapshot column|C:\\/i);
       expect(log).toHaveBeenCalledWith("[Edge] Snapshot persistence failed:", expect.any(Error));
     } finally {
