@@ -23,6 +23,7 @@ vi.mock('../constants/piCamera', () => ({
 import {
   resolvePreferredCameraSource,
   capturePiSnapshotCanvas,
+  drawBitmapToCanvasAndClose,
   stopStream,
   CAMERA_SOURCE,
   FALLBACK_REASON,
@@ -90,6 +91,19 @@ describe('capturePiSnapshotCanvas (Pi still → in-memory canvas)', () => {
   it('throws when the Pi snapshot cannot be fetched (caller falls back to webcam)', async () => {
     h.fetchPiSnapshotBitmap.mockRejectedValue(new Error('Pi snapshot HTTP 503'));
     await expect(capturePiSnapshotCanvas()).rejects.toThrow(/Pi snapshot/);
+  });
+
+  it('closes the ImageBitmap even when canvas drawing throws', () => {
+    const close = vi.fn();
+    const bitmap = { width: 640, height: 480, close };
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: () => ({ drawImage: () => { throw new Error('canvas failed'); } }),
+    };
+
+    expect(() => drawBitmapToCanvasAndClose(bitmap, canvas)).toThrow(/canvas failed/);
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -6,6 +6,9 @@ const { DetectionAlert, IncidentLog, MonitoringZone, Camera, sequelize } = requi
 const { Op } = require('sequelize');
 const { resolveIncidentType } = require('../utils/detectionAlertBridge');
 const whatsapp = require('../services/whatsappService');
+const { sendUnexpectedError } = require('../utils/safeHttpError');
+
+const PUBLIC_NOTIFICATION_ERROR = 'Notification delivery failed.';
 
 // Mirrors the fallback in detectionAlerts.js so edge and AI alerts get consistent severities
 function severityFromDuration(seconds) {
@@ -178,8 +181,9 @@ async function attemptSecurityWhatsapp(alert, messageAlert) {
     try {
         result = await whatsapp.sendDetectionAlert(messageAlert);
     } catch (err) {
+        console.error('[Edge] WhatsApp delivery failed:', err);
         await safeUpdateWhatsapp(alert, { whatsapp_status: 'Failed', whatsapp_error: String(err.message).slice(0, 500) });
-        return { status: 'Failed', error: err.message, recipientCount: 0 };
+        return { status: 'Failed', error: PUBLIC_NOTIFICATION_ERROR, recipientCount: 0 };
     }
     const sentAt = (result.status === 'Sent' || result.status === 'Simulated') ? new Date() : null;
     await safeUpdateWhatsapp(alert, {
@@ -187,7 +191,12 @@ async function attemptSecurityWhatsapp(alert, messageAlert) {
         whatsapp_sent_at: sentAt,
         whatsapp_error: result.error ? String(result.error).slice(0, 500) : null,
     });
-    return { status: result.status, recipientCount: result.recipientCount, error: result.error || null, sent_at: sentAt };
+    return {
+        status: result.status,
+        recipientCount: result.recipientCount,
+        error: result.error ? PUBLIC_NOTIFICATION_ERROR : null,
+        sent_at: sentAt
+    };
 }
 
 router.post('/detection-alerts', verifyEdgeIngestToken, async (req, res) => {
@@ -359,7 +368,7 @@ router.post('/detection-alerts', verifyEdgeIngestToken, async (req, res) => {
 
         return res.status(201).json(serializeAlert(alert, whatsappResult));
     } catch (err) {
-        return res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Edge detection alert ingestion failed:', err);
     }
 });
 

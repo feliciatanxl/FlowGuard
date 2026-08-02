@@ -1,0 +1,20 @@
+[Unit]
+Description=FlowGuard SecurePi Edge Node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Convenience example for the bundled SecurePi_FlowGuard repository. Adjust
+# /home/pi/FlowGuard if the FlowGuard checkout lives elsewhere. The canonical,
+# placeholder-based service and environment templates are also available under
+# repositories/SecurePi_FlowGuard-main/deploy/.
+WorkingDirectory=/home/pi/FlowGuard/edge/securepi/repositories/SecurePi_FlowGuard-main
+EnvironmentFile=-/etc/securepi/securepi.env
+ExecStart=/usr/bin/python3 /home/pi/FlowGuard/edge/securepi/repositories/SecurePi_FlowGuard-main/edge/securePi.py @edge/presets/lobby.args --headless --flowguard-enabled
+Restart=always
+RestartSec=5
+User=pi
+
+[Install]
+WantedBy=multi-user.target

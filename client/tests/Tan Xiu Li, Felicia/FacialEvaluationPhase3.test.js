@@ -52,7 +52,14 @@ describe("Phase 3 live recognition draft recording", () => {
     saveRecords([rec]);
     const stored = JSON.parse(localStorage.getItem(EVAL_STORAGE_KEY))[0];
     expect(stored).toMatchObject({ actualLabel: "P02", predictedLabel: "P01", source: "Live", origin: "Gate Scanner" });
-    expect(JSON.stringify(stored)).not.toMatch(/Alice|alice@example\.com|25|data:image|embedding|vector|template/i);
+    expect(stored).not.toHaveProperty("userId");
+    expect(stored).not.toHaveProperty("name");
+    expect(stored).not.toHaveProperty("email");
+    expect(stored).not.toHaveProperty("image");
+    expect(stored).not.toHaveProperty("embedding");
+    expect(stored).not.toHaveProperty("vector");
+    expect(stored).not.toHaveProperty("template");
+    expect(JSON.stringify(stored)).not.toMatch(/Alice|alice@example\.com|data:image|embedding|vector|template/i);
   });
 
   test("unmapped recognised users cannot be saved until a P-label is assigned", () => {

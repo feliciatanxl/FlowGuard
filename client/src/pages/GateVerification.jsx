@@ -15,7 +15,7 @@ import {
   CAMERA_SOURCE, SOURCE_LABELS, sourceLabel, isPiConfigured,
   markPiUnavailable, fallbackMessage, FALLBACK_REASON,
   CAMERA_STATUS, resolvePreferredCameraSource, fetchPiSnapshotBitmap,
-  PI_CAMERA_STREAM_URL,
+  PI_CAMERA_STREAM_URL, stopStream, drawBitmapToCanvasAndClose,
 } from '../utils/cameraSource';
 import { recognizePlate } from '../utils/plateOcr';
 import { formatSingaporeBookingDateTime } from '../constants/datetime';
@@ -133,19 +133,63 @@ const GateVerification = () => {
   const qrStopRef = useRef(null);
   const plateStopRef = useRef(null);
   const mountedRef = useRef(true);
+  const cameraGenerationRef = useRef(0);
+  const cameraAbortRef = useRef(null);
+  const cameraStartPromiseRef = useRef(null);
 
-  const stopQr = () => {
+  const isCameraWorkCurrent = (generation) => (
+    mountedRef.current && generation === cameraGenerationRef.current
+  );
+
+  const invalidateCameraWork = () => {
+    cameraGenerationRef.current += 1;
+    try { cameraAbortRef.current?.abort(); } catch { /* ignore */ }
+    cameraAbortRef.current = null;
+    return cameraGenerationRef.current;
+  };
+
+  const stopQrResources = () => {
     try { qrStopRef.current?.(); } catch { /* ignore */ }
     qrStopRef.current = null;
-    setScanning(false);
-    setScannerState(null);
+    stopStream(qrVideoRef.current);
+    if (mountedRef.current) {
+      setScanning(false);
+      setScannerState(null);
+    }
   };
-  const stopPlateCam = () => {
+
+  const stopPlateResources = () => {
     try { plateStopRef.current?.stop?.(); } catch { /* ignore */ }
     plateStopRef.current = null;
-    setPlateCamActive(false);
+    stopStream(plateVideoRef.current);
+    if (mountedRef.current) setPlateCamActive(false);
   };
-  const stopAllCameras = () => { stopQr(); stopPlateCam(); };
+
+  const stopAllCameraResources = () => {
+    stopQrResources();
+    stopPlateResources();
+    if (mountedRef.current) setOcrBusy(false);
+  };
+
+  const stopQr = () => {
+    invalidateCameraWork();
+    stopQrResources();
+  };
+  const stopPlateCam = () => {
+    invalidateCameraWork();
+    stopPlateResources();
+  };
+  const stopAllCameras = () => {
+    invalidateCameraWork();
+    stopAllCameraResources();
+  };
+  const beginCameraWork = () => {
+    const generation = invalidateCameraWork();
+    stopAllCameraResources();
+    const controller = new AbortController();
+    cameraAbortRef.current = controller;
+    return { generation, signal: controller.signal };
+  };
   const releaseAllCameras = useEffectEvent(() => {
     stopAllCameras();
   });
@@ -155,10 +199,12 @@ const GateVerification = () => {
   // so the first "Start Scanner" doesn't wait on a module download. This never
   // opens a camera — it only preloads code.
   useEffect(() => {
+    mountedRef.current = true;
     preloadQrScanner();
     const onVisibility = () => { if (document.hidden) releaseAllCameras(); };
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
+      mountedRef.current = false;
       document.removeEventListener('visibilitychange', onVisibility);
       releaseAllCameras();
     };
@@ -169,13 +215,13 @@ const GateVerification = () => {
   // laptop webcam is available immediately. The FM can still switch sources manually
   // after this runs. Probing happens once here, never on every render.
   useEffect(() => {
-    mountedRef.current = true;
+    const generation = cameraGenerationRef.current;
     // The initial status ("Checking…" / "Laptop Webcam active") is already set by the
     // sourceStatus useState initializer, so the effect only updates state AFTER the
     // async probe resolves (never synchronously in the effect body).
     (async () => {
       const pref = await resolvePreferredCameraSource();
-      if (!mountedRef.current) return;
+      if (!isCameraWorkCurrent(generation)) return;
       setPrimarySource(pref.source);
       setPiReachable(pref.source === CAMERA_SOURCE.PI);
       setQrSource(pref.source);
@@ -186,7 +232,6 @@ const GateVerification = () => {
             : CAMERA_STATUS.WEBCAM_ACTIVE
       );
     })();
-    return () => { mountedRef.current = false; };
   }, [piConfigured]);
 
   if (role !== ROLES.FM) {
@@ -206,6 +251,7 @@ const GateVerification = () => {
   // When the Pi fails during a capture, drop back to the webcam for the whole page and
   // reflect it in the shared status line + cooldown (so we don't re-probe immediately).
   const activatePiFallback = () => {
+    stopAllCameras();
     markPiUnavailable();
     setPiReachable(false);
     setPrimarySource(CAMERA_SOURCE.WEBCAM);
@@ -240,23 +286,56 @@ const GateVerification = () => {
     setStep(1);
   };
 
-  const startQr = async () => {
+  const startQr = () => {
+    if (cameraStartPromiseRef.current) return cameraStartPromiseRef.current;
+    const { generation, signal } = beginCameraWork();
     setQrError('');
     setScannerState(SCANNER_STATE.LOADING);
     if (!isSecureCameraContext()) { setQrError(cameraErrorMessage('insecure')); setScannerState(SCANNER_STATE.UNAVAILABLE); return; }
     if (!isCameraSupported()) { setQrError(cameraErrorMessage('unsupported')); setScannerState(SCANNER_STATE.UNAVAILABLE); return; }
     setScanning(true);
-    const stop = await startQrScan({
-      videoElement: qrVideoRef.current,
-      onResult: (text) => onQrResult(text, CAMERA_SOURCE.WEBCAM),
-      onError: ({ message }) => { setQrError(message); setScanning(false); },
-      onState: setScannerState,
-      onMetrics: setQrMetrics,
-      enableCloud: CLOUD_QR_ENABLED,
-      cloudFallbackDelayMs: CLOUD_QR_DELAY_MS,
-      onCloudDecode: decodeViaCloud,
+    const promise = (async () => {
+      try {
+        const stop = await startQrScan({
+          videoElement: qrVideoRef.current,
+          onResult: (text) => {
+            if (isCameraWorkCurrent(generation)) onQrResult(text, CAMERA_SOURCE.WEBCAM);
+          },
+          onError: ({ message }) => {
+            if (!isCameraWorkCurrent(generation)) return;
+            setQrError(message);
+            setScanning(false);
+          },
+          onState: (state) => { if (isCameraWorkCurrent(generation)) setScannerState(state); },
+          onMetrics: (metrics) => { if (isCameraWorkCurrent(generation)) setQrMetrics(metrics); },
+          enableCloud: CLOUD_QR_ENABLED,
+          cloudFallbackDelayMs: CLOUD_QR_DELAY_MS,
+          onCloudDecode: async (dataUrl, requestSignal) => {
+            const ref = await decodeViaCloud(dataUrl, requestSignal || signal);
+            return isCameraWorkCurrent(generation) ? ref : null;
+          },
+          signal,
+        });
+        if (!isCameraWorkCurrent(generation)) {
+          try { stop?.(); } catch { /* ignore */ }
+          stopStream(qrVideoRef.current);
+          return;
+        }
+        stopQrResources();
+        qrStopRef.current = stop;
+        setScanning(true);
+      } catch (error) {
+        if (!isCameraWorkCurrent(generation) || error?.code === 'aborted') return;
+        setQrError(error?.message || cameraErrorMessage('unknown'));
+        setScanning(false);
+        setScannerState(SCANNER_STATE.UNAVAILABLE);
+      }
+    })();
+    cameraStartPromiseRef.current = promise;
+    promise.finally(() => {
+      if (cameraStartPromiseRef.current === promise) cameraStartPromiseRef.current = null;
     });
-    qrStopRef.current = stop;
+    return promise;
   };
 
   // Raspberry Pi Camera Module 3 automatic QR: grab one fresh still (in-memory canvas,
@@ -264,29 +343,30 @@ const GateVerification = () => {
   // BarcodeDetector-scanned in the browser). Auto-falls-back to the laptop webcam if
   // the Pi is unreachable, and shows the reason.
   const captureQrFromPi = async () => {
+    const { generation, signal } = beginCameraWork();
     setQrError('');
     setScannerState(SCANNER_STATE.STARTING);
     let bitmap;
     try {
       bitmap = await fetchPiSnapshotBitmap();
     } catch {
+      if (!isCameraWorkCurrent(generation)) return;
       activatePiFallback();
       setQrSource(CAMERA_SOURCE.WEBCAM);
       setScannerState(SCANNER_STATE.UNAVAILABLE);
       setQrError(`${fallbackMessage(FALLBACK_REASON.PI_UNREACHABLE)} Switched to the laptop webcam — or use manual entry.`);
       return;
     }
+    const canvas = document.createElement('canvas');
     try {
-      // Draw the fresh Pi still onto an in-memory canvas, then RELEASE the bitmap.
-      // Nothing is persisted; the canvas is discarded when this returns.
-      const canvas = document.createElement('canvas');
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
-      bitmap.close?.();
+      // The helper owns ImageBitmap.close() in a finally block. The canvas stays
+      // in memory only and is discarded when this operation returns.
+      drawBitmapToCanvasAndClose(bitmap, canvas);
+      if (!isCameraWorkCurrent(generation)) return;
       const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
       setScannerState(SCANNER_STATE.CLOUD);
-      const ref = await decodeViaCloud(dataUrl);
+      const ref = await decodeViaCloud(dataUrl, signal);
+      if (!isCameraWorkCurrent(generation)) return;
       if (ref && isValidBookingRef(ref)) {
         setQrMetrics({ decoder: DECODER_SOURCE.PI_CAMERA_CLOUD });
         onQrResult(ref, CAMERA_SOURCE.PI);
@@ -295,7 +375,7 @@ const GateVerification = () => {
         setQrError('No valid FlowGuard QR detected in the Raspberry Pi snapshot. Capture again or use manual entry.');
       }
     } catch {
-      bitmap.close?.();
+      if (!isCameraWorkCurrent(generation)) return;
       setScannerState(SCANNER_STATE.UNAVAILABLE);
       setQrError('Could not process the Raspberry Pi snapshot. Try again or use manual entry.');
     }
@@ -303,7 +383,7 @@ const GateVerification = () => {
 
   const switchQrSource = (next) => {
     if (next === qrSource) return;
-    stopQr();
+    stopAllCameras();
     setQrError('');
     setScannerState(null);
     setQrMetrics(null);
@@ -315,6 +395,7 @@ const GateVerification = () => {
       setQrError('Enter a valid FlowGuard booking reference (e.g. FG-ABC123).');
       return;
     }
+    stopAllCameras();
     setQrError('');
     setBookingRef(normalizeBookingRef(bookingRef));
     setActualQrSource(CAMERA_SOURCE.MANUAL);
@@ -322,74 +403,101 @@ const GateVerification = () => {
   };
 
   // --- PoC OCR ---
-  const startPlateCam = async () => {
+  const startPlateCam = () => {
+    if (cameraStartPromiseRef.current) return cameraStartPromiseRef.current;
+    const { generation, signal } = beginCameraWork();
     setOcrError('');
-    stopQr(); // stop QR scanning before the plate camera / heavy OCR (no dual streams)
-    try {
-      const controls = await startCamera(plateVideoRef.current);
-      plateStopRef.current = controls;
-      setPlateCamActive(true);
-    } catch (e) {
-      setOcrError(e.message || cameraErrorMessage('unknown'));
-      setPlateCamActive(false);
-    }
+    const promise = (async () => {
+      try {
+        const controls = await startCamera(plateVideoRef.current, { signal });
+        if (!isCameraWorkCurrent(generation)) {
+          try { controls?.stop?.(); } catch { /* ignore */ }
+          stopStream(plateVideoRef.current);
+          return;
+        }
+        stopPlateResources();
+        plateStopRef.current = controls;
+        setPlateCamActive(true);
+      } catch (e) {
+        if (!isCameraWorkCurrent(generation) || e?.code === 'aborted') return;
+        setOcrError(e.message || cameraErrorMessage('unknown'));
+        setPlateCamActive(false);
+      }
+    })();
+    cameraStartPromiseRef.current = promise;
+    promise.finally(() => {
+      if (cameraStartPromiseRef.current === promise) cameraStartPromiseRef.current = null;
+    });
+    return promise;
   };
 
-  const runOcrOn = async (source, capturedFrom) => {
+  const runOcrOn = async (source, capturedFrom, generation = cameraGenerationRef.current) => {
+    if (!isCameraWorkCurrent(generation)) return null;
     setOcrBusy(true);
     setOcrError('');
     try {
       const result = await recognizePlate(source);
+      if (!isCameraWorkCurrent(generation)) return null;
       setOcr({ ...result, simulated: false });
       if (!result.normalized) {
         setOcrError('No plate text could be read. Retake the photo, or use manual verification.');
       }
       setPlateSource('ocr');
       setActualPlateSource(capturedFrom);
+      return result;
     } catch (e) {
+      if (!isCameraWorkCurrent(generation)) return null;
       setOcrError(e.message || 'OCR failed. Please retake the photo.');
+      return null;
     } finally {
-      setOcrBusy(false);
+      if (isCameraWorkCurrent(generation)) setOcrBusy(false);
     }
   };
 
   const captureAndRead = async () => {
     if (!plateVideoRef.current) return;
-    await runOcrOn(plateVideoRef.current, CAMERA_SOURCE.WEBCAM);
-    stopPlateCam();
+    const generation = cameraGenerationRef.current;
+    await runOcrOn(plateVideoRef.current, CAMERA_SOURCE.WEBCAM, generation);
+    if (isCameraWorkCurrent(generation)) stopPlateCam();
   };
 
   // Raspberry Pi Camera Module 3 plate capture: grab one fresh still onto an in-memory
   // canvas (released immediately, never saved), then run the existing OCR on it. On Pi
   // failure, automatically activate the laptop-webcam fallback.
   const capturePlateFromPi = async () => {
+    const { generation } = beginCameraWork();
     setOcrError('');
-    stopQr();
     setOcrBusy(true);
     let bitmap;
     try {
       bitmap = await fetchPiSnapshotBitmap();
     } catch {
+      if (!isCameraWorkCurrent(generation)) return;
       activatePiFallback();
       setPlateCamSource(CAMERA_SOURCE.WEBCAM);
       setOcrBusy(false);
       setOcrError(`${fallbackMessage(FALLBACK_REASON.PI_UNREACHABLE)} Switched to the laptop webcam — press Start Camera.`);
       return;
     }
-    // Draw the fresh Pi still onto an in-memory canvas and release the bitmap before
-    // OCR (the canvas holds its own pixels). The frame is never saved anywhere.
     const canvas = document.createElement('canvas');
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
-    bitmap.close?.();
-    await runOcrOn(canvas, CAMERA_SOURCE.PI);
+    try {
+      // ImageBitmap is closed by the helper even when drawing throws. The frame
+      // remains only in this in-memory canvas and is never persisted.
+      drawBitmapToCanvasAndClose(bitmap, canvas);
+      if (!isCameraWorkCurrent(generation)) return;
+      await runOcrOn(canvas, CAMERA_SOURCE.PI, generation);
+    } catch (error) {
+      if (!isCameraWorkCurrent(generation)) return;
+      setOcrError(error?.message || 'Could not process the Raspberry Pi snapshot.');
+      setOcrBusy(false);
+    }
   };
 
   const onUploadImage = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // allow re-selecting the same file; nothing is persisted
     if (!file) return;
+    const { generation } = beginCameraWork();
     const url = URL.createObjectURL(file);
     try {
       const img = new Image();
@@ -399,9 +507,10 @@ const GateVerification = () => {
       });
       img.src = url;
       await loaded;
-      await runOcrOn(img, CAMERA_SOURCE.UPLOAD);
+      if (!isCameraWorkCurrent(generation)) return;
+      await runOcrOn(img, CAMERA_SOURCE.UPLOAD, generation);
     } catch (err) {
-      setOcrError(err.message || 'Could not read that image.');
+      if (isCameraWorkCurrent(generation)) setOcrError(err.message || 'Could not read that image.');
     } finally {
       URL.revokeObjectURL(url); // never keep the image around
     }
@@ -417,7 +526,7 @@ const GateVerification = () => {
   };
 
   const retakePlate = () => {
-    stopPlateCam();
+    stopAllCameras();
     setOcr(null);
     setOcrError('');
     setSimInput('');
@@ -427,7 +536,7 @@ const GateVerification = () => {
 
   const switchPlateSource = (next) => {
     if (next === plateCamSource) return;
-    stopPlateCam();
+    stopAllCameras();
     setOcrError('');
     setPlateCamSource(next);
   };

@@ -5,6 +5,7 @@ router.use(readLimiter); // route-wide rate limiting
 const { MonitoringZone, Camera, sequelize } = require('../models');
 const { verifyToken, requireRole } = require('../middlewares/auth');
 const { DETECTION_TYPES, DEFAULT_DETECTION_TYPE } = require('../config/detectionTypes');
+const { sendUnexpectedError } = require('../utils/safeHttpError');
 
 // Runs fn inside a managed transaction when the connection is available; unit tests that
 // mock ../models without a sequelize instance fall back to running fn untransacted.
@@ -75,7 +76,7 @@ router.get('/', requireRole('FM', 'Staff'), async (req, res) => {
         const zones = await MonitoringZone.findAll({ order: [['createdAt', 'DESC']] });
         res.json(zones.map(serializeZone));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Zone list failed:', err);
     }
 });
 
@@ -87,7 +88,7 @@ router.get('/:id', requireRole('FM', 'Staff'), async (req, res) => {
         if (!zone) return res.sendStatus(404);
         res.json(serializeZone(zone));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Zone lookup failed:', err);
     }
 });
 
@@ -145,7 +146,7 @@ router.post('/', requireRole('FM'), async (req, res) => {
         });
         res.status(201).json(serializeZone(zone));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Zone creation failed:', err);
     }
 });
 
@@ -211,7 +212,7 @@ router.put('/:id', requireRole('FM'), async (req, res) => {
         });
         res.json(serializeZone(zone));
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Zone update failed:', err);
     }
 });
 
@@ -230,7 +231,7 @@ router.delete('/:id', requireRole('FM'), async (req, res) => {
         });
         res.sendStatus(200);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Zone deletion failed:', err);
     }
 });
 

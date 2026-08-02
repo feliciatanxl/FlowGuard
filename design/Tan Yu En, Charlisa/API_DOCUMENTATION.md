@@ -622,20 +622,20 @@ there is no browser `/ai/*` dependency.
 ## 5. SecurePi Device Endpoints (Raspberry Pi service, not FlowGuard endpoints)
 
 These are **not** FlowGuard REST endpoints — they run on the Raspberry Pi itself
-(`edge/securepi/`) and are reached directly by the browser over the LAN/hotspot,
+(`raspberry-pi/pi_camera_steam.py`) and are reached directly by the browser over the LAN/hotspot,
 completely bypassing the Node backend and any FlowGuard authentication. They exist
 in this documentation only because `ObjectDetection.jsx`'s "SecurePi Hardware"
 source mode calls them directly.
 
-The exact HTTP server implementation for `/health` and `/video_feed` was **not**
-found inside `edge/securepi/securepi_edge.py` (that script only tracks detections
-and POSTs alerts — see §3.7). The frontend's resolution logic
-(`client/src/utils/securepiStream.js`) and Camera Inventory's placeholder text
-(`http://<pi-ip>:8001/video_feed`) confirm these paths/port are the expected
-contract, but the underlying MJPEG/health server binary/module is provided by the
-upstream `edge/securepi/upstream/` SecurePi project rather than this repository's
-own Node/Python services. Treat the request/response shapes below as the
-**documented contract the frontend relies on**, not as FlowGuard-owned code.
+The maintained camera-only implementation for `/health`, `/video_feed`, and
+`/snapshot` is `raspberry-pi/pi_camera_steam.py` (default port 8081). The
+authoritative `SecurePi_FlowGuard-main` detection runtime posts alerts but does not
+implement this browser-facing MJPEG contract. A runnable historical implementation
+under `edge/securepi/upstream/` also exposes annotated `/health`, `/video_feed`, and
+`/people-count` endpoints (default port 8001), but is retained for compatibility,
+not recommended for new deployments. The frontend resolves configured stream and
+derived health URLs via `client/src/utils/securepiStream.js`; use the selected
+service's configured host and port rather than assuming the placeholder port.
 
 ### GET `http://<pi-ip>:8001/health`
 | | |

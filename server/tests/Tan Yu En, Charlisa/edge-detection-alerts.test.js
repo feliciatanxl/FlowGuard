@@ -149,14 +149,23 @@ describe("POST /api/edge/detection-alerts", () => {
 
   test("incident creation failure rolls back the detection alert (500, shared transaction)", async () => {
     primeCreateMocks();
-    mockIncidentLog.create.mockRejectedValue(new Error("db down"));
-    const res = await request(app)
-      .post("/api/edge/detection-alerts")
-      .set("Authorization", "Bearer test-edge-token")
-      .send(securePiPayload);
-    expect(res.status).toBe(500);
-    expect(mockDetectionAlert.create.mock.calls[0][1]).toEqual({ transaction: mockTx });
-    expect(mockSequelize.transaction).toHaveBeenCalledTimes(1);
+    const dbError = new Error("db down: incident_logs.private_column");
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockIncidentLog.create.mockRejectedValue(dbError);
+    try {
+      const res = await request(app)
+        .post("/api/edge/detection-alerts")
+        .set("Authorization", "Bearer test-edge-token")
+        .send(securePiPayload);
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Unable to process the request.' });
+      expect(JSON.stringify(res.body)).not.toMatch(/private_column|db down/i);
+      expect(log).toHaveBeenCalledWith('Edge detection alert ingestion failed:', dbError);
+      expect(mockDetectionAlert.create.mock.calls[0][1]).toEqual({ transaction: mockTx });
+      expect(mockSequelize.transaction).toHaveBeenCalledTimes(1);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   test("edge-ingested incident is visible through the Incident Dashboard API", async () => {

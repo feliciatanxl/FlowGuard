@@ -164,6 +164,10 @@ on the same network or hotspot. A cloud build with no `VITE_PI_CAMERA_*` URLs pe
 unaffected — the Pi pushes outbound to the authenticated edge route; the cloud never
 reaches into the LAN.
 
+A locally served frontend may still use the deployed backend and its staging database;
+only direct browser-to-Pi camera traffic stays on the local network. Do not expose the
+Pi server's port 8081 publicly without TLS, authentication, and network access control.
+
 ## FM dashboard live data
 
 `GET /api/dashboard/summary` is the single authoritative FM payload (camera totals,

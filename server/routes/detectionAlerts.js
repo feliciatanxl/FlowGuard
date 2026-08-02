@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { sendUnexpectedError } = require('../utils/safeHttpError');
 const { readLimiter } = require('../middlewares/rateLimit');
 router.use(readLimiter); // route-wide rate limiting (trusted AI service POSTs are skipped)
 const { DetectionAlert, IncidentLog, MonitoringZone, Camera, sequelize } = require('../models');
@@ -84,7 +85,7 @@ router.get('/', verifyToken, requireRole('FM', 'Staff'), async (req, res) => {
         });
         res.json(alerts);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert list failed:', err);
     }
 });
 
@@ -96,7 +97,7 @@ router.get('/:id', verifyToken, requireRole('FM', 'Staff'), async (req, res) => 
         if (!alert) return res.sendStatus(404);
         res.json(alert);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert lookup failed:', err);
     }
 });
 
@@ -207,7 +208,7 @@ router.post('/', verifyServiceOrRole('FM', 'Staff'), async (req, res) => {
 
         res.status(201).json(alert);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert creation failed:', err);
     }
 });
 
@@ -264,7 +265,7 @@ router.put('/:id', verifyToken, requireRole('FM', 'Staff'), async (req, res) => 
 
         res.json(alert);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert update failed:', err);
     }
 });
 
@@ -286,7 +287,7 @@ router.delete('/:id', verifyToken, requireRole('FM'), async (req, res) => {
 
         res.sendStatus(200);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert deletion failed:', err);
     }
 });
 

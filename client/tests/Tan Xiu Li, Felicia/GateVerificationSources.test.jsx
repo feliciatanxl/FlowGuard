@@ -11,12 +11,13 @@ const h = vi.hoisted(() => ({
   startCamera: vi.fn(async () => ({ stop: vi.fn() })),
   preloadQrScanner: vi.fn(() => Promise.resolve(true)),
   fetchPiSnapshotBitmap: vi.fn(),
+  recognizePlate: vi.fn(),
   post: vi.fn(),
 }));
 
 vi.mock("axios", () => ({ default: { post: h.post } }));
 vi.mock("../../src/components/Sidebar", () => ({ default: () => <div data-testid="sidebar" /> }));
-vi.mock("../../src/utils/plateOcr", () => ({ recognizePlate: vi.fn() }));
+vi.mock("../../src/utils/plateOcr", () => ({ recognizePlate: h.recognizePlate }));
 vi.mock("../../src/utils/gateCamera", async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -36,6 +37,13 @@ vi.mock("../../src/utils/cameraSource", async (importOriginal) => {
 import GateVerification from "../../src/pages/GateVerification";
 import { SOURCE_LABELS } from "../../src/utils/cameraSource";
 
+const deferred = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+};
+
 const renderPage = () => {
   localStorage.setItem("accessToken", "test-token");
   localStorage.setItem("userRole", "FM");
@@ -46,8 +54,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   h.post.mockResolvedValue({ data: {} });
+  h.recognizePlate.mockResolvedValue({ raw: "GBG 1234 M", normalized: "GBG1234M", confidence: 88 });
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("camera-source selector", () => {
   test("offers Laptop Webcam and Raspberry Pi Camera Module 3", () => {
@@ -76,6 +88,90 @@ describe("webcam path wires the cloud fallback", () => {
       cloudFallbackDelayMs: expect.any(Number),
       onCloudDecode: expect.any(Function),
     }));
+  });
+
+  test("repeated pending QR starts create only one scanner stream", async () => {
+    const pending = deferred();
+    h.startQrScan.mockReturnValueOnce(pending.promise);
+    renderPage();
+    const start = screen.getByRole("button", { name: /Start QR Scanner/i });
+
+    act(() => {
+      fireEvent.click(start);
+      fireEvent.click(start);
+    });
+    expect(h.startQrScan).toHaveBeenCalledTimes(1);
+
+    await act(async () => { pending.resolve(vi.fn()); await pending.promise; });
+  });
+
+  test("QR and plate startup cannot overlap while QR permission is pending", async () => {
+    const pending = deferred();
+    h.startQrScan.mockReturnValueOnce(pending.promise);
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: /Start QR Scanner/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^Start Camera$/i }));
+    expect(h.startQrScan).toHaveBeenCalledTimes(1);
+    expect(h.startCamera).not.toHaveBeenCalled();
+
+    await act(async () => { pending.resolve(vi.fn()); await pending.promise; });
+  });
+
+  test("source switch during a pending QR start aborts and stops the late stream", async () => {
+    const pending = deferred();
+    const lateTrackStop = vi.fn();
+    let startSignal;
+    h.startQrScan.mockImplementationOnce(({ signal }) => {
+      startSignal = signal;
+      return pending.promise;
+    });
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: /Start QR Scanner/i }));
+    fireEvent.click(screen.getByRole("button", { name: SOURCE_LABELS.pi }));
+    expect(startSignal.aborted).toBe(true);
+
+    await act(async () => {
+      pending.resolve(() => lateTrackStop());
+      await pending.promise;
+    });
+    expect(lateTrackStop).toHaveBeenCalledTimes(1);
+  });
+
+  test("unmount during a pending QR start aborts and stops the late stream", async () => {
+    const pending = deferred();
+    const lateTrackStop = vi.fn();
+    let startSignal;
+    h.startQrScan.mockImplementationOnce(({ signal }) => {
+      startSignal = signal;
+      return pending.promise;
+    });
+    const { unmount } = renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: /Start QR Scanner/i }));
+    unmount();
+    expect(startSignal.aborted).toBe(true);
+
+    await act(async () => {
+      pending.resolve(() => lateTrackStop());
+      await pending.promise;
+    });
+    expect(lateTrackStop).toHaveBeenCalledTimes(1);
+  });
+
+  test("unmount after QR startup stops the active scanner stream", async () => {
+    const stopActiveStream = vi.fn();
+    h.startQrScan.mockResolvedValueOnce(stopActiveStream);
+    const { unmount } = renderPage();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Start QR Scanner/i }));
+    });
+    expect(stopActiveStream).not.toHaveBeenCalled();
+
+    unmount();
+    expect(stopActiveStream).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -114,5 +210,79 @@ describe("Raspberry Pi Camera Module 3 snapshot path", () => {
     // (non-exception) message is shown.
     expect(screen.getByRole("button", { name: /Start QR Scanner/i })).toBeTruthy();
     expect(screen.getByText(/Raspberry Pi Camera Module 3 is unreachable/i)).toBeTruthy();
+  });
+
+  test("a stale Pi decode result cannot update the selected source or booking", async () => {
+    const close = vi.fn();
+    const decode = deferred();
+    h.fetchPiSnapshotBitmap.mockResolvedValue({ width: 200, height: 150, close });
+    const realCreate = document.createElement.bind(document);
+    vi.spyOn(document, "createElement").mockImplementation((tag) =>
+      tag === "canvas"
+        ? { width: 0, height: 0, getContext: () => ({ drawImage: vi.fn() }), toDataURL: () => "data:image/jpeg;base64,UGk=" }
+        : realCreate(tag)
+    );
+    h.post.mockReturnValueOnce(decode.promise);
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: SOURCE_LABELS.pi }));
+    fireEvent.click(screen.getByRole("button", { name: /Capture QR from Raspberry Pi Camera Module 3/i }));
+    await act(async () => { await Promise.resolve(); });
+    expect(h.post).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: SOURCE_LABELS.webcam }));
+
+    await act(async () => {
+      decode.resolve({ data: { success: true, bookingRef: "FG-STALE1" } });
+      await decode.promise;
+    });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("Booking reference").value).toBe("");
+    expect(screen.getByRole("button", { name: /Start QR Scanner/i })).toBeTruthy();
+  });
+
+  test("a stale pending Pi snapshot is closed without starting decode", async () => {
+    const snapshot = deferred();
+    const close = vi.fn();
+    h.fetchPiSnapshotBitmap.mockReturnValueOnce(snapshot.promise);
+    const realCreate = document.createElement.bind(document);
+    vi.spyOn(document, "createElement").mockImplementation((tag) =>
+      tag === "canvas"
+        ? { width: 0, height: 0, getContext: () => ({ drawImage: vi.fn() }), toDataURL: () => "data:image/jpeg;base64,UGk=" }
+        : realCreate(tag)
+    );
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: SOURCE_LABELS.pi }));
+    fireEvent.click(screen.getByRole("button", { name: /Capture QR from Raspberry Pi Camera Module 3/i }));
+    fireEvent.click(screen.getByRole("button", { name: SOURCE_LABELS.webcam }));
+
+    await act(async () => {
+      snapshot.resolve({ width: 200, height: 150, close });
+      await snapshot.promise;
+    });
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(h.post).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Booking reference").value).toBe("");
+  });
+
+  test("Pi plate bitmap closes even when OCR throws", async () => {
+    const close = vi.fn();
+    h.fetchPiSnapshotBitmap.mockResolvedValue({ width: 200, height: 150, close });
+    h.recognizePlate.mockRejectedValueOnce(new Error("OCR failed safely"));
+    const realCreate = document.createElement.bind(document);
+    vi.spyOn(document, "createElement").mockImplementation((tag) =>
+      tag === "canvas"
+        ? { width: 0, height: 0, getContext: () => ({ drawImage: vi.fn() }) }
+        : realCreate(tag)
+    );
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: /Plate camera source: Raspberry Pi Camera Module 3/i }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Capture Plate from Raspberry Pi Camera Module 3/i }));
+    });
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText(/OCR failed safely/i)).toBeTruthy();
   });
 });

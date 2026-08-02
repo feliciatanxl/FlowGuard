@@ -1,0 +1,6 @@
+ultralytics
+onnx
+onnxruntime
+fiftyone
+imx500-converter
+Pillow==10.4.0

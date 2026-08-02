@@ -168,15 +168,23 @@ export async function resolvePreferredCameraSource(now = Date.now()) {
  */
 export async function capturePiSnapshotCanvas() {
   const bitmap = await fetchPiSnapshotBitmap();
+  return drawBitmapToCanvasAndClose(bitmap, document.createElement('canvas'));
+}
+
+/**
+ * Draw an ImageBitmap into an in-memory canvas and always release the bitmap.
+ * Callers may supply maxWidth for a scaled capture. This helper deliberately
+ * owns closing the bitmap so draw/canvas failures cannot leak native resources.
+ */
+export function drawBitmapToCanvasAndClose(bitmap, canvas, { maxWidth } = {}) {
   try {
-    const canvas = document.createElement('canvas');
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
+    const scale = maxWidth ? Math.min(1, maxWidth / bitmap.width) : 1;
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
     const ctx = canvas.getContext('2d');
-    if (ctx) ctx.drawImage(bitmap, 0, 0);
+    if (ctx) ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     return canvas;
   } finally {
-    // Always release the bitmap, whether the draw succeeded or threw.
     try { bitmap.close?.(); } catch { /* ignore */ }
   }
 }
@@ -290,9 +298,16 @@ export function logTrackSettings(stream, label = 'webcam') {
  *
  * @returns {Promise<{ stream: MediaStream, stop: () => void, settings: object }>}
  */
-export async function startWebcamStream(videoElement, constraints = QR_WEBCAM_CONSTRAINTS) {
+export async function startWebcamStream(videoElement, constraints = QR_WEBCAM_CONSTRAINTS, { signal } = {}) {
   if (!isSecureCameraContext()) throw makeCameraError('insecure');
   if (!isCameraSupported()) throw makeCameraError('unsupported');
+
+  const cancelled = () => {
+    const err = new Error('Camera start cancelled.');
+    err.code = 'aborted';
+    return err;
+  };
+  if (signal?.aborted) throw cancelled();
 
   let stream;
   try {
@@ -300,6 +315,20 @@ export async function startWebcamStream(videoElement, constraints = QR_WEBCAM_CO
   } catch (e) {
     throw mapGetUserMediaError(e);
   }
+
+  // getUserMedia itself is not abortable. If the page changed source or
+  // unmounted while the permission prompt was open, release the late stream
+  // before it can be attached to the video element.
+  if (signal?.aborted) {
+    stopStream(null, stream);
+    throw cancelled();
+  }
+
+  const stop = () => {
+    signal?.removeEventListener?.('abort', stop);
+    stopStream(videoElement, stream);
+  };
+  signal?.addEventListener?.('abort', stop, { once: true });
 
   if (videoElement) {
     videoElement.srcObject = stream;
@@ -310,7 +339,7 @@ export async function startWebcamStream(videoElement, constraints = QR_WEBCAM_CO
   const settings = stream.getVideoTracks?.()[0]?.getSettings?.() || {};
   return {
     stream,
-    stop: () => stopStream(videoElement, stream),
+    stop,
     settings,
   };
 }

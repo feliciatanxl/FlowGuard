@@ -287,16 +287,25 @@ describe("POST /api/detection-alerts (AI engine service key)", () => {
 
   test("incident creation failure rolls back: 500 and both creates share the transaction", async () => {
     primeCreateMocks();
-    mockIncidentLog.create.mockRejectedValue(new Error("db down"));
-    const res = await request(app)
-      .post("/api/detection-alerts")
-      .set("x-service-key", "test-service-key")
-      .send(alertPayload);
-    expect(res.status).toBe(500);
-    // The alert create ran inside the SAME transaction that the failure aborts,
-    // so the detection alert cannot survive the incident failure.
-    expect(mockDetectionAlert.create.mock.calls[0][1]).toEqual({ transaction: mockTx });
-    expect(mockSequelize.transaction).toHaveBeenCalledTimes(1);
+    const dbError = new Error("db down: detection_alerts.secret_column");
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockIncidentLog.create.mockRejectedValue(dbError);
+    try {
+      const res = await request(app)
+        .post("/api/detection-alerts")
+        .set("x-service-key", "test-service-key")
+        .send(alertPayload);
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Unable to process the request.' });
+      expect(JSON.stringify(res.body)).not.toMatch(/secret_column|db down/i);
+      expect(log).toHaveBeenCalledWith('Detection alert creation failed:', dbError);
+      // The alert create ran inside the SAME transaction that the failure aborts,
+      // so the detection alert cannot survive the incident failure.
+      expect(mockDetectionAlert.create.mock.calls[0][1]).toEqual({ transaction: mockTx });
+      expect(mockSequelize.transaction).toHaveBeenCalledTimes(1);
+    } finally {
+      log.mockRestore();
+    }
   });
 });
 

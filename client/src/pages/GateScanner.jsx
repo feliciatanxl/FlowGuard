@@ -36,6 +36,7 @@ import {
   CHALLENGE_STATE,
   LIVENESS_BASELINE_SAMPLES,
 } from '../constants/liveness';
+import { drawBitmapToCanvasAndClose } from '../utils/cameraSource';
 
 // Pi snapshot failures must persist this long before the page falls back to
 // the laptop webcam (time-based so the fast tracking loop cannot trip it on a
@@ -321,11 +322,7 @@ const GateScanner = () => {
         }
         return null;
       }
-      const scale = Math.min(1, maxWidth / bitmap.width);
-      canvas.width = Math.round(bitmap.width * scale);
-      canvas.height = Math.round(bitmap.height * scale);
-      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      bitmap.close?.();
+      drawBitmapToCanvasAndClose(bitmap, canvas, { maxWidth });
       return canvas.toDataURL('image/jpeg', quality);
     }
 
