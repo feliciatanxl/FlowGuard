@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs');
 const path = require('path');
-const { randomUUID } = require('crypto');
 const multer = require('multer');
 const { aiProxyLimiter } = require('../middlewares/rateLimit');
 router.use(aiProxyLimiter); // high-frequency edge ingest — generous per-client policy
@@ -11,6 +10,10 @@ const { Op } = require('sequelize');
 const { resolveIncidentType } = require('../utils/detectionAlertBridge');
 const whatsapp = require('../services/whatsappService');
 const { sendUnexpectedError } = require('../utils/safeHttpError');
+const {
+    ensureSnapshotDirectory,
+    generateSnapshotDestination,
+} = require('../utils/detectionSnapshotStorage');
 
 const PUBLIC_NOTIFICATION_ERROR = 'Notification delivery failed.';
 
@@ -64,13 +67,7 @@ const configuredSnapshotMaxBytes = Number(process.env.DETECTION_SNAPSHOT_MAX_BYT
 const SNAPSHOT_MAX_BYTES = Number.isFinite(configuredSnapshotMaxBytes) && configuredSnapshotMaxBytes > 0
     ? configuredSnapshotMaxBytes
     : 5 * 1024 * 1024;
-const SNAPSHOT_DIR = path.resolve(
-    process.env.DETECTION_SNAPSHOT_DIR || path.join(__dirname, '..', 'uploads', 'detection-snapshots')
-);
 const JPEG_MIME_TYPES = new Set(['image/jpeg', 'image/jpg']);
-const GENERATED_SNAPSHOT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.jpg$/i;
-
-fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
 
 const validateSnapshotFilename = (originalName) => {
     const raw = String(originalName || '');
@@ -174,18 +171,6 @@ const parseOccurredAt = (value) => {
 
 const snapshotUrlFor = (alertId, filename) => `/api/detection-alerts/${alertId}/snapshot/${filename}`;
 
-const generateSnapshotDestination = () => {
-    const filename = `${randomUUID()}.jpg`;
-    if (!GENERATED_SNAPSHOT_RE.test(filename)) {
-        throw new Error('Could not generate a safe snapshot filename.');
-    }
-    const destination = path.resolve(SNAPSHOT_DIR, filename);
-    if (destination === SNAPSHOT_DIR || !destination.startsWith(`${SNAPSHOT_DIR}${path.sep}`)) {
-        throw new Error('Generated snapshot destination escaped the configured directory.');
-    }
-    return { filename, destination };
-};
-
 const persistUploadedSnapshot = async (alert, file) => {
     if (!file?.buffer || !alert?.id) return null;
     const { filename, destination } = generateSnapshotDestination();
@@ -193,6 +178,7 @@ const persistUploadedSnapshot = async (alert, file) => {
     let fileHandle = null;
     let createdFile = false;
     try {
+        await ensureSnapshotDirectory();
         fileHandle = await fs.promises.open(destination, 'wx', 0o600);
         createdFile = true;
         await fileHandle.writeFile(file.buffer);
