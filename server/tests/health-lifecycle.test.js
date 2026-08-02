@@ -1,6 +1,7 @@
 const express = require('express');
 const request = require('supertest');
 const { createHealthRouter } = require('../routes/health');
+const { healthPolicy } = require('../middlewares/rateLimit');
 const {
   createReadinessState,
   initializeDatabase,
@@ -10,6 +11,7 @@ const {
 describe('backend liveness and readiness', () => {
   const buildApp = ({ sequelize, readiness, logger = console }) => {
     const app = express();
+    app.set('trust proxy', 1);
     app.use('/health', createHealthRouter({ sequelize, readiness, logger }));
     return app;
   };
@@ -54,6 +56,28 @@ describe('backend liveness and readiness', () => {
     expect(res.body).toEqual({ status: 'not_ready', database: false });
     expect(JSON.stringify(res.body)).not.toMatch(/password|staging-secret-host/i);
     expect(logger.error).toHaveBeenCalledWith('Readiness database check failed:', dbError);
+  });
+
+  test('normal probes have generous headroom, then receive a stable 429 when abusive', async () => {
+    const readiness = createReadinessState();
+    readiness.markReady();
+    const authenticate = jest.fn().mockResolvedValue();
+    const app = buildApp({ sequelize: { authenticate }, readiness });
+    const probeIp = '203.0.113.77';
+
+    // Both public endpoints deliberately share the dedicated health bucket. The
+    // default 120/min allows ordinary Cloud Run polling with substantial headroom.
+    for (let index = 0; index < healthPolicy.max; index += 1) {
+      const endpoint = index % 2 === 0 ? '/health/live' : '/health/ready';
+      const res = await request(app).get(endpoint).set('X-Forwarded-For', probeIp);
+      expect(res.status).toBe(200);
+    }
+
+    const blocked = await request(app).get('/health/ready').set('X-Forwarded-For', probeIp);
+    expect(blocked.status).toBe(429);
+    expect(blocked.body).toEqual({ message: 'Too many requests. Please try again later.' });
+    expect(JSON.stringify(blocked.body)).not.toMatch(/database|schema|secret|password|203\.0\.113\.77/i);
+    expect(blocked.headers['retry-after']).toBeDefined();
   });
 });
 

@@ -19,6 +19,14 @@ const VALID_STATUSES = ['Active', 'Acknowledged', 'Investigating', 'Dispatched',
 const SNAPSHOT_DIR = path.resolve(
     process.env.DETECTION_SNAPSHOT_DIR || path.join(__dirname, '..', 'uploads', 'detection-snapshots')
 );
+const GENERATED_SNAPSHOT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.jpg$/i;
+
+const resolveStoredSnapshotPath = (filename) => {
+    if (!GENERATED_SNAPSHOT_RE.test(filename)) return null;
+    const resolved = path.resolve(SNAPSHOT_DIR, filename);
+    if (resolved === SNAPSHOT_DIR || !resolved.startsWith(`${SNAPSHOT_DIR}${path.sep}`)) return null;
+    return resolved;
+};
 
 // This route is reachable by the AI engine's service key AND by an FM/Staff JWT — never
 // by the SecurePi edge device (that's the dedicated EDGE_INGEST_TOKEN route in
@@ -108,16 +116,22 @@ router.get('/:id', verifyToken, requireRole('FM', 'Staff'), async (req, res) => 
 router.get('/:id/snapshot/:filename', verifyToken, requireRole('FM', 'Staff'), async (req, res) => {
     try {
         if (!/^\d+$/.test(req.params.id)) return res.sendStatus(404);
-        const filename = path.basename(req.params.filename || '');
-        if (!filename || filename !== req.params.filename) return res.sendStatus(404);
+        const requestedFilename = String(req.params.filename || '');
+        if (!GENERATED_SNAPSHOT_RE.test(requestedFilename)) return res.sendStatus(404);
 
         const alert = await DetectionAlert.findByPk(req.params.id);
-        if (!alert || alert.snapshot_url !== `/api/detection-alerts/${req.params.id}/snapshot/${filename}`) {
+        const expectedPrefix = `/api/detection-alerts/${req.params.id}/snapshot/`;
+        if (!alert || typeof alert.snapshot_url !== 'string' || !alert.snapshot_url.startsWith(expectedPrefix)) {
             return res.sendStatus(404);
         }
 
-        const filePath = path.resolve(SNAPSHOT_DIR, filename);
-        if (!filePath.startsWith(`${SNAPSHOT_DIR}${path.sep}`)) return res.sendStatus(404);
+        // The filesystem component is recovered from the server-generated URL stored
+        // in the database, then independently UUID-validated and containment-checked.
+        // req.params.filename is used only to authorize that exact stored resource.
+        const storedFilename = alert.snapshot_url.slice(expectedPrefix.length);
+        if (storedFilename !== requestedFilename) return res.sendStatus(404);
+        const filePath = resolveStoredSnapshotPath(storedFilename);
+        if (!filePath) return res.sendStatus(404);
         return res.sendFile(filePath, { headers: { 'Content-Type': 'image/jpeg' } }, (err) => {
             if (err && !res.headersSent) res.sendStatus(err.statusCode || 404);
         });

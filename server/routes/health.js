@@ -1,11 +1,12 @@
 const express = require('express');
+const { healthLimiter } = require('../middlewares/rateLimit');
 
 const createHealthRouter = ({ sequelize, readiness, logger = console }) => {
   const router = express.Router();
 
-  router.get('/live', (req, res) => res.json({ status: 'live' }));
+  router.get('/live', healthLimiter, (req, res) => res.json({ status: 'live' }));
 
-  router.get('/ready', async (req, res) => {
+  router.get('/ready', healthLimiter, async (req, res) => {
     if (!readiness?.isReady?.()) {
       return res.status(503).json({ status: 'not_ready', database: false });
     }
