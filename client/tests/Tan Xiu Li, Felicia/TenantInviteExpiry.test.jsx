@@ -1,5 +1,4 @@
 // Tenant Onboarding — pending-invite expiry countdown and status handling.
-import React from "react";
 import { render, screen, act, cleanup } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
@@ -9,10 +8,11 @@ vi.mock("../../src/components/Sidebar", () => ({ default: () => <div data-testid
 const mockAxios = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 vi.mock("axios", () => ({ default: mockAxios }));
 
-import TenantManagement, {
+import TenantManagement from "../../src/pages/TenantManagement";
+import {
   formatRemainingDuration,
   deriveInviteStatus,
-} from "../../src/pages/TenantManagement";
+} from "../../src/utils/inviteStatus";
 
 const HOUR = 60 * 60 * 1000;
 const MINUTE = 60 * 1000;

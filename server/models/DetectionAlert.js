@@ -71,6 +71,32 @@ module.exports = (sequelize, DataTypes) => {
         incident_log_id: {
             type: DataTypes.INTEGER,
             allowNull: true
+        },
+        // Stable identifier for a single EDGE-DEVICE detection occurrence (SecurePi
+        // sends the same value on Wi-Fi retries). Unique when non-null so a retried
+        // event never creates a second alert; browser/AI-engine alerts leave it null
+        // (Postgres treats NULLs as distinct, so many null rows coexist). This is the
+        // idempotency key — see routes/edgeDetectionAlerts.js.
+        edge_event_id: {
+            type: DataTypes.STRING(255),
+            allowNull: true,
+            unique: true
+        },
+        // Security-alert WhatsApp notification tracking. Strings (not a DB enum) so the
+        // set can grow without a schema migration; the route is the source of truth for
+        // the allowed values: Not Requested | Pending | Sent | Failed | Skipped | Simulated.
+        whatsapp_status: {
+            type: DataTypes.STRING(20),
+            allowNull: false,
+            defaultValue: 'Not Requested'
+        },
+        whatsapp_sent_at: {
+            type: DataTypes.DATE,
+            allowNull: true
+        },
+        whatsapp_error: {
+            type: DataTypes.TEXT,
+            allowNull: true
         }
     }, {
         tableName: 'detection_alerts',

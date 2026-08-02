@@ -1,6 +1,5 @@
 // Frontend tests — route protection for facial/access pages (Felicia)
 // Verifies unauthenticated and non-FM users cannot reach protected content.
-import React from "react";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, test, expect, beforeEach } from "vitest";

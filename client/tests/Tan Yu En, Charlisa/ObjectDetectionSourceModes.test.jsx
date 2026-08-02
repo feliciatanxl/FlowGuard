@@ -47,6 +47,15 @@ const NO_STREAM_CAMERA = {
 
 const trackStop = vi.fn();
 const getUserMedia = vi.fn();
+const deferred = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
 
 let axios;
 let ObjectDetection;
@@ -243,6 +252,22 @@ describe('SecurePi Hardware mode - live people count', () => {
 });
 
 describe('Browser Camera mode', () => {
+  test('stops a late MediaStream that resolves after switching to SecurePi hardware', async () => {
+    const pendingStream = deferred();
+    getUserMedia.mockReturnValueOnce(pendingStream.promise);
+    mockBackend([SECUREPI_CAMERA]);
+    renderPage();
+
+    await screen.findByRole('option', { name: /CAM-SECUREPI-01/ });
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'SecurePi Hardware' }));
+    await screen.findByAltText('SecurePi live hardware camera');
+
+    pendingStream.resolve({ getTracks: () => [{ stop: trackStop }] });
+    await waitFor(() => expect(trackStop).toHaveBeenCalledTimes(1));
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+  });
+
   test('acquires the webcam by default and stops all tracks when switching to hardware', async () => {
     mockBackend([SECUREPI_CAMERA]);
     renderPage();

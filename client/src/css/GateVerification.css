@@ -35,6 +35,9 @@
 }
 .gate-seg.active { background: #2563eb; color: #fff; }
 .gate-seg:not(.active):hover { color: #e2e8f0; }
+/* Keyboard focus is always a visible ring — never the raw white browser rectangle,
+   and never removed. */
+.gate-seg:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
 
 /* --- Mode tabs --- */
 .gate-tabs {
@@ -55,15 +58,19 @@
 }
 .gate-tab.active { color: #60a5fa; border-bottom-color: #2563eb; }
 .gate-tab:not(.active):hover { color: #e2e8f0; }
+.gate-tab:focus-visible { outline: 2px solid #60a5fa; outline-offset: -2px; border-radius: 6px; }
 
-/* --- Two-column layout --- */
+/* --- Two-column layout ---
+   Stacks EARLY (≤1280px) so on a 1024–1280px laptop with the 320px sidebar the
+   capture and decision panels never clip or squeeze — the decision card drops below
+   the form instead. minmax(0, …) columns prevent horizontal overflow of wide content. */
 .gate-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
   gap: 20px;
   align-items: start;
 }
-@media (max-width: 960px) {
+@media (max-width: 1280px) {
   .gate-grid { grid-template-columns: 1fr; }
 }
 .gate-panel {
@@ -195,8 +202,13 @@
 
 .gate-verify-btn { width: 100%; margin-top: 4px; }
 
-/* --- Decision panel --- */
-.gate-decision-panel { position: sticky; top: 16px; }
+/* --- Decision panel ---
+   Sticky ONLY when there is enough horizontal room for the two-column layout; once the
+   grid stacks (≤1280px) the decision card is a normal block below the form. */
+.gate-decision-panel { position: static; }
+@media (min-width: 1281px) {
+  .gate-decision-panel { position: sticky; top: 16px; }
+}
 .gate-decision-empty { color: #64748b; padding: 24px 8px; text-align: center; }
 
 .gate-decision { border-radius: 12px; padding: 16px; border: 1px solid; }
@@ -348,3 +360,110 @@
   font-size: 0.8rem;
 }
 .gate-diag-list code { color: #7dd3fc; }
+
+/* --- Compact camera-source status card (primary / fallback / connection state) --- */
+.gate-source-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin: 4px 0 14px;
+}
+.gate-source-card-main { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.gate-source-dot {
+  width: 12px; height: 12px; border-radius: 999px; flex: none;
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.15);
+}
+.gate-source-dot.ok { background: #34d399; box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18); }
+.gate-source-dot.checking { background: #fbbf24; box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18); }
+.gate-source-dot.fallback { background: #94a3b8; }
+.gate-source-status { margin: 0; color: #e2e8f0; font-weight: 600; font-size: 0.9rem; }
+.gate-source-detail { margin: 2px 0 0; color: #94a3b8; font-size: 0.78rem; }
+.gate-source-detail strong { color: #cbd5e1; font-weight: 600; }
+.gate-source-sep { margin: 0 6px; color: #475569; }
+.gate-source-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.gate-source-chip {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #93c5fd;
+  background: #1d4ed822;
+  border: 1px solid #3b82f655;
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+.gate-source-provenance { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 2px; }
+
+/* Source selector focus ring (keyboard visible; never a white browser rectangle). */
+.gate-source-btn:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+
+.gate-submit-error { margin: 12px 0; }
+
+/* --- Manual Verification — polished dark card (Section 5) --- */
+.gate-manual-card { padding: 2px; }
+.gate-manual-head { margin-bottom: 16px; }
+.gate-manual-head h3 { margin: 0 0 6px; }
+
+/* Responsive field grid: two columns on wide, one column when the panel narrows. */
+.gate-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 18px;
+}
+@media (max-width: 640px) {
+  .gate-field-grid { grid-template-columns: 1fr; }
+}
+.gate-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.gate-field > label { color: #cbd5e1; font-size: 0.85rem; font-weight: 600; }
+.gate-req { color: #f87171; margin-left: 2px; }
+
+/* Dark styled inputs with explicit hover / focus / disabled / error states. */
+.gate-input {
+  width: 100%;
+  background: #0b1220;
+  border: 1px solid #334155;
+  border-radius: 9px;
+  color: #e2e8f0;
+  padding: 11px 13px;
+  font-size: 0.92rem;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.gate-input::placeholder { color: #475569; }
+.gate-input:hover:not(:disabled) { border-color: #475569; background: #0d1526; }
+.gate-input:focus,
+.gate-input:focus-visible {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+  background: #0d1526;
+}
+.gate-input:disabled { opacity: 0.55; cursor: not-allowed; }
+/* Plate is shown uppercased for readability; submission still normalises separately. */
+.gate-input-plate { text-transform: uppercase; letter-spacing: 0.04em; }
+
+.gate-field.has-error .gate-input {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+}
+.gate-field-hint { color: #64748b; font-size: 0.74rem; }
+.gate-field-error { color: #fca5a5; font-size: 0.76rem; margin: 0; }
+
+/* Loading spinner shown inside the Verify button while a decision is in flight. */
+.gate-spinner {
+  display: inline-block;
+  width: 13px; height: 13px;
+  margin-right: 8px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 999px;
+  vertical-align: -1px;
+  animation: gate-spin 0.7s linear infinite;
+}
+@keyframes gate-spin { to { transform: rotate(360deg); } }
+.gate-verify-btn:disabled { opacity: 0.55; cursor: not-allowed; }

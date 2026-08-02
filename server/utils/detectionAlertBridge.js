@@ -12,19 +12,27 @@
 //
 // Only values the Incident Dashboard's own "Log Incident" dropdown already understands
 // (client/src/pages/IncidentDashboard.jsx) are ever returned.
-const INCIDENT_TYPE_BY_DETECTION_TYPE = {
-    unattended_object: 'UNATTENDED_OBJECT',
-    crowd_density: 'OVERCROWDING',
-    unauthorized_access: 'UNAUTHORIZED_ACCESS',
-};
+//
+// INCIDENT_TYPE_BY_DETECTION_TYPE and DEFAULT_DETECTION_TYPE come from
+// ../config/detectionTypes, the backend's single source of truth for detection_type
+// values (shared with routes/zones.js). The mapping is imported ONCE here — it must not
+// be redeclared locally. It includes the SecurePi edge types PEST_DETECTION /
+// RESTRICTED_MOTION / FORGOTTEN_BELONGING / ITEM_MOVEMENT, which the Incident Dashboard's
+// "Log Incident" dropdown (client/src/pages/IncidentDashboard.jsx) also understands.
+const { INCIDENT_TYPE_BY_DETECTION_TYPE, DEFAULT_DETECTION_TYPE } = require('../config/detectionTypes');
 
-const DEFAULT_INCIDENT_TYPE = 'UNATTENDED_OBJECT';
+const DEFAULT_INCIDENT_TYPE = INCIDENT_TYPE_BY_DETECTION_TYPE[DEFAULT_DETECTION_TYPE];
 
 // Resolves the IncidentLog type for a detection alert. Prefers an explicit
 // Detection Setup detection_type (zone.detection_type) when the caller has one on
 // hand; otherwise falls back to reading the alert's own alert_type/object_class text,
 // since most detection alerts (AI-engine person-count/unattended-object alerts) don't
 // carry an explicit detection_type today.
+//
+// Text-fallback ORDER matters and is deliberate: the specific edge categories (pest,
+// restricted-zone motion, forgotten belonging, item movement) are matched BEFORE the
+// generic person/crowd heuristic so a pest sighting or after-hours motion event is
+// never mislabeled as OVERCROWDING or collapsed into UNATTENDED_OBJECT.
 function resolveIncidentType({ alert_type, object_class, detection_type } = {}) {
     if (detection_type && INCIDENT_TYPE_BY_DETECTION_TYPE[detection_type]) {
         return INCIDENT_TYPE_BY_DETECTION_TYPE[detection_type];
@@ -34,6 +42,23 @@ function resolveIncidentType({ alert_type, object_class, detection_type } = {}) 
 
     if (/unauthorized/.test(haystack)) {
         return 'UNAUTHORIZED_ACCESS';
+    }
+    // Pests: rat/mouse/rodent/pest as whole words (never a substring of another word).
+    if (/\b(rat|mouse|mice|rodent|pest)\b/.test(haystack)) {
+        return 'PEST_DETECTION';
+    }
+    // Restricted-zone / after-hours / night MOTION (needs both the qualifier and motion,
+    // or the explicit "restricted-zone" phrase) so ordinary motion isn't over-flagged.
+    if ((/motion/.test(haystack) && /(restricted|after[-\s]?hours|night)/.test(haystack)) || /restricted[-\s]?zone/.test(haystack)) {
+        return 'RESTRICTED_MOTION';
+    }
+    // Forgotten belongings: "forgotten"/"belonging", or a laptop/item explicitly "left".
+    if (/forgotten|belonging/.test(haystack) || /\b(laptop|item|bag)\s+left\b/.test(haystack)) {
+        return 'FORGOTTEN_BELONGING';
+    }
+    // Item movement: picked up / set down / item moved.
+    if (/picked up|set down|item moved|item movement/.test(haystack)) {
+        return 'ITEM_MOVEMENT';
     }
     // Person/crowd-count alerts read like "Critical: Person Detected" or
     // "Warning: 3 People Detected" (see ai-service/main.py::_maybe_fire_person_alert).

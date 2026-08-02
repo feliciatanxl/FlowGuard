@@ -1,4 +1,3 @@
-import React from 'react';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import ReportProblemIcon from '@mui/icons-material/ReportProblem';
 import BlockIcon from '@mui/icons-material/Block';
@@ -28,7 +27,7 @@ const TYPE_ICONS = {
   'System Offline': WarningAmberIcon
 };
 
-export const resolveSecurityLogIcon = (log = {}) => {
+const resolveSecurityLogIcon = (log = {}) => {
   const token = String(log.icon || '').trim().toUpperCase();
   if (TOKEN_ICONS[token]) return TOKEN_ICONS[token];
   if (TYPE_ICONS[log.type]) return TYPE_ICONS[log.type];

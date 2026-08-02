@@ -2,7 +2,6 @@
 // Covers: page renders, Pi-primary camera source with webcam fallback, manual
 // upload validation, submit hits the correct backend endpoint, and missing
 // required images blocks submission.
-import React from "react";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { vi, describe, test, expect, beforeEach, afterEach } from "vitest";

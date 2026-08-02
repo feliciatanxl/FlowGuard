@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
@@ -230,7 +230,7 @@ const IncidentDashboard = () => {
   // On mount: fetch from DB (no seed — live AI data only)
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    fetchIncidents();
+    (async () => { await fetchIncidents(); })();
   }, [fetchIncidents]);
 
   // ---------------------------------------------------------------------------
@@ -784,6 +784,11 @@ const IncidentDashboard = () => {
                       <option value="OVERCROWDING">Overcrowding</option>
                       <option value="LOITERING">Loitering</option>
                       <option value="AUTHORIZED_ACCESS">Authorized Access (Flagged)</option>
+                      {/* SecurePi / edge detection categories (see detectionAlertBridge.js) */}
+                      <option value="PEST_DETECTION">Pest Detection</option>
+                      <option value="RESTRICTED_MOTION">Restricted-Zone Motion</option>
+                      <option value="FORGOTTEN_BELONGING">Forgotten Belonging</option>
+                      <option value="ITEM_MOVEMENT">Item Movement</option>
                     </select>
                   </div>
 

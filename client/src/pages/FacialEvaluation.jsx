@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
-import RecognitionDecisionCard, { DECISION_STATES } from '../components/RecognitionDecisionCard';
+import RecognitionDecisionCard from '../components/RecognitionDecisionCard';
+import { DECISION_STATES } from '../constants/recognitionDecision';
 import ImageBasedEvaluation from '../components/ImageBasedEvaluation';
 import useEvaluationParticipants from '../hooks/useEvaluationParticipants';
 import '../css/Dashboard.css';
@@ -15,12 +16,9 @@ import {
   ENROLLED_LABELS,
   IDENTITY_LABELS,
   NO_FACE,
-  UNKNOWN_LABEL,
   CONDITIONS,
   SOURCES,
   ORIGINS,
-  EVAL_STORAGE_KEY,
-  EVAL_LABEL_MAP_KEY,
   SIM_USERS_KEY,
   DETECTION_OUTCOMES,
   loadRecords,
@@ -30,10 +28,6 @@ import {
   computeConfusionMatrix,
   toCsv,
   loadLabelMap,
-  saveLabelMap,
-  assignLabel,
-  removeMappedUser,
-  labelForUserId,
   loadSimUsers,
   saveSimUsers,
   buildEvaluationDraftFromRecognition,
@@ -44,6 +38,7 @@ import {
 
 const formatPct = (v) => `${(v * 100).toFixed(1)}%`;
 const nowIso = () => new Date().toISOString();
+const createSimParticipantId = () => `SIM-${Date.now().toString(36)}`;
 
 const TABS = ['overview', 'live', 'records', 'sim'];
 const ORIENTATIONS = ['Front', 'Left Angle', 'Right Angle'];
@@ -112,10 +107,7 @@ const FacialEvaluation = () => {
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState({});
 
-  const [labelMap, setLabelMap] = useState(() => loadLabelMap());
-  const [enrolledUsers, setEnrolledUsers] = useState([]);
-  const [mappingDraft, setMappingDraft] = useState({ userId: '', label: 'P01' });
-  const [mappingError, setMappingError] = useState('');
+  const [labelMap] = useState(() => loadLabelMap());
 
   const [liveInput, setLiveInput] = useState({ actualLabel: '', condition: 'Front', notes: '' });
   const [liveResult, setLiveResult] = useState(null);
@@ -127,6 +119,8 @@ const FacialEvaluation = () => {
   const [uploadFrame, setUploadFrame] = useState(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const webcamStreamRef = useRef(null);
+  const cameraSessionRef = useRef(0);
 
   const [lastResult, setLastResult] = useState(null);
   const [simCondition, setSimCondition] = useState('Front');
@@ -145,7 +139,7 @@ const FacialEvaluation = () => {
   const token = localStorage.getItem('accessToken');
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [clearAccessToo, setClearAccessToo] = useState(false);
-  const { participants: evaluationParticipants, eligibleParticipants, labels: participantLabels, namesByLabel, reload: reloadParticipants } = useEvaluationParticipants();
+  const { participants: evaluationParticipants, eligibleParticipants, labels: participantLabels, reload: reloadParticipants } = useEvaluationParticipants();
 
   // Explicit FM-controlled backfill only — never triggered on page load.
   const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
@@ -178,13 +172,20 @@ const FacialEvaluation = () => {
     saveRecords(clean);
     notifyEvaluationRecordsUpdated();
   };
-  const persistMap = (next) => { setLabelMap(next); saveLabelMap(next); };
   const persistSimUsers = (next) => { setSimUsers(next); saveSimUsers(next); };
 
   useEffect(() => () => {
     if (uploadPreviewUrl) URL.revokeObjectURL(uploadPreviewUrl);
-    stopWebcam();
   }, [uploadPreviewUrl]);
+
+  // A camera permission prompt may resolve after navigation. Invalidate it
+  // and release the owned stream without relying on the detached video node.
+  useEffect(() => () => {
+    cameraSessionRef.current += 1;
+    const stream = webcamStreamRef.current;
+    webcamStreamRef.current = null;
+    stream?.getTracks().forEach((track) => track.stop());
+  }, []);
 
   // Temporary wizard upload preview: object URL only, revoked on
   // replacement/unmount — image data is never stored or sent anywhere.
@@ -192,29 +193,12 @@ const FacialEvaluation = () => {
     if (wizardUploadUrl) URL.revokeObjectURL(wizardUploadUrl);
   }, [wizardUploadUrl]);
 
-  const loadEnrolledUsers = async () => {
-    setMappingError('');
-    try {
-      const res = await axios.get(`${API_BASE_URL}/user`, { headers: { Authorization: `Bearer ${token}` } });
-      setEnrolledUsers((Array.isArray(res.data) ? res.data : []).filter((u) => u.isEnrolled));
-    } catch {
-      setMappingError('Could not load enrolled users. Check FM access and server availability.');
-    }
-  };
-
-  const saveMapping = () => {
-    try {
-      const next = assignLabel(labelMap, mappingDraft.userId, mappingDraft.label);
-      persistMap(next);
-      setMappingError('');
-    } catch (err) {
-      setMappingError(err.message);
-    }
-  };
-
   const initLiveCamera = async () => {
     setLiveError('');
+    const cameraSession = cameraSessionRef.current + 1;
+    cameraSessionRef.current = cameraSession;
     const piReachable = await isPiCameraReachable();
+    if (cameraSession !== cameraSessionRef.current) return;
     if (piReachable) {
       stopWebcam();
       setCameraSource(CAMERA_SOURCES.PI);
@@ -222,22 +206,41 @@ const FacialEvaluation = () => {
     } else {
       setCameraSource(CAMERA_SOURCES.WEBCAM);
       setCameraStatusMsg(CAMERA_STATUS_MESSAGES.PI_UNAVAILABLE);
-      await startWebcam();
+      await startWebcam(cameraSession);
     }
   };
 
-  const startWebcam = async () => {
+  const startWebcam = async (cameraSession) => {
     if (!navigator.mediaDevices?.getUserMedia) {
       setLiveError('No webcam is available. Use temporary upload instead.');
       return;
     }
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-    if (videoRef.current) videoRef.current.srcObject = stream;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      if (cameraSession !== cameraSessionRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      stopWebcam();
+      webcamStreamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      } else {
+        stream.getTracks().forEach((track) => track.stop());
+        webcamStreamRef.current = null;
+      }
+    } catch {
+      if (cameraSession === cameraSessionRef.current) {
+        setLiveError('Webcam permission was denied or the camera is unavailable. Use temporary upload instead.');
+      }
+    }
   };
 
   const stopWebcam = () => {
-    if (videoRef.current?.srcObject) {
-      videoRef.current.srcObject.getTracks().forEach((track) => track.stop());
+    const stream = webcamStreamRef.current || videoRef.current?.srcObject;
+    stream?.getTracks().forEach((track) => track.stop());
+    webcamStreamRef.current = null;
+    if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
   };
@@ -398,7 +401,7 @@ const FacialEvaluation = () => {
       setSimMessage(`${wizard.participantLabel} re-enrolled in simulation only.`);
     } else {
       const participant = {
-        id: `SIM-${Date.now().toString(36)}`,
+        id: createSimParticipantId(),
         participantLabel: wizard.participantLabel,
         role: wizard.role,
         status: 'Active',
@@ -502,9 +505,9 @@ const FacialEvaluation = () => {
 
   // All scores derive automatically from records + filters — no Calculate
   // button. Any record or filter change recomputes the matrix immediately.
-  const filtered = useMemo(() => filterRecords(records, filters), [records, filters]);
-  const matrixFiltered = useMemo(() => filterRecords(records, matrixFilters), [records, matrixFilters]);
-  const stats = useMemo(() => computeConfusionMatrix(matrixFiltered, participantLabels), [matrixFiltered, participantLabels]);
+  const filtered = filterRecords(records, filters);
+  const matrixFiltered = filterRecords(records, matrixFilters);
+  const stats = computeConfusionMatrix(matrixFiltered, participantLabels);
   const labelOptions = [...IDENTITY_LABELS, NO_FACE];
   const totalUsers = evaluationParticipants.length;
   const enrolledUsersCount = evaluationParticipants.filter((p) => p.isEnrolled).length;

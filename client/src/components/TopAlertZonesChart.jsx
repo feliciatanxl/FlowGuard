@@ -2,7 +2,7 @@
 // Shows the five zones with the most DetectionAlerts over the last seven Singapore
 // days, descending, with the real count beside each bar. Long zone names wrap/truncate
 // accessibly (the full name stays available via title + the bar's aria-label).
-const TopAlertZonesChart = ({ data = [] }) => {
+const TopAlertZonesChart = ({ data = [], unavailable = false }) => {
   const zones = Array.isArray(data) ? data : [];
   const max = zones.reduce((m, z) => Math.max(m, Number(z.count) || 0), 0) || 1;
 
@@ -10,11 +10,13 @@ const TopAlertZonesChart = ({ data = [] }) => {
     <section className="analytics-panel" aria-labelledby="top-zones-heading">
       <div className="analytics-panel-head">
         <h3 id="top-zones-heading">Top Alert Zones</h3>
-        <span className="analytics-subtle" aria-hidden="true">Last 7 days</span>
+        <span className="analytics-subtle" aria-hidden="true">High/Critical · last 7 days</span>
       </div>
 
-      {zones.length === 0 ? (
-        <p className="analytics-empty">No detection-alert history in the last seven days.</p>
+      {unavailable ? (
+        <p className="analytics-empty analytics-unavailable" role="status">Analytics temporarily unavailable. Retrying…</p>
+      ) : zones.length === 0 ? (
+        <p className="analytics-empty">No high or critical zone activity in the last seven days.</p>
       ) : (
         <ul className="zones-list">
           {zones.map((z) => {

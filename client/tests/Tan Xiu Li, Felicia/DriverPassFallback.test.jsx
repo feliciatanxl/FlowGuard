@@ -1,7 +1,6 @@
 // Frontend test — DriverPass degrades gracefully when the QR component can't render.
 // We mock react-qr-code to a NON-component so the validity guard trips and shows the
 // fallback instead of crashing the page (no 500 ErrorBoundary).
-import React from "react";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router";
 import { vi, describe, test, expect, afterEach } from "vitest";

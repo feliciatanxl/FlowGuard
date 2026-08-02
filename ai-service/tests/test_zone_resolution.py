@@ -15,9 +15,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from zone_rules import resolve_zone_config, DEFAULT_ZONE_THRESHOLD_SEC  # noqa: E402
 
 
-ZONE_A = (1, "Zone A", 5, 300, True)   # id, name, time_threshold(min), unattended_sec, enabled
-ZONE_B = (2, "Zone B", 1, 60, True)
-ZONE_DISABLED = (3, "Zone C", 5, None, False)
+ZONE_A = (1, "Zone A", 5, 300, True, 8)   # id, name, time_threshold(min), unattended_sec, enabled, density_threshold
+ZONE_B = (2, "Zone B", 1, 60, True, None)
+ZONE_DISABLED = (3, "Zone C", 5, None, False, 15)
 
 
 def cam_lookup(mapping):
@@ -100,6 +100,24 @@ class ZoneResolutionTests(unittest.TestCase):
         config = resolve_zone_config(101, None, fetch_cam, fetch_zone)
         self.assertIsNone(config["zone_error"])
         self.assertFalse(config["detection_enabled"])
+
+    def test_density_threshold_is_carried_through(self):
+        fetch_cam = cam_lookup({101: 1})
+        fetch_zone = zone_lookup({1: ZONE_A})
+        config = resolve_zone_config(101, None, fetch_cam, fetch_zone)
+        self.assertEqual(config["applied_density_threshold"], 8)
+
+    def test_density_threshold_defaults_to_none_when_zone_has_none_set(self):
+        fetch_cam = cam_lookup({102: 2})
+        fetch_zone = zone_lookup({2: ZONE_B})
+        config = resolve_zone_config(102, None, fetch_cam, fetch_zone)
+        self.assertIsNone(config["applied_density_threshold"])
+
+    def test_density_threshold_is_none_on_error_configs(self):
+        fetch_cam = cam_lookup({})
+        fetch_zone = zone_lookup({})
+        config = resolve_zone_config(999, None, fetch_cam, fetch_zone)
+        self.assertIsNone(config["applied_density_threshold"])
 
 
 if __name__ == "__main__":

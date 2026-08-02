@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router';
 import axios from 'axios';
 import NavBar from '../components/NavBar';

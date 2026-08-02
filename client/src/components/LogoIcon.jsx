@@ -1,4 +1,3 @@
-import React from 'react';
 
 const LogoIcon = ({ size = 30, className = "" }) => {
   return (

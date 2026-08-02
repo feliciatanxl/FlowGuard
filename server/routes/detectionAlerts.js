@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const { sendUnexpectedError } = require('../utils/safeHttpError');
+const path = require('path');
 const { readLimiter } = require('../middlewares/rateLimit');
 router.use(readLimiter); // route-wide rate limiting (trusted AI service POSTs are skipped)
 const { DetectionAlert, IncidentLog, MonitoringZone, Camera, sequelize } = require('../models');
@@ -14,6 +16,17 @@ const { Op } = require('sequelize');
 const { verifyToken, requireRole, verifyServiceOrRole } = require('../middlewares/auth');
 const SEVERITIES = ['Low', 'Medium', 'High', 'Critical'];
 const VALID_STATUSES = ['Active', 'Acknowledged', 'Investigating', 'Dispatched', 'Escalated', 'Cleared'];
+const SNAPSHOT_DIR = path.resolve(
+    process.env.DETECTION_SNAPSHOT_DIR || path.join(__dirname, '..', 'uploads', 'detection-snapshots')
+);
+const GENERATED_SNAPSHOT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.jpg$/i;
+
+const resolveStoredSnapshotPath = (filename) => {
+    if (!GENERATED_SNAPSHOT_RE.test(filename)) return null;
+    const resolved = path.resolve(SNAPSHOT_DIR, filename);
+    if (resolved === SNAPSHOT_DIR || !resolved.startsWith(`${SNAPSHOT_DIR}${path.sep}`)) return null;
+    return resolved;
+};
 
 // This route is reachable by the AI engine's service key AND by an FM/Staff JWT — never
 // by the SecurePi edge device (that's the dedicated EDGE_INGEST_TOKEN route in
@@ -84,7 +97,7 @@ router.get('/', verifyToken, requireRole('FM', 'Staff'), async (req, res) => {
         });
         res.json(alerts);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert list failed:', err);
     }
 });
 
@@ -96,7 +109,34 @@ router.get('/:id', verifyToken, requireRole('FM', 'Staff'), async (req, res) => 
         if (!alert) return res.sendStatus(404);
         res.json(alert);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert lookup failed:', err);
+    }
+});
+
+router.get('/:id/snapshot/:filename', verifyToken, requireRole('FM', 'Staff'), async (req, res) => {
+    try {
+        if (!/^\d+$/.test(req.params.id)) return res.sendStatus(404);
+        const requestedFilename = String(req.params.filename || '');
+        if (!GENERATED_SNAPSHOT_RE.test(requestedFilename)) return res.sendStatus(404);
+
+        const alert = await DetectionAlert.findByPk(req.params.id);
+        const expectedPrefix = `/api/detection-alerts/${req.params.id}/snapshot/`;
+        if (!alert || typeof alert.snapshot_url !== 'string' || !alert.snapshot_url.startsWith(expectedPrefix)) {
+            return res.sendStatus(404);
+        }
+
+        // The filesystem component is recovered from the server-generated URL stored
+        // in the database, then independently UUID-validated and containment-checked.
+        // req.params.filename is used only to authorize that exact stored resource.
+        const storedFilename = alert.snapshot_url.slice(expectedPrefix.length);
+        if (storedFilename !== requestedFilename) return res.sendStatus(404);
+        const filePath = resolveStoredSnapshotPath(storedFilename);
+        if (!filePath) return res.sendStatus(404);
+        return res.sendFile(filePath, { headers: { 'Content-Type': 'image/jpeg' } }, (err) => {
+            if (err && !res.headersSent) res.sendStatus(err.statusCode || 404);
+        });
+    } catch (err) {
+        return sendUnexpectedError(res, 'Detection alert snapshot lookup failed:', err);
     }
 });
 
@@ -207,7 +247,7 @@ router.post('/', verifyServiceOrRole('FM', 'Staff'), async (req, res) => {
 
         res.status(201).json(alert);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert creation failed:', err);
     }
 });
 
@@ -264,7 +304,7 @@ router.put('/:id', verifyToken, requireRole('FM', 'Staff'), async (req, res) => 
 
         res.json(alert);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert update failed:', err);
     }
 });
 
@@ -286,7 +326,7 @@ router.delete('/:id', verifyToken, requireRole('FM'), async (req, res) => {
 
         res.sendStatus(200);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert deletion failed:', err);
     }
 });
 

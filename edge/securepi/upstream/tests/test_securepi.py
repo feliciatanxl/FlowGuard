@@ -8,10 +8,12 @@ before import). Usage:
 import contextlib
 import io
 import json
+import threading
 import urllib.request
 import sys
 import tempfile
 import types
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -37,7 +39,7 @@ from securePi import (Config, Detection, PersonTracker, BagTracker, TrackedBag, 
                       save_snapshot_worker, append_event_worker,
                       Renderer, _fire_alert, SNAPSHOT_EXECUTOR, COLOR_ALERT,
                       dedup_detections, FrameBuffer, StreamServer,
-                      FlowGuardBridge, CrowdGate)
+                      FlowGuardBridge, CrowdGate, ZoneConfigClient)
 
 
 class FakeFrame:
@@ -314,6 +316,91 @@ def test_stream_people_count_endpoint_reports_fresh_status():
         assert payload["detection_active"] is True
     finally:
         server.stop()
+
+
+class _FakeZoneConfigServer:
+    """Tiny HTTP server standing in for FlowGuard's /api/edge/zone-config."""
+
+    def __init__(self, response_body: dict, status: int = 200):
+        self.request_count = 0
+        self.last_headers = None
+        body = json.dumps(response_body).encode("utf-8")
+        count_holder = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                count_holder.request_count += 1
+                count_holder.last_headers = dict(self.headers)
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self._httpd = HTTPServer(("127.0.0.1", 0), Handler)
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+
+    @property
+    def port(self):
+        return self._httpd.server_address[1]
+
+    def start(self):
+        self._thread.start()
+
+    def stop(self):
+        self._httpd.shutdown()
+        self._httpd.server_close()
+        self._thread.join(timeout=5.0)
+
+
+def test_zone_config_client_fetches_and_caches_within_ttl():
+    server = _FakeZoneConfigServer({
+        "zone_name": "Loading Bay",
+        "detection_enabled": True,
+        "unattended_threshold_seconds": 90,
+        "density_threshold": 4,
+        "alert_cooldown_seconds": 45,
+        "monitored_classes": ["backpack", "suitcase"],
+        "severity": "Critical",
+    })
+    server.start()
+    try:
+        client = ZoneConfigClient(f"http://127.0.0.1:{server.port}", "/api/edge/zone-config",
+                                  "edge-token", "Loading Bay")
+        first = client.get()
+        second = client.get()  # within TTL — must not re-hit the server
+        assert first == second
+        assert first["unattended_threshold_seconds"] == 90
+        assert first["density_threshold"] == 4
+        assert first["monitored_classes"] == ["backpack", "suitcase"]
+        assert server.request_count == 1
+        assert server.last_headers.get("Authorization") == "Bearer edge-token"
+    finally:
+        server.stop()
+
+
+def test_zone_config_client_returns_none_when_unreachable():
+    # Port 0 never accepts connections mid-test — simulates an offline backend.
+    client = ZoneConfigClient("http://127.0.0.1:1", "/api/edge/zone-config",
+                              "edge-token", "Loading Bay")
+    client.REQUEST_TIMEOUT_SEC = 0.5
+    assert client.get() is None
+
+
+def test_zone_config_client_from_env_requires_base_url_and_zone_name():
+    assert ZoneConfigClient.from_env({}) is None
+    assert ZoneConfigClient.from_env({"FLOWGUARD_API_BASE_URL": "http://x:5001"}) is None
+    assert ZoneConfigClient.from_env({"FLOWGUARD_ZONE_NAME": "Loading Bay"}) is None
+    client = ZoneConfigClient.from_env({
+        "FLOWGUARD_API_BASE_URL": "http://x:5001",
+        "FLOWGUARD_ZONE_NAME": "Loading Bay",
+        "EDGE_INGEST_TOKEN": "tok",
+    })
+    assert client is not None
+    assert "zone_name=Loading" in client.url
 
 
 def test_alert_snapshot_has_bag_box():

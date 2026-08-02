@@ -10,7 +10,7 @@ module.exports = function startCleanupCron(db) {
   const { ChatTranscript } = db;
 
   // Run every day at 02:00 AM
-  cron.schedule('0 2 * * *', async () => {
+  const task = cron.schedule('0 2 * * *', async () => {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 90);
 
@@ -31,4 +31,5 @@ module.exports = function startCleanupCron(db) {
   });
 
   console.log('[PDPA Cron] 90-day transcript cleanup scheduled (daily at 02:00).');
+  return task;
 };

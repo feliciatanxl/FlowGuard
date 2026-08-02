@@ -1,45 +1,19 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import Sidebar from '../components/Sidebar';
 import SafeMuiIcon from '../components/SafeMuiIcon';
 import '../css/Management.css';
 import { API_BASE_URL } from '../constants/api';
+import { MINUTE_MS, formatRemainingDuration, deriveInviteStatus } from '../utils/inviteStatus';
 
 const SG_TIME_ZONE = 'Asia/Singapore';
-const MINUTE_MS = 60 * 1000;
-const HOUR_MS = 60 * MINUTE_MS;
-const DAY_MS = 24 * HOUR_MS;
 
 const formatSingaporeDateTime = (value) => new Intl.DateTimeFormat('en-SG', {
   timeZone: SG_TIME_ZONE,
   dateStyle: 'medium',
   timeStyle: 'short'
 }).format(new Date(value));
-
-// "1 day 16 hours" / "3 hours 12 minutes" / "45 minutes" / "under 1 minute"
-export const formatRemainingDuration = (ms) => {
-  if (!Number.isFinite(ms) || ms <= 0) return null;
-  const days = Math.floor(ms / DAY_MS);
-  const hours = Math.floor((ms % DAY_MS) / HOUR_MS);
-  const minutes = Math.floor((ms % HOUR_MS) / MINUTE_MS);
-  const plural = (n, unit) => `${n} ${unit}${n === 1 ? '' : 's'}`;
-  if (days > 0) return hours > 0 ? `${plural(days, 'day')} ${plural(hours, 'hour')}` : plural(days, 'day');
-  if (hours > 0) return minutes > 0 ? `${plural(hours, 'hour')} ${plural(minutes, 'minute')}` : plural(hours, 'hour');
-  if (minutes > 0) return plural(minutes, 'minute');
-  return 'under 1 minute';
-};
-
-// The SERVER status stays authoritative; the local clock only downgrades a
-// PENDING invite to EXPIRED the moment its server expiry time passes so an
-// expired code never looks usable while waiting for the next refresh.
-export const deriveInviteStatus = (invite, now = Date.now()) => {
-  const serverStatus = invite.status || (invite.isUsed ? 'USED' : 'PENDING');
-  if (serverStatus === 'PENDING' && invite.expiresAt && now >= new Date(invite.expiresAt).getTime()) {
-    return 'EXPIRED';
-  }
-  return serverStatus;
-};
 
 const statusClass = (status) => status.toLowerCase();
 
@@ -59,13 +33,13 @@ const TenantManagement = () => {
         headers: { Authorization: `Bearer ${token}` }
       });
       setInvites(res.data);
-    } catch (err) {
+    } catch {
       console.error("Failed to fetch invites");
     }
   }, [token]);
 
   useEffect(() => {
-    fetchInvites();
+    (async () => { await fetchInvites(); })();
   }, [fetchInvites]);
 
   // Tick every minute so the remaining-duration text stays current.
@@ -81,7 +55,7 @@ const TenantManagement = () => {
       const serverStatus = invite.status || (invite.isUsed ? 'USED' : 'PENDING');
       return serverStatus === 'PENDING' && deriveInviteStatus(invite, now) === 'EXPIRED';
     });
-    if (crossedExpiry) fetchInvites();
+    if (crossedExpiry) { (async () => { await fetchInvites(); })(); }
   }, [now, invites, fetchInvites]);
 
   const handleGenerateInvite = async () => {
@@ -92,7 +66,7 @@ const TenantManagement = () => {
       });
       setNewCode(res.data.inviteCode);
       fetchInvites();
-    } catch (err) {
+    } catch {
       alert("Error generating invitation");
     } finally {
       setLoading(false);

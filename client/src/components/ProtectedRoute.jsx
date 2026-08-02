@@ -1,4 +1,3 @@
-import React from 'react';
 import { Navigate } from 'react-router';
 
 // Only treats a token as expired when it positively decodes as a JWT whose exp

@@ -31,3 +31,4 @@ and leaves the database untouched.
 | File | What it does |
 |------|--------------|
 | `20260714_sync_object_detection_schema.sql` | Adds the two Object Detection columns that existed in the Sequelize models but not in the live DB after the group-final merge: `monitoring_zones.detection_type` and `detection_alerts.incident_log_id`. Fixes the 500s on `GET /api/zones` and `GET /api/cameras`. |
+| `20260729_edge_idempotency_and_whatsapp.sql` | Adds four `detection_alerts` columns for SecurePi edge idempotency + WhatsApp security-alert tracking: `edge_event_id` (unique when non-null — the retry-safe idempotency key), `whatsapp_status` (default `Not Requested`), `whatsapp_sent_at`, `whatsapp_error`. Guarded unique index avoids duplicating Sequelize's own constraint on a fresh DB. |

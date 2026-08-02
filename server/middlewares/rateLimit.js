@@ -113,6 +113,18 @@ const publicLookupLimiter = makeLimiter({
   keyGenerator: ipKey,
 });
 
+// Public liveness/readiness probes. Cloud Run and external monitors ordinarily
+// issue only a handful per minute, so 120/min/IP leaves substantial probe and
+// rollout headroom while bounding abusive database-backed readiness traffic.
+const healthPolicy = Object.freeze({
+  windowMs: num(process.env.RATE_LIMIT_HEALTH_WINDOW_MS, 1 * MIN),
+  max: num(process.env.RATE_LIMIT_HEALTH_MAX, 120),
+});
+const healthLimiter = makeLimiter({
+  ...healthPolicy,
+  keyGenerator: ipKey,
+});
+
 // Authenticated reads + dashboard/alert polling. Busiest legitimate poller does
 // only a few requests/min per widget; 300/min/user leaves large headroom.
 const readPolicy = Object.freeze({
@@ -172,10 +184,12 @@ module.exports = {
   authLimiter,
   passwordResetLimiter,
   publicLookupLimiter,
+  healthLimiter,
   readLimiter,
   writeLimiter,
   uploadLimiter,
   aiProxyLimiter,
+  healthPolicy,
   readPolicy,
   aiProxyPolicy,
 };

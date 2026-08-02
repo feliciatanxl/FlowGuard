@@ -1,5 +1,4 @@
 // Frontend tests — reusable PasswordInput show/hide toggle.
-import React from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, test, expect } from "vitest";
 

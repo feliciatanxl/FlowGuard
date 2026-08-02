@@ -208,6 +208,17 @@ describe("User routes", () => {
       expect(mockUser.create).toHaveBeenCalled();
     });
 
+    test("unexpected registration database errors return a stable safe response", async () => {
+      const rawError = "column users.private_schema_detail does not exist";
+      mockUser.create.mockRejectedValueOnce(new Error(rawError));
+
+      const { res } = await registerWithExpiry(new Date("2026-07-10T01:00:00.001Z"));
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ errors: ["Unable to process the request."] });
+      expect(JSON.stringify(res.body)).not.toContain(rawError);
+    });
+
     test("invalid exactly at expiry", async () => {
       const { res, invite } = await registerWithExpiry(new Date("2026-07-10T01:00:00.000Z"));
       expect(res.status).toBe(401);

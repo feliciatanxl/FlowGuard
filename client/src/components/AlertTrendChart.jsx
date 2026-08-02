@@ -2,7 +2,7 @@
 // Renders High + Critical DetectionAlert counts for each of the last seven Singapore
 // calendar days. Every day is always present (zero-height bars for quiet days). A
 // visually-hidden table mirrors the data for screen readers and assistive tech.
-const AlertTrendChart = ({ data = [] }) => {
+const AlertTrendChart = ({ data = [], unavailable = false }) => {
   const days = Array.isArray(data) ? data : [];
   const total = days.reduce((sum, d) => sum + (Number(d.high) || 0) + (Number(d.critical) || 0), 0);
   // Scale bars to the busiest single day so a light week still reads clearly.
@@ -18,7 +18,10 @@ const AlertTrendChart = ({ data = [] }) => {
         </div>
       </div>
 
-      {days.length === 0 || total === 0 ? (
+      {unavailable ? (
+        // Distinct from a genuine zero week — the data could not be built this cycle.
+        <p className="analytics-empty analytics-unavailable" role="status">Analytics temporarily unavailable. Retrying…</p>
+      ) : days.length === 0 || total === 0 ? (
         <p className="analytics-empty">No high or critical alerts recorded in the last seven days.</p>
       ) : (
         <div
