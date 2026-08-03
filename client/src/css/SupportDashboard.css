@@ -125,6 +125,15 @@
   border: 1px solid rgba(245, 158, 11, 0.2);
 }
 
+/* Ticket status "Pending" — deliberately distinct from priority "Medium"
+   above; both used to render as the same amber, which was ambiguous with
+   the Priority column showing "Medium" in the same row. */
+.status-badge.pending {
+  background: rgba(167, 139, 250, 0.1);
+  color: #a78bfa;
+  border: 1px solid rgba(167, 139, 250, 0.2);
+}
+
 /* ── KB Form Card ────────────────────────────────────────────────────────── */
 .support-kb-form-card {
   background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);

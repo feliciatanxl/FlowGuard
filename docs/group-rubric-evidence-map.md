@@ -16,7 +16,7 @@ This is an evidence map, not a grade claim. “Current evidence” means code, t
 
 - Felicia: User/Attendance/SecurityLog/EvaluationParticipant/Booking/GateAccessLog routes, pages, models, and tests. Smart Logistics is Felicia's extension, not Module 4.
 - Charlisa: Camera/MonitoringZone/DetectionAlert CRUD, browser/upload/SecurePi sources, people/unattended rules, edge ingest, and tests.
-- Lucas: deterministic keyword/KnowledgeBase support route, ChatTranscript persistence, automatic SupportTicket escalation, linked transcript reads, status/resolution updates, ticket+transcript delete, KnowledgeBase CRUD. No LLM call is made.
+- Lucas: KnowledgeBase-grounded Gemini chat replies (deterministic keyword-match fallback if the API is unavailable), ChatTranscript persistence, automatic SupportTicket escalation (deterministic — trigger phrases/message count, not AI-decided), linked transcript reads, status/resolution updates, ticket+transcript delete, KnowledgeBase CRUD.
 - Gladwin: automatic linked incidents from both alert-ingest routes, manual incident CRUD/search, resolution/notes/severity/person updates, and bidirectional linked soft deletion/synchronisation through `DetectionAlert.incident_log_id`.
 
 ## Rubric traceability
