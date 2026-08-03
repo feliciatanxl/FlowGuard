@@ -30,7 +30,7 @@ The browser normally calls Node. Node adds the private AI-service credential and
 | `/logistics/gate-verification` | Felicia / Smart Logistics | `/api/qr/decode`, `/api/bookings/gate-verification` | `/api/qr/decode` | Booking transition; GateAccessLog create | FM; local/cloud/manual QR; PoC OCR; audited override; idempotency | OCR is not production LPR; barrier is simulated. |
 | `/camera-inventory`, `/detection-settings`, `/cameras` | Charlisa / Object & Space | `/api/cameras`, `/api/zones` | None or Node YOLO proxy | Camera/Zone CRUD | FM writes; FM/Staff read | Camera and zone routers apply JWT verification before role gates. |
 | `/object-detection` | Charlisa / Object & Space | `/api/yolo/*`, `/api/detection-alerts`, `/api/edge/detection-alerts` | `/api/yolo/*` | DetectionAlert CRUD; linked IncidentLog create | FM UI; FM/Staff/service/edge API paths; people/unattended rules | Model-supported generic classes only; schedules/pests/actions unsupported. |
-| `/support-dashboard`, floating chat | Lucas / Helpdesk | `/api/support/*` | None | Transcript/Ticket/Knowledge CRUD | Public deterministic chat; FM ticket/KB management | Keyword scoring, not an LLM. |
+| `/support-dashboard`, floating chat | Lucas / Helpdesk | `/api/support/*` | None | Transcript/Ticket/Knowledge CRUD | Public chat (Gemini-generated, KB-grounded replies; deterministic escalation/categorisation); FM ticket/KB management | Gemini failure/timeout/quota falls back to the prior deterministic keyword match. |
 | `/incidents` | Gladwin / Incidents | `/api/incident/*` | Optional configured scan endpoint | IncidentLog CRUD; linked alert sync | FM; auto-created from alerts plus manual create | Legacy scan-frame depends on separate `PYTHON_AI_URL`. |
 
 ## Facial and camera flow
@@ -61,7 +61,7 @@ The browser normally calls Node. Node adds the private AI-service credential and
 
 ## Helpdesk flow
 
-The public chat stores a `ChatTranscript`, searches `KnowledgeBase` by token overlap, and escalates on configured phrases or the fifth user message. Escalation creates a linked `SupportTicket`. FM can read the transcript, update status/resolution notes, or delete the ticket/transcript. No LLM call exists in this route.
+The public chat stores a `ChatTranscript` and escalates on configured phrases or the fifth user message — escalation and ticket categorisation are deterministic, never decided by the AI reply engine. Escalation creates a linked `SupportTicket`. Non-escalating turns get a reply from Google Gemini (`server/services/geminiService.js`), grounded in the `KnowledgeBase` table passed as prompt context; if the Gemini call fails or is unconfigured, the route falls back to the prior deterministic keyword/token-overlap match. FM can read the transcript, update status/resolution notes, or delete the ticket/transcript.
 
 ## Cloud, security, privacy, and performance
 

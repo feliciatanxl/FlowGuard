@@ -259,7 +259,7 @@ describe('public FlowGuard website PoC positioning', () => {
   test('authenticated route definitions and private page imports remain present', () => {
     const appSource = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
 
-    ['/dashboard', '/enrollment', '/cameras', '/object-detection', '/vpatrol', '/gate-scanner', '/attendance', '/users', '/security-review', '/incidents', '/support-dashboard'].forEach((route) => {
+    ['/dashboard', '/enrollment', '/cameras', '/object-detection', '/vpatrol', '/gate-scanner', '/attendance', '/users', '/security-review', '/incidents', '/incidents/analytics', '/support-dashboard', '/knowledge-base'].forEach((route) => {
       expect(appSource).toContain(`path="${route}"`);
     });
     expect(appSource).toContain('ProtectedRoute');

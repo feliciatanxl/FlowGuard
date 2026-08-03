@@ -147,8 +147,8 @@ const Sidebar = () => {
             <>
               <NavLink to="/users" onClick={handleNavClick}>User Management</NavLink>
               <NavLink to="/security-review" onClick={handleNavClick}>Security Review</NavLink>
-              <NavLink to="/incidents" onClick={handleNavClick}>Incident Dashboard</NavLink>
-              <NavLink to="/support-dashboard" onClick={handleNavClick}>Support Tickets</NavLink>
+              <NavLink to="/incidents" onClick={handleNavClick}>Incidents & Support</NavLink>
+              <NavLink to="/knowledge-base" onClick={handleNavClick}>Knowledge Base</NavLink>
               <NavLink to="/tenant-management" onClick={handleNavClick}>Tenant Onboarding</NavLink>
             </>
           )}

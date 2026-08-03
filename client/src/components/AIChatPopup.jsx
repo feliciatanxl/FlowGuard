@@ -32,6 +32,27 @@ const AIChatPopup = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Rehydrate this session's history on mount — sessionId survives a page
+  // refresh (it lives in sessionStorage), but before this the messages and
+  // escalation banner didn't, so reloading mid-conversation looked like the
+  // whole exchange had been forgotten even though the backend still had it.
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await axios.get(`/api/support/chat/${sessionId.current}`);
+        if (data.messages?.length) {
+          setMessages([INITIAL_MESSAGE, ...data.messages]);
+        }
+        if (data.escalated) {
+          setEscalated(true);
+          setTicketId(data.ticketId);
+        }
+      } catch {
+        // No prior history, or a transient error — start fresh silently.
+      }
+    })();
+  }, []);
+
   const handleSend = async () => {
     const text = input.trim();
     if (!text || loading) return;
@@ -65,6 +86,9 @@ const AIChatPopup = () => {
         ...prev,
         { role: 'ai', text: 'I am temporarily unable to process your request. Please try again in a moment or contact the FM office directly.' }
       ]);
+      // Restore the failed message into the input — it was never persisted
+      // server-side, so the tenant shouldn't have to retype it from memory.
+      setInput(text);
     } finally {
       setLoading(false);
     }
@@ -99,7 +123,7 @@ const AIChatPopup = () => {
             </div>
           )}
 
-          <div className="chat-messages">
+          <div className="chat-messages" aria-live="polite">
             {messages.map((msg, i) => (
               <div key={i} className={`message-bubble ${msg.role}-bubble`}>
                 {msg.text}

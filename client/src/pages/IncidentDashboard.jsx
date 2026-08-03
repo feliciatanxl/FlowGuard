@@ -26,6 +26,7 @@ const statusClass = (s) => {
     case 'Investigating':         return 'inc-badge inc-status-investigating';
     case 'Escalated to Security': return 'inc-badge inc-status-escalated';
     case 'Cleared':               return 'inc-badge inc-status-cleared';
+    case 'False Positive':        return 'inc-badge inc-status-false-positive';
     default:                      return 'inc-badge';
   }
 };
@@ -125,6 +126,10 @@ const IncidentDashboard = () => {
   // --- Delete confirm modal ---
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteSaving, setDeleteSaving] = useState(false);
+
+  // --- Escalate to Ticket confirm modal (Support Tickets integration is on the
+  // teammate's end — this only opens a pre-filled confirmation; no submission yet) ---
+  const [escalateTarget, setEscalateTarget] = useState(null);
 
   // --- Toast stack (array, each has its own 3s timer) ---
   const [toasts, setToasts]     = useState([]);
@@ -258,10 +263,20 @@ const IncidentDashboard = () => {
     });
   }, [incidents, search, severityFilter, sourceFilter, statusFilter]);
 
-  const sourceCounts = useMemo(() => ({
-    ai:     incidents.filter(i => i.source !== 'Manual').length,
-    manual: incidents.filter(i => i.source === 'Manual').length,
-  }), [incidents]);
+  // Manual and Facial Recognition are literal source values; Object Detection is
+  // everything else (mirrors sourceClass()'s default-else bucketing above, since
+  // real incidents also arrive with source values like 'Browser Webcam', 'Uploaded
+  // Video', or 'SecurePi Edge Node' — not just the 3 literal strings). Computed this
+  // way, the 3 segments always sum to filtered.length and always agree with the
+  // table's own OD badge count.
+  // Scoped to `filtered` (not the raw `incidents` list) so the split-bar reflects
+  // whichever search/severity/source/status filters are currently applied — same
+  // scope as the stats cards below, so both stay in agreement.
+  const sourceCounts = useMemo(() => {
+    const manual = filtered.filter(i => i.source === 'Manual').length;
+    const fr = filtered.filter(i => i.source === 'Facial Recognition').length;
+    return { manual, fr, od: filtered.length - manual - fr };
+  }, [filtered]);
 
   const stats = useMemo(() => ({
     total:         filtered.length,
@@ -313,6 +328,16 @@ const IncidentDashboard = () => {
     } finally {
       setDeleteSaving(false);
     }
+  };
+
+  const handleEscalate = (incident) => setEscalateTarget(incident);
+
+  // Mocked — no ticket is actually created. The real submission (POST to the
+  // Support Tickets endpoint) is being wired up separately by the teammate who
+  // owns that feature; this just confirms the button/modal work on this end.
+  const confirmEscalate = () => {
+    showToast(`Incident #${escalateTarget.id} prepared for escalation — ticket submission integration pending.`, 'success');
+    setEscalateTarget(null);
   };
 
   const handleCreate = async (e) => {
@@ -393,6 +418,9 @@ const IncidentDashboard = () => {
             <button className="inc-create-btn" onClick={() => setShowCreate(true)}>
               + Log Incident
             </button>
+            <button className="inc-analytics-btn" onClick={() => navigate('/incidents/analytics')}>
+              View Deep Analytics →
+            </button>
             <button className="inc-support-btn" onClick={() => navigate('/support-dashboard')}>
               Support Tickets →
             </button>
@@ -419,11 +447,64 @@ const IncidentDashboard = () => {
           </div>
         </div>
 
-        {/* ---- Source Counter ---- */}
-        <div className="inc-source-counter">
-          <span className="inc-source-chip inc-source-chip-ai">AI Detected: {sourceCounts.ai}</span>
-          <span className="inc-source-chip-divider">|</span>
-          <span className="inc-source-chip inc-source-chip-manual">Manually Logged: {sourceCounts.manual}</span>
+        {/* ---- Source Split Bar ---- */}
+        <div
+          className="inc-source-splitbar-wrap"
+          role="img"
+          aria-label={`Incident source breakdown: ${sourceCounts.manual} manual, ${sourceCounts.fr} facial recognition, ${sourceCounts.od} object detection.`}
+        >
+          <div className="inc-source-splitbar">
+            {filtered.length === 0 ? (
+              <div className="inc-source-segment inc-source-seg-empty" style={{ width: '100%' }} />
+            ) : (
+              <>
+                {sourceCounts.manual > 0 && (
+                  <div
+                    className="inc-source-segment inc-source-seg-manual"
+                    style={{ width: `${(sourceCounts.manual / filtered.length) * 100}%` }}
+                    tabIndex={0}
+                    title={`Manual: ${sourceCounts.manual}`}
+                  />
+                )}
+                {sourceCounts.fr > 0 && (
+                  <div
+                    className="inc-source-segment inc-source-seg-fr"
+                    style={{ width: `${(sourceCounts.fr / filtered.length) * 100}%` }}
+                    tabIndex={0}
+                    title={`Facial Recognition: ${sourceCounts.fr}`}
+                  />
+                )}
+                {sourceCounts.od > 0 && (
+                  <div
+                    className="inc-source-segment inc-source-seg-od"
+                    style={{ width: `${(sourceCounts.od / filtered.length) * 100}%` }}
+                    tabIndex={0}
+                    title={`Object Detection: ${sourceCounts.od}`}
+                  />
+                )}
+              </>
+            )}
+          </div>
+          <div className="inc-source-legend">
+            <span className="inc-source-legend-item">
+              <span className="inc-source-legend-dot inc-source-legend-dot-manual" /> Manual ({sourceCounts.manual})
+            </span>
+            <span className="inc-source-legend-item">
+              <span className="inc-source-legend-dot inc-source-legend-dot-fr" /> Facial Recognition ({sourceCounts.fr})
+            </span>
+            <span className="inc-source-legend-item">
+              <span className="inc-source-legend-dot inc-source-legend-dot-od" /> Object Detection ({sourceCounts.od})
+            </span>
+          </div>
+          <table className="sr-only">
+            <caption>Incident source breakdown</caption>
+            <thead><tr><th scope="col">Source</th><th scope="col">Count</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Manual</th><td>{sourceCounts.manual}</td></tr>
+              <tr><th scope="row">Facial Recognition</th><td>{sourceCounts.fr}</td></tr>
+              <tr><th scope="row">Object Detection</th><td>{sourceCounts.od}</td></tr>
+            </tbody>
+          </table>
         </div>
 
         {/* ---- Loading bar ---- */}
@@ -472,6 +553,7 @@ const IncidentDashboard = () => {
             <option>Investigating</option>
             <option>Escalated to Security</option>
             <option>Cleared</option>
+            <option>False Positive</option>
           </select>
         </div>
 
@@ -569,6 +651,12 @@ const IncidentDashboard = () => {
                             onClick={() => openDetail(incident)}
                           >
                             View
+                          </button>
+                          <button
+                            className="action-btn action-escalate"
+                            onClick={() => handleEscalate(incident)}
+                          >
+                            Escalate to Ticket
                           </button>
                           <button
                             className="action-btn action-danger"
@@ -691,6 +779,7 @@ const IncidentDashboard = () => {
                       <option>Investigating</option>
                       <option>Escalated to Security</option>
                       <option>Cleared</option>
+                      <option>False Positive</option>
                     </select>
                   ) : (
                     <span className={statusClass(selectedIncident.resolutionStatus)} style={{ marginTop: '2px' }}>
@@ -901,6 +990,62 @@ const IncidentDashboard = () => {
                   disabled={deleteSaving}
                 >
                   {deleteSaving ? 'Deleting...' : 'Confirm Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ---- Escalate to Ticket Confirm Modal (mocked — no submission yet) ---- */}
+        {escalateTarget && (
+          <div className="modal-overlay" onClick={() => setEscalateTarget(null)}>
+            <div className="inc-detail-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="inc-modal-header">
+                <div>
+                  <h2>Escalate to Support Ticket?</h2>
+                  <p style={{ color: '#64748b', margin: 0, fontSize: '0.85rem' }}>
+                    Review the details below before escalating this incident to Support.
+                  </p>
+                </div>
+                <button className="edit-btn" onClick={() => setEscalateTarget(null)}>✕ Close</button>
+              </div>
+
+              <div className="inc-detail-grid">
+                <div className="inc-detail-item">
+                  <span className="inc-detail-label">Incident ID</span>
+                  <span>#{escalateTarget.id}</span>
+                </div>
+                <div className="inc-detail-item">
+                  <span className="inc-detail-label">Location</span>
+                  <span>{escalateTarget.camera_location}</span>
+                </div>
+                <div className="inc-detail-item">
+                  <span className="inc-detail-label">Source</span>
+                  <span className={sourceClass(escalateTarget.source)}>{sourceLabel(escalateTarget.source)}</span>
+                </div>
+                <div className="inc-detail-item">
+                  <span className="inc-detail-label">Severity</span>
+                  <span className={severityClass(escalateTarget.severity)}>{escalateTarget.severity}</span>
+                </div>
+              </div>
+
+              <div className="inc-form-group">
+                <label className="inc-detail-label">Description</label>
+                <p style={{ color: '#cbd5e1', lineHeight: 1.6, marginTop: '6px' }}>
+                  {escalateTarget.notes?.trim() ? escalateTarget.notes : <em style={{ color: '#64748b' }}>No description provided.</em>}
+                </p>
+              </div>
+
+              <p style={{ color: '#64748b', fontSize: '0.78rem', margin: '4px 0 20px' }}>
+                Submission to Support Tickets is not yet connected — confirming here does not create a ticket.
+              </p>
+
+              <div className="modal-actions">
+                <button className="cancel-btn" onClick={() => setEscalateTarget(null)}>
+                  Cancel
+                </button>
+                <button className="confirm-escalate-btn" onClick={confirmEscalate}>
+                  Confirm Escalation
                 </button>
               </div>
             </div>

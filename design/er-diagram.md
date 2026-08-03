@@ -9,7 +9,7 @@ erDiagram
   MONITORING_ZONE o|--o{ DETECTION_ALERT : "zone_id nullable"
   CAMERA o|--o{ DETECTION_ALERT : "camera_id nullable"
   INCIDENT_LOG o|--o{ DETECTION_ALERT : "incident_log_id nullable; not unique"
-  CHAT_TRANSCRIPT o|--o{ SUPPORT_TICKET : "transcriptId nullable; not unique"
+  CHAT_TRANSCRIPT o|--o| SUPPORT_TICKET : "transcriptId nullable; unique"
 
   USER {
     int id PK
@@ -237,7 +237,7 @@ erDiagram
 ## Relationship and retention notes
 
 - `DetectionAlert.incident_log_id -> IncidentLog.id` is the current nullable database link. It is not unique, so the database cardinality is many alerts to zero/one incident; current ingest creates one linked alert/incident pair transactionally. Shared status/severity/person changes and paranoid soft deletion synchronise linked records in both directions.
-- `SupportTicket.transcriptId` is a nullable FK with no unique constraint. The model exposes `ChatTranscript.hasOne`, and current escalation creates one ticket, but the database itself permits multiple tickets to reference a transcript.
+- `SupportTicket.transcriptId` is a nullable FK with a UNIQUE index (`support_tickets_transcript_id_unique`, added 3 Aug 2026), matching the model's `ChatTranscript.hasOne`/`SupportTicket.belongsTo` association: the database itself now enforces at most one ticket per transcript, closing a prior race where two near-simultaneous escalations for the same session could each create their own ticket.
 - `Booking.tenantId`, `SecurityLog.matchedUserId`, `SecurityLog.personnelName`, `GateAccessLog.bookingRef`, `GateAccessLog.fmId`, transcript/ticket `userId`, and `MonitoringZone.assigned_team` are application-level soft references; no Sequelize association/foreign key is declared for them.
 - `GateAccessLog` has confirmed indexes on `bookingRef`, `action`, and `createdAt`.
 - Paranoid models are Booking, Camera, MonitoringZone, DetectionAlert, IncidentLog, and Staff. The normal booking cancellation route changes status to `Cancelled`; it does not call `destroy()`.
