@@ -33,6 +33,7 @@ import DetectionSettings from './pages/DetectionSettings';
 import SecurityReview from './pages/SecurityReview';
 import FacialEvaluation from './pages/FacialEvaluation';
 import IncidentDashboard from './pages/IncidentDashboard';
+import IncidentAnalytics from './pages/IncidentAnalytics';
 import SupportDashboard from './pages/SupportDashboard';
 import { ACCESS } from './constants/roles';
 import './App.css';
@@ -150,6 +151,14 @@ function App() {
         <Route path="/incidents" element={
           <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
             <IncidentDashboard />
+          </ProtectedRoute>
+        } />
+        {/* Deep Analytics — FM only, not in the sidebar; reached only via the "View
+            Deep Analytics ->" button on the Incident Dashboard itself (same hidden-page
+            pattern as /logistics/gate-verification above). */}
+        <Route path="/incidents/analytics" element={
+          <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
+            <IncidentAnalytics />
           </ProtectedRoute>
         } />
         <Route path="/tenant-management" element={

@@ -31,6 +31,11 @@ module.exports = (sequelize, DataTypes) => {
             allowNull: false,
             defaultValue: 'Active'
         },
+        resolvedAt: {
+            type: DataTypes.DATE,
+            allowNull: true,
+            defaultValue: null
+        },
         notes: {
             type: DataTypes.TEXT,
             allowNull: true,
