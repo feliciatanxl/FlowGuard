@@ -450,3 +450,7 @@ client/.env.local
 # terminal output or short-lived credentials. Keep authored reflections and
 # Markdown implementation notes, but never commit raw session JSONL.
 flowguard-ai/**/*.jsonl
+
+# Exception: Gladwin's raw session logs are intentionally tracked as rubric/grading
+# evidence of AI-assisted work, despite the general rule above.
+!flowguard-ai/Ng Ching Heng, Gladwin/ai-logs/*.jsonl

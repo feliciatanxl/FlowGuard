@@ -88,6 +88,13 @@ docker push $REG/flowguard-client:v1
 
 (Or `gcloud builds submit` per directory with the same tags.)
 
+Pi runtime Settings is preferred. For a device-specific kiosk image only, the client
+Dockerfile also accepts the public optional arguments
+`VITE_ENABLE_PI_CAMERA`, `VITE_PI_CAMERA_HEALTH_URL`,
+`VITE_PI_CAMERA_STREAM_URL`, and `VITE_PI_CAMERA_SNAPSHOT_URL`. Leave all four unset
+for the normal deployable build with webcam fallback. These values ship in JavaScript;
+never use them for secrets and do not bake a transient hotspot IP into a shared image.
+
 ## Deploy
 
 Put every secret in **Secret Manager** first (`APP_SECRET`, `DB_PWD`,
@@ -179,10 +186,12 @@ are unacceptable for the demo.
   persists frames.
 - **PDPA retention**: the backend's 90-day transcript cleanup cron starts with
   the server process.
-- **Raspberry Pi**: production builds contain **no default Pi address at all**
-  (the `raspberrypi.local` fallback is dev-only; kiosk builds opt in via
-  `VITE_PI_CAMERA_*`). Without it, scanner pages automatically use the browser
-  webcam. The SecurePi edge node pushes alerts *outbound* to
+- **Raspberry Pi**: production builds contain **no active default Pi address**.
+  The laptop browser can set the current hotspot address at Settings -> Raspberry
+  Pi Camera without rebuilding; optional public `VITE_PI_CAMERA_*` build arguments
+  remain available as fallback. Without runtime or Vite configuration, scanner
+  pages make no Pi request and automatically use the browser webcam. The browser,
+  not Cloud Run, connects directly to the private Pi. The SecurePi edge node pushes alerts *outbound* to
   `/api/edge/detection-alerts` with `EDGE_INGEST_TOKEN` — the cloud never
   needs to reach into the LAN.
 - Nginx adds `X-Content-Type-Options`, `X-Frame-Options: DENY` and a referrer

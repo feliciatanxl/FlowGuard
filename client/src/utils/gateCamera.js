@@ -59,6 +59,7 @@ export const SCANNER_STATE = Object.freeze({
   CLOUD: 'cloud-trying',               // Trying cloud-assisted scan…
   MANUAL: 'manual-available',          // Manual entry available
   PERMISSION_DENIED: 'permission-denied', // Camera permission denied
+  IN_USE: 'camera-in-use',             // Camera is owned by another app/tab
   UNAVAILABLE: 'camera-unavailable',   // Camera unavailable
 });
 
@@ -358,7 +359,11 @@ export async function startQrScan({
     }
     const mapped = e?.code ? e : mapGetUserMediaError(e);
     onError?.({ code: mapped.code, message: mapped.message });
-    state(mapped.code === 'permission' ? SCANNER_STATE.PERMISSION_DENIED : SCANNER_STATE.UNAVAILABLE);
+    state(
+      mapped.code === 'permission' ? SCANNER_STATE.PERMISSION_DENIED
+        : mapped.code === 'in-use' ? SCANNER_STATE.IN_USE
+          : SCANNER_STATE.UNAVAILABLE
+    );
     cleanup();
     return () => {};
   }

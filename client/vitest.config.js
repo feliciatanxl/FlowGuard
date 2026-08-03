@@ -6,5 +6,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    // The UI suites create full jsdom/React trees. Bounding concurrency avoids
+    // CPU starvation causing unrelated 5-second async assertions to time out.
+    maxWorkers: 4,
   },
 })

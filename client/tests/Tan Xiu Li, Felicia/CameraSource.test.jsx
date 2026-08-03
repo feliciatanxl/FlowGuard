@@ -68,8 +68,8 @@ describe("fallback reasons", () => {
 });
 
 describe("isPiConfigured", () => {
-  test("true in dev where the raspberrypi.local snapshot URL is present", () => {
-    expect(isPiConfigured()).toBe(true);
+  test("false when no runtime or environment Pi URL is configured", () => {
+    expect(isPiConfigured()).toBe(false);
   });
 });
 
@@ -93,6 +93,7 @@ describe("error mapping", () => {
   test("permission errors map to a coded 'permission' error", () => {
     expect(mapGetUserMediaError({ name: "NotAllowedError" }).code).toBe("permission");
     expect(mapGetUserMediaError({ name: "NotFoundError" }).code).toBe("no-camera");
+    expect(mapGetUserMediaError({ name: "NotReadableError" }).code).toBe("in-use");
     expect(mapGetUserMediaError({ name: "Whatever" }).code).toBe("unknown");
   });
 });
@@ -126,6 +127,37 @@ describe("startWebcamStream + stopStream", () => {
     Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
     const video = { srcObject: null, play: vi.fn() };
     await expect(startWebcamStream(video)).rejects.toMatchObject({ code: "permission" });
+  });
+
+  test("maps missing and already-in-use cameras to distinct coded errors", async () => {
+    const getUserMedia = vi.fn()
+      .mockRejectedValueOnce(Object.assign(new Error("missing"), { name: "NotFoundError" }))
+      .mockRejectedValueOnce(Object.assign(new Error("busy"), { name: "NotReadableError" }));
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
+    const video = { srcObject: null, play: vi.fn() };
+
+    await expect(startWebcamStream(video)).rejects.toMatchObject({ code: "no-camera" });
+    await expect(startWebcamStream(video)).rejects.toMatchObject({ code: "in-use" });
+  });
+
+  test("stops a late getUserMedia result when its source request was aborted", async () => {
+    let resolveStream;
+    const streamPromise = new Promise((resolve) => { resolveStream = resolve; });
+    const track = fakeTrack();
+    const stream = { getTracks: () => [track], getVideoTracks: () => [track] };
+    const getUserMedia = vi.fn().mockReturnValue(streamPromise);
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
+    const video = { srcObject: null, play: vi.fn() };
+    const controller = new AbortController();
+
+    const pending = startWebcamStream(video, QR_WEBCAM_CONSTRAINTS, { signal: controller.signal });
+    controller.abort();
+    resolveStream(stream);
+
+    await expect(pending).rejects.toMatchObject({ code: "aborted" });
+    expect(track.stop).toHaveBeenCalledTimes(1);
+    expect(video.srcObject).toBeNull();
+    expect(video.play).not.toHaveBeenCalled();
   });
 
   test("stopStream is null-safe and stops every track", () => {

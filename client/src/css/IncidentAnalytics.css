@@ -1,0 +1,125 @@
+/* Incident Deep Analytics subpage — reuses Dashboard.css's .analytics-panel /
+   .zones-list / .zone-row / .legend-* shell (same accessible-chart shapes as
+   AlertTrendChart/TopAlertZonesChart) and IncidentDashboard.css's .inc-* header
+   button styles. Only the pieces unique to this page live here. */
+
+.ia-kpi-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.ia-stat-tile {
+  background: #1e2539;
+  border: 1px solid #2d364f;
+  border-radius: 12px;
+  padding: 20px 24px;
+}
+
+.ia-stat-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: #64748b;
+  margin-bottom: 8px;
+}
+
+.ia-stat-value {
+  font-size: 2rem;
+  font-weight: 800;
+  color: #f8fafc;
+  line-height: 1;
+  margin-bottom: 10px;
+}
+
+.ia-stat-sublabel {
+  font-size: 0.78rem;
+  color: #94a3b8;
+  margin-top: 8px;
+}
+
+/* --- MTTR sparkline --- */
+.ia-sparkline {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 36px;
+}
+
+.ia-sparkline-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  background: #475569; /* de-emphasis gray for past days */
+  border-radius: 2px 2px 0 0;
+  min-height: 2px;
+}
+
+.ia-sparkline-bar-current {
+  background: #3b82f6; /* accent = the current/most recent day */
+}
+
+/* --- AI Accuracy meter --- */
+.ia-meter {
+  height: 12px;
+  border-radius: 999px;
+  background: #2d364f; /* lighter step of the same card-border tone = the track */
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.ia-meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.2s;
+}
+
+.ia-meter-fill-accent  { background: #3b82f6; }
+.ia-meter-fill-warning { background: #f59e0b; }
+.ia-meter-fill-danger  { background: #ef4444; }
+
+/* --- Confidence bucket stacked bar (status colors: valid = good, false positive =
+   critical — always paired with the ✓/✕ icon + label, never color alone) --- */
+.ia-confidence-track {
+  display: flex;
+}
+
+.ia-confidence-segment {
+  height: 100%;
+}
+
+.ia-confidence-segment + .ia-confidence-segment {
+  margin-left: 2px;
+}
+
+.ia-confidence-valid { background: #0ca30c; }
+.ia-confidence-fp    { background: #d03b3b; }
+.ia-legend-valid      { background: #0ca30c; border-radius: 50%; }
+.ia-legend-fp         { background: #d03b3b; border-radius: 50%; }
+
+/* --- Funnel's False Positive aside row (separate branch, not a 5th stage) --- */
+.ia-funnel-aside {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed #2d364f;
+}
+
+.ia-funnel-aside-count {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #94a3b8;
+}
+
+.analytics-panel + .analytics-panel {
+  margin-top: 20px;
+}
+
+@media (max-width: 900px) {
+  .ia-kpi-row {
+    grid-template-columns: 1fr;
+  }
+}

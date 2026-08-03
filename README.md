@@ -122,31 +122,40 @@ For local development, Node reaches FastAPI through `FACE_AI_URL=http://127.0.0.
 
 ## Gate camera source (Raspberry Pi Camera Module 3)
 
-The Gate Verification page uses ONE camera-source workflow for both QR capture and
-number-plate OCR. Source priority is:
+The deployed FlowGuard JavaScript in the laptop browser connects directly to the Pi
+over their shared hotspot. Cloud Run does not connect to or proxy the private Pi IP.
+Gate Scanner, Gate Verification, V-Patrol, Face Enrolment, and Facial Evaluation use
+the same runtime-aware camera configuration. Source priority is:
 
 1. Raspberry Pi Camera Module 3 — only when configured **and** reachable
 2. Laptop webcam
 3. Photo upload / manual entry
 
-At page start the page probes the Pi once (cooldown-aware) and shows the state:
+At page start a configured Pi is probed once (cooldown-aware) and shows the state:
 `Checking Raspberry Pi Camera Module 3...` → `Pi Camera connected`, or
 `Pi Camera unavailable — Laptop Webcam fallback active`, or `Laptop Webcam active`.
 The webcam is never delayed by a Pi timeout; the FM can switch sources manually
 afterwards. Pi snapshots are decoded through the authenticated `/api/qr/decode`
 proxy (never the private AI service directly) and are held in memory only — no frame
-is ever written to disk or `localStorage`. An MJPEG preview uses an `<img>` on
-`VITE_PI_CAMERA_STREAM_URL`; processing always pulls a fresh `/snapshot` still with a
+is ever written to disk or `localStorage`. `localStorage` contains only the normalized
+base URL under `flowguard.piCameraBaseUrl`. An MJPEG preview uses an `<img>` on the
+resolved `/video_feed` endpoint; processing always pulls a fresh `/snapshot` still with a
 cache-busting query. Switching away from the webcam stops its `MediaStream` tracks,
 and QR and plate webcam streams are never active at the same time.
 
-Canonical client env vars (`client/.env.local`, see `client/.env.example`):
+Runtime setup at Settings -> Raspberry Pi Camera is preferred because hotspot IPs can
+change without a frontend rebuild. Optional public build-time fallbacks are:
 
 ```bash
+VITE_ENABLE_PI_CAMERA=true
+VITE_PI_CAMERA_HEALTH_URL=http://<PI-IP>:8081/health
 VITE_PI_CAMERA_STREAM_URL=http://<PI-IP>:8081/video_feed
 VITE_PI_CAMERA_SNAPSHOT_URL=http://<PI-IP>:8081/snapshot
-VITE_ENABLE_PI_CAMERA=true
 ```
+
+The resolution order is a valid runtime base URL, valid Vite endpoints, then
+unconfigured webcam fallback. `VITE_ENABLE_PI_CAMERA=false` prevents every Pi probe,
+stream, and snapshot request. Never put secrets in `VITE_` values.
 
 Local Raspberry Pi 4 setup (Camera Module 3, Picamera2), serving port 8081:
 
@@ -157,17 +166,13 @@ python3 pi_camera_steam.py
 # routes: /  /health  /video_feed  /snapshot   (hostname -I gives <PI-IP>)
 ```
 
-**Deployment limitation (do not misread this as broken):** a public HTTPS cloud
-frontend cannot fetch an HTTP private-LAN Pi, and there is deliberately **no** cloud
-backend proxy to a private Pi address. Pi mode is for the local laptop/kiosk frontend
-on the same network or hotspot. A cloud build with no `VITE_PI_CAMERA_*` URLs performs
-**no** Pi probe and uses the laptop webcam immediately. SecurePi alert ingestion is
-unaffected — the Pi pushes outbound to the authenticated edge route; the cloud never
-reaches into the LAN.
-
-A locally served frontend may still use the deployed backend and its staging database;
-only direct browser-to-Pi camera traffic stays on the local network. Do not expose the
-Pi server's port 8081 publicly without TLS, authentication, and network access control.
+Chrome may ask the user to allow local-network access for the deployed origin. Browser
+behavior varies, so use Settings -> Test Connection and follow the displayed guidance.
+With no runtime or Vite URL the client makes no Pi request and uses the laptop webcam
+immediately. The Pi camera endpoints are unauthenticated: use only a trusted demo
+network and never forward port 8081 publicly. See
+[`docs/Tan Xiu Li, Felicia/pi-camera-module-3-integration-plan.md`](docs/Tan%20Xiu%20Li,%20Felicia/pi-camera-module-3-integration-plan.md)
+for the exact hotspot demo procedure.
 
 ## FM dashboard live data
 
@@ -201,7 +206,7 @@ Safe manual verification (no unauthenticated test endpoint is added):
 4. Remove the test data with the existing FM-only `DELETE /api/detection-alerts/:id`
    (soft-deletes the alert and its linked incident).
 
-## Tests and latest audited results
+## Tests and 28 July 2026 audit snapshot
 
 Audit date: 28 July 2026. No camera or private face images were required.
 

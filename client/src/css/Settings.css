@@ -117,6 +117,71 @@
   padding: 0 4px;
 }
 
+/* --- Runtime Raspberry Pi camera configuration --- */
+.pi-camera-settings-body {
+  display: grid;
+  gap: 16px;
+  padding: 24px 30px;
+}
+
+.pi-camera-url-label {
+  color: #e2e8f0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.pi-camera-url-input {
+  width: min(100%, 620px);
+  max-width: 620px;
+}
+
+.pi-camera-meta,
+.pi-camera-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+}
+
+.pi-camera-meta {
+  color: #94a3b8;
+  font-size: 0.9rem;
+}
+
+.pi-camera-meta strong[data-status="success"] { color: #34d399; }
+.pi-camera-meta strong[data-status="permission-required"] { color: #fbbf24; }
+.pi-camera-meta strong[data-status="unreachable"],
+.pi-camera-meta strong[data-status="invalid-url"],
+.pi-camera-meta strong[data-status="unexpected-response"] { color: #f87171; }
+
+.secondary-btn {
+  background: #334155;
+}
+
+.secondary-btn:hover { background: #475569; }
+.save-btn:disabled { cursor: not-allowed; opacity: 0.6; }
+
+.pi-camera-message,
+.pi-camera-note {
+  margin: 0;
+  color: #cbd5e1;
+  line-height: 1.5;
+}
+
+.pi-camera-instructions {
+  margin: 0;
+  padding-left: 22px;
+  color: #cbd5e1;
+  line-height: 1.7;
+}
+
+.pi-camera-note {
+  padding: 12px 14px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #0f172a;
+}
+
 /* --- Mobile Responsiveness --- */
 @media (max-width: 768px) {
   .setting-row {
@@ -138,4 +203,10 @@
   }
 
   .save-btn { width: 100%; }
+
+  .pi-camera-meta,
+  .pi-camera-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
