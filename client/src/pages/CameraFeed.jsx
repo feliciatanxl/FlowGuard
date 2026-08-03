@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { buildAnalyzeFramePayload, buildBearerHeaders } from '../utils/analyzeFrame';
 import '../css/CameraFeed.css';
@@ -6,7 +6,7 @@ import '../css/CameraFeed.css';
 const HARDWARE_STREAM_PATTERN = /video_feed|mjpeg|mjpg/i;
 const MIN_DISPLAY_CONFIDENCE = 0.18;
 
-export function isHardwareStream(video) {
+function isHardwareStream(video) {
   if (typeof video !== 'string' || !/^https?:\/\//i.test(video)) return false;
   return HARDWARE_STREAM_PATTERN.test(video);
 }
@@ -27,85 +27,17 @@ export default function CameraFeed({ cam }) {
   const isHardware = isHardwareStream(cam.video);
   const [hardwareStatus, setHardwareStatus] = useState('loading');
 
-  useEffect(() => {
-    if (isHardware) return undefined;
-
-    let cancelled = false;
-    let activeController = null;
-
-    const analyzeFrame = async () => {
-      if (processingRef.current || cancelled) return;
-
-      const headers = buildBearerHeaders(localStorage.getItem('accessToken'));
-      if (!headers) return;
-
-      const video = videoRef.current;
-      if (!video || video.readyState < 2 || video.videoWidth === 0) return;
-
-      processingRef.current = true;
-
-      try {
-        const captureCanvas = document.createElement('canvas');
-        const maxWidth = 1280;
-        const scale = Math.min(1, maxWidth / video.videoWidth);
-
-        captureCanvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-        captureCanvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-
-        const captureCtx = captureCanvas.getContext('2d');
-        captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
-
-        // Higher quality than the old 0.35/low-resolution path so smaller
-        // objects such as chairs, monitors, bottles and laptops survive JPEG
-        // compression and remain visible to YOLO.
-        const image = captureCanvas.toDataURL('image/jpeg', 0.72);
-
-        const payload = buildAnalyzeFramePayload(image, cam, 'Uploaded Video');
-        const controller = new AbortController();
-        activeController = controller;
-
-        const response = await axios.post('/api/yolo/analyze-frame', payload, {
-          timeout: 20000,
-          headers,
-          signal: controller.signal,
-        });
-
-        if (!cancelled) drawDetections(response.data);
-      } catch (err) {
-        if (!cancelled) {
-          console.error(`${cam.code || cam.id} detection error`, err);
-        }
-      } finally {
-        activeController = null;
-        processingRef.current = false;
-      }
-    };
-
-    const handleReady = () => {
-      analyzeFrame();
-    };
-
-    const video = videoRef.current;
-    video?.addEventListener('loadeddata', handleReady);
-
-    analyzeFrame();
-    const interval = setInterval(analyzeFrame, 1800);
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-      video?.removeEventListener('loadeddata', handleReady);
-      activeController?.abort();
-      activeController = null;
-      processingRef.current = false;
-    };
-  }, [isHardware, cam.video, cam.databaseId, cam.zoneId]);
-
-  useEffect(() => {
+  // Reset the hardware stream badge to "loading" whenever the source URL
+  // changes (React's adjust-state-on-prop-change pattern — no effect needed).
+  const [prevVideo, setPrevVideo] = useState(cam.video);
+  if (cam.video !== prevVideo) {
+    setPrevVideo(cam.video);
     if (isHardware) setHardwareStatus('loading');
-  }, [isHardware, cam.video]);
+  }
 
-  const drawDetections = (data) => {
+  // Declared before the analyze effect so the effect can list it as a stable
+  // dependency (the React Compiler forbids referencing a later-declared value).
+  const drawDetections = useCallback((data) => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
@@ -180,7 +112,81 @@ export default function CameraFeed({ cam }) {
         ctx.fillStyle = '#05070d';
         ctx.fillText(label, labelX + 2, labelY);
       });
-  };
+  }, []);
+
+  useEffect(() => {
+    if (isHardware) return undefined;
+
+    let cancelled = false;
+    let activeController = null;
+
+    const analyzeFrame = async () => {
+      if (processingRef.current || cancelled) return;
+
+      const headers = buildBearerHeaders(localStorage.getItem('accessToken'));
+      if (!headers) return;
+
+      const video = videoRef.current;
+      if (!video || video.readyState < 2 || video.videoWidth === 0) return;
+
+      processingRef.current = true;
+
+      try {
+        const captureCanvas = document.createElement('canvas');
+        const maxWidth = 1280;
+        const scale = Math.min(1, maxWidth / video.videoWidth);
+
+        captureCanvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+        captureCanvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+
+        const captureCtx = captureCanvas.getContext('2d');
+        captureCtx.drawImage(video, 0, 0, captureCanvas.width, captureCanvas.height);
+
+        // Higher quality than the old 0.35/low-resolution path so smaller
+        // objects such as chairs, monitors, bottles and laptops survive JPEG
+        // compression and remain visible to YOLO.
+        const image = captureCanvas.toDataURL('image/jpeg', 0.72);
+
+        const payload = buildAnalyzeFramePayload(image, cam, 'Uploaded Video');
+        const controller = new AbortController();
+        activeController = controller;
+
+        const response = await axios.post('/api/yolo/analyze-frame', payload, {
+          timeout: 20000,
+          headers,
+          signal: controller.signal,
+        });
+
+        if (!cancelled) drawDetections(response.data);
+      } catch (err) {
+        if (!cancelled) {
+          console.error(`${cam.code || cam.id} detection error`, err);
+        }
+      } finally {
+        activeController = null;
+        processingRef.current = false;
+      }
+    };
+
+    const handleReady = () => {
+      analyzeFrame();
+    };
+
+    const video = videoRef.current;
+    video?.addEventListener('loadeddata', handleReady);
+
+    analyzeFrame();
+    const interval = setInterval(analyzeFrame, 1800);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      video?.removeEventListener('loadeddata', handleReady);
+      activeController?.abort();
+      activeController = null;
+      processingRef.current = false;
+    };
+  }, [isHardware, cam, drawDetections]);
 
   const displayCode = cam.code || cam.id;
 

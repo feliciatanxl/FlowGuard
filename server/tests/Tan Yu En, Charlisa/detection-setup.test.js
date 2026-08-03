@@ -71,6 +71,21 @@ describe("GET /api/zones", () => {
     const res = await request(app).get("/api/zones").set("Authorization", `Bearer ${staffToken}`);
     expect(res.status).toBe(200);
   });
+
+  test("zone database errors use the stable public 500 response", async () => {
+    const dbError = new Error('relation monitoring_zones_private does not exist');
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockMonitoringZone.findAll.mockRejectedValue(dbError);
+    try {
+      const res = await request(app).get("/api/zones").set("Authorization", `Bearer ${staffToken}`);
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Unable to process the request.' });
+      expect(JSON.stringify(res.body)).not.toContain('monitoring_zones_private');
+      expect(log).toHaveBeenCalledWith('Zone list failed:', dbError);
+    } finally {
+      log.mockRestore();
+    }
+  });
 });
 
 describe("GET /api/zones/:id", () => {
@@ -398,6 +413,19 @@ describe("detection_type — explicit Detection Setup category", () => {
     expect(mockMonitoringZone.create.mock.calls[0][0]).toEqual(expect.objectContaining({ detection_type: "crowd_density" }));
     expect(res.body.detection_type).toBe("crowd_density");
   });
+
+  test.each(["unattended_object", "crowd_density", "unauthorized_access"])(
+    "POST accepts existing detection_type '%s' (201)",
+    async (detectionType) => {
+      mockMonitoringZone.create.mockResolvedValue(makeZoneInstance({ detection_type: detectionType }));
+      const res = await request(app)
+        .post("/api/zones")
+        .set("Authorization", `Bearer ${fmToken}`)
+        .send({ ...validPayload, detection_type: detectionType });
+      expect(res.status).toBe(201);
+      expect(res.body.detection_type).toBe(detectionType);
+    }
+  );
 
   test("unsupported detection_type returns 400", async () => {
     const res = await request(app)

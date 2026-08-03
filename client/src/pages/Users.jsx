@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import axios from 'axios';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -47,24 +47,29 @@ const Users = () => {
   const [addSubmitting, setAddSubmitting] = useState(false);
   const [addError, setAddError] = useState('');
 
-  const fetchUsers = async () => {
-    setLoading(true);
+  // Initial loading is driven by the `loading` state's initial `true`; refetches
+  // after create/suspend/delete refresh the table in place without blanking it.
+  const fetchUsers = useCallback(async (signal) => {
     try {
       const response = await axios.get(`${API_BASE_URL}/user`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
+        signal,
       });
       setUsers(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
+      if (axios.isCancel?.(error) || error?.code === 'ERR_CANCELED') return;
       console.error('Database sync failed:', error);
       setUsers([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [token]);
 
   useEffect(() => {
-    fetchUsers();
-  }, []);
+    const controller = new AbortController();
+    (async () => { await fetchUsers(controller.signal); })();
+    return () => controller.abort();
+  }, [fetchUsers]);
 
   useEffect(() => {
     if (!notification) return undefined;

@@ -1,4 +1,3 @@
-import React from 'react';
 
 const NodeCard = ({ id, name, type, status }) => {
   let statusClass = '';

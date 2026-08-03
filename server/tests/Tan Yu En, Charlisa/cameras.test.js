@@ -55,6 +55,21 @@ describe("GET /api/cameras", () => {
     const res = await request(app).get("/api/cameras").set("Authorization", `Bearer ${staffToken}`);
     expect(res.status).toBe(200);
   });
+
+  test("database failures are logged but SQL details are not returned", async () => {
+    const dbError = new Error('column cameras.secret_schema does not exist');
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockCamera.findAll.mockRejectedValue(dbError);
+    try {
+      const res = await request(app).get("/api/cameras").set("Authorization", `Bearer ${staffToken}`);
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Unable to process the request.' });
+      expect(JSON.stringify(res.body)).not.toMatch(/secret_schema|column/i);
+      expect(log).toHaveBeenCalledWith('Camera list failed:', dbError);
+    } finally {
+      log.mockRestore();
+    }
+  });
 });
 
 describe("POST /api/cameras", () => {

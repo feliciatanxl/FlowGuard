@@ -4,7 +4,9 @@ import { API_BASE_URL } from '../constants/api';
 import { sortEvaluationLabels, UNKNOWN_LABEL } from '../constants/evaluation';
 export default function useEvaluationParticipants({ autoSync = false } = {}) {
   const [participants, setParticipants] = useState([]); const [loading, setLoading] = useState(true); const [error, setError] = useState('');
-  const [autoSyncError, setAutoSyncError] = useState('');
+  // Auto-sync failures are non-fatal (the directory still loads); the message
+  // is set for future surfacing but not currently rendered, so the value is unread.
+  const [, setAutoSyncError] = useState('');
   // Guards the once-per-mount automatic sync: re-renders and reload() calls
   // must never repeat the POST (only a fresh mount or the manual button can).
   const didAutoSync = useRef(false);

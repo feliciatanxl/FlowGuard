@@ -1,7 +1,6 @@
 // Frontend tests — the public Driver Pass stays live: Singapore slot display,
 // no-store fetch, and background refresh on window focus (status/slot update)
 // without flickering the QR, with clean teardown on unmount.
-import React from "react";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router";
 import { vi, describe, test, expect, afterEach } from "vitest";

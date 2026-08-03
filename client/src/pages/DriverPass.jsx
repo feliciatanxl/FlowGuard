@@ -66,8 +66,11 @@ const fmt = (v) => formatSingaporeBookingDateTime(v);
 const DriverPass = () => {
     const { ref } = useParams(); // booking_ref from /driver-pass/:ref
     const [booking, setBooking] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [notFound, setNotFound] = useState(false);
+    // Initial load/not-found derive from `ref` so the missing-ref case needs no
+    // synchronous setState inside the effect below (nothing to fetch → show
+    // "not found" immediately).
+    const [loading, setLoading] = useState(Boolean(ref));
+    const [notFound, setNotFound] = useState(!ref);
     const [copied, setCopied] = useState(false);
     const [refCopied, setRefCopied] = useState(false);
 
@@ -89,8 +92,9 @@ const DriverPass = () => {
         aliveRef.current = true;
         stoppedRef.current = false;
 
-        // Guard: don't call /api/bookings/ with an empty ref.
-        if (!ref) { setNotFound(true); setLoading(false); return; }
+        // Guard: don't call /api/bookings/ with an empty ref. Initial state
+        // already reflects the not-found/idle case, so no setState is needed here.
+        if (!ref) return;
 
         // A single reusable loader. `background` refreshes never show the
         // full-page loader and never wipe a good pass on a transient failure —

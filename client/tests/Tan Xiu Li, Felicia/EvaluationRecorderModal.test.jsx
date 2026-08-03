@@ -1,6 +1,5 @@
 // Shared live evaluation recorder modal — saving must be pure local storage
 // with zero production side effects (no recognition rerun, no API calls).
-import React from "react";
 import { render, screen, fireEvent, within, cleanup } from "@testing-library/react";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 

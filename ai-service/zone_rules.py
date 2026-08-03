@@ -10,13 +10,31 @@ resolve_zone_config() below: it fetches rows from Postgres and hands them to thi
 branching logic, which decides what "the selected camera's Detection Setup rule" means.
 """
 
-# Used only when a requested camera/zone can't be resolved to a rule (5 min fallback).
-DEFAULT_ZONE_THRESHOLD_SEC = 300
+import os
+
+
+def _read_default_zone_threshold_sec():
+    """Used only when a requested camera/zone can't be resolved to a rule (5 min
+    fallback). Configurable via the DEFAULT_ZONE_THRESHOLD_SEC env var; falls back to
+    300 if unset or not a valid positive integer, so old deployments without the
+    variable keep behaving exactly as before."""
+    raw = os.getenv("DEFAULT_ZONE_THRESHOLD_SEC")
+    if raw is None:
+        return 300
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 300
+    return value if value > 0 else 300
+
+
+DEFAULT_ZONE_THRESHOLD_SEC = _read_default_zone_threshold_sec()
 
 
 def zone_row_to_config(row, applied_camera_id=None):
-    """row = (id, zone_name, time_threshold, unattended_threshold_seconds, detection_enabled)"""
-    zone_id, zone_name, time_threshold, unattended_threshold_seconds, detection_enabled = row
+    """row = (id, zone_name, time_threshold, unattended_threshold_seconds, detection_enabled,
+    density_threshold)"""
+    zone_id, zone_name, time_threshold, unattended_threshold_seconds, detection_enabled, density_threshold = row
     threshold = (
         unattended_threshold_seconds if unattended_threshold_seconds is not None
         else int(time_threshold) * 60
@@ -26,6 +44,10 @@ def zone_row_to_config(row, applied_camera_id=None):
         "applied_zone_id": zone_id,
         "applied_zone_name": zone_name,
         "applied_threshold_seconds": threshold,
+        # Zone's configured max-occupancy rule (Detection Setup's "Density threshold"
+        # field) — None means the zone has no override, so callers fall back to the
+        # global PERSON_CRITICAL_COUNT default.
+        "applied_density_threshold": density_threshold,
         "detection_enabled": bool(detection_enabled),
         "zone_error": None,
     }
@@ -37,6 +59,7 @@ def error_config(camera_id, zone_id, error):
         "applied_zone_id": zone_id,
         "applied_zone_name": None,
         "applied_threshold_seconds": DEFAULT_ZONE_THRESHOLD_SEC,
+        "applied_density_threshold": None,
         "detection_enabled": False,
         "zone_error": error,
     }

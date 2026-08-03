@@ -1,7 +1,6 @@
 // Frontend tests — the Logistics management table and Edit form honour the
 // Singapore time contract: a slot stored as 10:01 UTC shows as 27 Jul 2026,
 // 6:01 PM (never 28 Jul 2:01 AM), and editing round-trips the instant.
-import React from "react";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
@@ -20,7 +19,8 @@ const BOOKING = {
   transport_company: "NinjaVan", driver_name: "Ahmad", driver_phone: "+6591234567",
   loading_bay: "Bay A",
   slot_start: "2026-07-27T10:01:00.000Z",
-  slot_end: "2026-07-27T10:03:00.000Z",
+  // A valid 1-hour window (6:01–7:01 PM SG); the duration rule now requires 1–2 h.
+  slot_end: "2026-07-27T11:01:00.000Z",
   notes: "fragile", status: "Pending",
 };
 
@@ -63,7 +63,7 @@ describe("Logistics Singapore time", () => {
     const startInput = container.querySelector('input[name="slot_start"]');
     expect(startInput.value).toBe("2026-07-27T18:01");
     const endInput = container.querySelector('input[name="slot_end"]');
-    expect(endInput.value).toBe("2026-07-27T18:03");
+    expect(endInput.value).toBe("2026-07-27T19:01");
   });
 
   test("saving an edit sends explicit UTC ISO and refreshes the table", async () => {
@@ -80,7 +80,7 @@ describe("Logistics Singapore time", () => {
     expect(url).toMatch(/\/api\/bookings\/42$/);
     // Untouched slot must round-trip back to the same UTC instant (no drift).
     expect(payload.slot_start).toBe("2026-07-27T10:01:00.000Z");
-    expect(payload.slot_end).toBe("2026-07-27T10:03:00.000Z");
+    expect(payload.slot_end).toBe("2026-07-27T11:01:00.000Z");
     // The list is refetched so the management table reflects the saved values.
     expect(mockAxios.get).toHaveBeenCalledTimes(2);
   });

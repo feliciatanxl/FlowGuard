@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
@@ -16,8 +16,10 @@ const StaffManagement = () => {
   const [usage, setUsage] = useState({ current: 0, max: 10, createdAt: null });
   
   const [loading, setLoading] = useState(true);
-  const [currentTime, setCurrentTime] = useState(new Date());
-  
+  // Whether the security key has passed its 48h window. Computed off-render (in
+  // fetchData and a 1s interval) so no impure Date.now() runs during render.
+  const [isExpired, setIsExpired] = useState(false);
+
   const [deleteModal, setDeleteModal] = useState({ isOpen: false, user: null });
   const [notification, setNotification] = useState({ message: '', type: '' });
 
@@ -34,6 +36,47 @@ const StaffManagement = () => {
   const onNewField = (e) => setNewStaff(prev => ({ ...prev, [e.target.name]: e.target.value }));
   const openAdd = () => { setAddError(''); setNewStaff({ name: '', email: '', password: '' }); setAddOpen(true); };
   const closeAdd = () => setAddOpen(false);
+
+  const triggerNotify = useCallback((msg, type = 'error') => {
+    setNotification({ message: msg, type });
+    setTimeout(() => setNotification({ message: '', type: '' }), 4000);
+  }, []);
+
+  // 48h security-key expiry. Date.now() lives here and in the interval effect
+  // below — never in render — so the derived state stays pure.
+  const computeExpired = useCallback((createdAt) => {
+    if (!createdAt) return false;
+    const fortyEightHours = 48 * 60 * 60 * 1000;
+    return Date.now() - new Date(createdAt).getTime() > fortyEightHours;
+  }, []);
+
+  // Declared before its callers (createStaff, the mount effect) so the React
+  // Compiler never sees a use-before-declaration.
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const codeRes = await axios.get(`${API_BASE_URL}/user/my-code`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      setCompanyCode(codeRes.data.companyCode);
+      setUsage({
+        current: codeRes.data.codeCurrentUsage || 0,
+        max: codeRes.data.codeMaxUsage || 10,
+        createdAt: codeRes.data.codeCreatedAt // Received from Hybrid logic backend
+      });
+      setIsExpired(computeExpired(codeRes.data.codeCreatedAt));
+
+      const staffRes = await axios.get(`${API_BASE_URL}/user/my-staff`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setStaff(staffRes.data);
+      setLoading(false);
+    } catch {
+      triggerNotify("Sync Error: Unable to fetch personnel data.");
+      setLoading(false);
+    }
+  }, [token, triggerNotify, computeExpired]);
 
   const createStaff = async (e) => {
     e.preventDefault();
@@ -52,50 +95,17 @@ const StaffManagement = () => {
   };
 
   useEffect(() => {
-    fetchData();
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    (async () => { await fetchData(); })();
+  }, [fetchData]);
+
+  // Re-evaluate expiry every second so an open page flips to EXPIRED the instant
+  // the 48h window passes. setState runs in the interval callback (asynchronous),
+  // never synchronously within the effect body.
+  useEffect(() => {
+    const timer = setInterval(() => setIsExpired(computeExpired(usage.createdAt)), 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [computeExpired, usage.createdAt]);
 
-  const triggerNotify = (msg, type = 'error') => {
-    setNotification({ message: msg, type });
-    setTimeout(() => setNotification({ message: '', type: '' }), 4000);
-  };
-
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      const codeRes = await axios.get(`${API_BASE_URL}/user/my-code`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      
-      setCompanyCode(codeRes.data.companyCode);
-      setUsage({ 
-        current: codeRes.data.codeCurrentUsage || 0, 
-        max: codeRes.data.codeMaxUsage || 10,
-        createdAt: codeRes.data.codeCreatedAt // Received from Hybrid logic backend
-      });
-
-      const staffRes = await axios.get(`${API_BASE_URL}/user/my-staff`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setStaff(staffRes.data);
-      setLoading(false);
-    } catch (err) {
-      triggerNotify("Sync Error: Unable to fetch personnel data.");
-      setLoading(false);
-    }
-  };
-
-  // Helper to determine if the security key is dead
-  const checkIsExpired = () => {
-    if (!usage.createdAt) return false;
-    const fortyEightHours = 48 * 60 * 60 * 1000;
-    const timeElapsed = Date.now() - new Date(usage.createdAt).getTime();
-    return timeElapsed > fortyEightHours;
-  };
-
-  const isExpired = checkIsExpired();
   const isAtCapacity = usage.current >= usage.max;
 
   const openDeleteModal = (user) => setDeleteModal({ isOpen: true, user });
@@ -110,7 +120,7 @@ const StaffManagement = () => {
       setStaff(prev => prev.filter(m => m.id !== id));
       triggerNotify(`${name} removed from system.`, "success");
       closeDeleteModal();
-    } catch (err) {
+    } catch {
       triggerNotify("Operation failed: Database restriction.");
       closeDeleteModal();
     }
@@ -123,10 +133,11 @@ const StaffManagement = () => {
       });
       setCompanyCode(res.data.companyCode);
       // Backend resets these, so we update UI immediately
-      setUsage({ current: 0, max: 10, createdAt: new Date() }); 
+      setUsage({ current: 0, max: 10, createdAt: new Date() });
+      setIsExpired(false);
       triggerNotify("New security key generated!", "success");
-    } catch (err) {
-      triggerNotify("Error generating key."); 
+    } catch {
+      triggerNotify("Error generating key.");
     }
   };
 

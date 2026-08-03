@@ -39,7 +39,6 @@ const fakeStream = () => {
 
 const waitFor = async (assertion, timeout = 1500) => {
   const start = Date.now();
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     try { assertion(); return; } catch (e) {
       if (Date.now() - start > timeout) throw e;
@@ -197,6 +196,28 @@ describe("cloud snapshot fallback (Phase 5)", () => {
 });
 
 describe("start failure handling", () => {
+  test("an aborted pending getUserMedia stops the late stream before attachment", async () => {
+    let resolveCamera;
+    const pendingCamera = new Promise((resolve) => { resolveCamera = resolve; });
+    const stream = fakeStream();
+    const video = fakeVideo();
+    getUserMedia.mockReturnValue(pendingCamera);
+    const controller = new AbortController();
+
+    const startPromise = startQrScan({
+      videoElement: video,
+      onResult: vi.fn(),
+      signal: controller.signal,
+    });
+    controller.abort();
+    resolveCamera(stream);
+    const stop = await startPromise;
+
+    expect(stream._track.stop).toHaveBeenCalledTimes(1);
+    expect(video.srcObject).toBeNull();
+    stop();
+  });
+
   test("a getUserMedia permission denial surfaces a coded error, not a raw exception", async () => {
     getUserMedia.mockRejectedValue(Object.assign(new Error("denied"), { name: "NotAllowedError" }));
     const onError = vi.fn();

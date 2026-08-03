@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import { useCallback, useRef, useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import axios from 'axios';
 import '../css/Enrollment.css';
@@ -41,53 +41,22 @@ const FaceEnrollment = () => {
 
   const allUploaded = photos.front && photos.left && photos.right;
 
-  useEffect(() => {
-    initCameraSource();
-    return () => stopWebcam();
-  }, []);
-
-  const applyCameraSource = (source, statusMsg) => {
+  const applyCameraSource = useCallback((source, statusMsg) => {
     cameraSourceRef.current = source;
     setCameraSource(source);
     setCameraStatusMsg(statusMsg);
     piFailStreakRef.current = 0;
-  };
+  }, []);
 
-  // Probe the Pi on page load (first-time enrolment AND re-enrolment). If the
-  // Pi answers, show its MJPEG preview and capture via /snapshot; otherwise
-  // fall back to the laptop webcam automatically. Node/FastAPI being offline
-  // must NEVER trigger this fallback — only Pi reachability does.
-  const initCameraSource = async () => {
-    const piReachable = await isPiCameraReachable();
-    if (piReachable) {
-      stopWebcam();
-      applyCameraSource(CAMERA_SOURCES.PI, CAMERA_STATUS_MESSAGES.PI_CONNECTED);
-    } else {
-      applyCameraSource(CAMERA_SOURCES.WEBCAM, CAMERA_STATUS_MESSAGES.PI_UNAVAILABLE);
-      await startWebcam();
+  const stopWebcam = useCallback(() => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const tracks = videoRef.current.srcObject.getTracks();
+      tracks.forEach(track => track.stop());
+      videoRef.current.srcObject = null;
     }
-  };
+  }, []);
 
-  // Manual camera source switch (Pi Camera / Laptop Webcam)
-  const selectCameraSource = async (source) => {
-    if (source === cameraSourceRef.current) return;
-    setErrorMessage(null);
-    if (source === CAMERA_SOURCES.PI) {
-      const piReachable = await isPiCameraReachable();
-      if (piReachable) {
-        stopWebcam();
-        applyCameraSource(CAMERA_SOURCES.PI, CAMERA_STATUS_MESSAGES.PI_CONNECTED);
-      } else {
-        applyCameraSource(CAMERA_SOURCES.WEBCAM, CAMERA_STATUS_MESSAGES.PI_UNAVAILABLE);
-        await startWebcam();
-      }
-    } else {
-      applyCameraSource(CAMERA_SOURCES.WEBCAM, CAMERA_STATUS_MESSAGES.WEBCAM_ACTIVE);
-      await startWebcam();
-    }
-  };
-
-  const startWebcam = async () => {
+  const startWebcam = useCallback(async () => {
     // No camera API (insecure context / no webcam): steer the user to manual upload.
     if (!navigator.mediaDevices?.getUserMedia) {
       setErrorMessage("No webcam detected on this device. Use the “Upload Photos” option instead.");
@@ -109,13 +78,46 @@ const FaceEnrollment = () => {
       console.error("Camera access denied", err);
       setErrorMessage("Camera access denied. Enable camera permissions, or use the “Upload Photos” option instead.");
     }
-  };
+  }, []);
 
-  const stopWebcam = () => {
-    if (videoRef.current && videoRef.current.srcObject) {
-      const tracks = videoRef.current.srcObject.getTracks();
-      tracks.forEach(track => track.stop());
-      videoRef.current.srcObject = null;
+  // Probe the Pi on page load (first-time enrolment AND re-enrolment). If the
+  // Pi answers, show its MJPEG preview and capture via /snapshot; otherwise
+  // fall back to the laptop webcam automatically. Node/FastAPI being offline
+  // must NEVER trigger this fallback — only Pi reachability does.
+  const initCameraSource = useCallback(async () => {
+    const piReachable = await isPiCameraReachable();
+    if (piReachable) {
+      stopWebcam();
+      applyCameraSource(CAMERA_SOURCES.PI, CAMERA_STATUS_MESSAGES.PI_CONNECTED);
+    } else {
+      applyCameraSource(CAMERA_SOURCES.WEBCAM, CAMERA_STATUS_MESSAGES.PI_UNAVAILABLE);
+      await startWebcam();
+    }
+  }, [applyCameraSource, startWebcam, stopWebcam]);
+
+  // Declared after the camera helpers above so the effect references no
+  // later-declared value (React Compiler immutability rule).
+  useEffect(() => {
+    (async () => { await initCameraSource(); })();
+    return () => stopWebcam();
+  }, [initCameraSource, stopWebcam]);
+
+  // Manual camera source switch (Pi Camera / Laptop Webcam)
+  const selectCameraSource = async (source) => {
+    if (source === cameraSourceRef.current) return;
+    setErrorMessage(null);
+    if (source === CAMERA_SOURCES.PI) {
+      const piReachable = await isPiCameraReachable();
+      if (piReachable) {
+        stopWebcam();
+        applyCameraSource(CAMERA_SOURCES.PI, CAMERA_STATUS_MESSAGES.PI_CONNECTED);
+      } else {
+        applyCameraSource(CAMERA_SOURCES.WEBCAM, CAMERA_STATUS_MESSAGES.PI_UNAVAILABLE);
+        await startWebcam();
+      }
+    } else {
+      applyCameraSource(CAMERA_SOURCES.WEBCAM, CAMERA_STATUS_MESSAGES.WEBCAM_ACTIVE);
+      await startWebcam();
     }
   };
 

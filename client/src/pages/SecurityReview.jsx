@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
 import SecurityLogIcon from '../components/SecurityLogIcon';
@@ -53,25 +53,29 @@ const SecurityReview = () => {
 
   const token = localStorage.getItem('accessToken');
 
-  const fetchLogs = async (statusFilter) => {
+  const fetchLogs = useCallback(async (statusFilter, signal) => {
     setLoading(true);
     try {
       const query = statusFilter === 'All' ? '?limit=100' : `?status=${encodeURIComponent(statusFilter)}&limit=100`;
       const res = await axios.get(`${API_BASE_URL}/api/security/logs${query}`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
+        signal
       });
       setLogs(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
+      if (axios.isCancel?.(err) || err?.code === 'ERR_CANCELED') return;
       console.error('Failed to load security logs:', err);
       setLogs([]);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
-  };
+  }, [token]);
 
   useEffect(() => {
-    fetchLogs(filter);
-  }, [filter]);
+    const controller = new AbortController();
+    (async () => { await fetchLogs(filter, controller.signal); })();
+    return () => controller.abort();
+  }, [fetchLogs, filter]);
 
   useEffect(() => {
     if (!notification) return;

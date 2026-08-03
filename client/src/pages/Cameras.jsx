@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { Link } from 'react-router';
 import Sidebar from '../components/Sidebar';
@@ -44,12 +44,6 @@ export default function Cameras() {
 
   const selectedCamera = cameraFeeds.find((cam) => cam.id === selectedId) || cameraFeeds[0];
   const activeAlerts = alerts.filter((alert) => alert.status === 'Active');
-  const activeWarningAlerts = activeAlerts.filter((alert) => (
-    String(alert.object_class || '').toLowerCase().includes('warning')
-  ));
-  const activeCriticalAlerts = activeAlerts.filter((alert) => (
-    String(alert.object_class || '').toLowerCase().includes('critical')
-  ));
   const filteredCameras = cameraFeeds.filter((cam) => (
     `${cam.camera_code} ${cam.camera_name} ${cam.location} ${cam.status}`.toLowerCase().includes(query.toLowerCase())
   ));
@@ -61,34 +55,38 @@ export default function Cameras() {
     return { online, maintenance, down };
   }, [cameraFeeds]);
 
-  const fetchCameras = () => {
+  // Headers are rebuilt from the stable token inside each callback so the
+  // callback identities stay stable (no refetch loop from a new header object).
+  const fetchCameras = useCallback((signal) => {
     setCamerasLoading(true);
-    axios.get(CAMERAS_URL, { headers })
+    return axios.get(CAMERAS_URL, { headers: { Authorization: `Bearer ${token}` }, signal })
       .then((res) => {
         const list = Array.isArray(res.data) ? res.data : [];
         setCameraFeeds(list);
         setCamerasOffline(false);
         setSelectedId((prev) => (list.some((cam) => cam.id === prev) ? prev : list[0]?.id ?? null));
       })
-      .catch(() => setCamerasOffline(true))
-      .finally(() => setCamerasLoading(false));
-  };
+      .catch((err) => { if (!(axios.isCancel?.(err) || err?.code === 'ERR_CANCELED')) setCamerasOffline(true); })
+      .finally(() => { if (!signal?.aborted) setCamerasLoading(false); });
+  }, [token]);
 
-  const fetchAlerts = () => {
-    axios.get(ALERTS_URL, { headers })
+  const fetchAlerts = useCallback((signal) => {
+    return axios.get(ALERTS_URL, { headers: { Authorization: `Bearer ${token}` }, signal })
       .then((res) => {
         setAlerts(Array.isArray(res.data) ? res.data : []);
         setAlertsOffline(false);
       })
-      .catch(() => setAlertsOffline(true));
-  };
+      .catch((err) => { if (!(axios.isCancel?.(err) || err?.code === 'ERR_CANCELED')) setAlertsOffline(true); });
+  }, [token]);
 
   useEffect(() => {
-    fetchCameras();
-    fetchAlerts();
-    const interval = setInterval(fetchAlerts, 15000);
-    return () => clearInterval(interval);
-  }, []);
+    const controller = new AbortController();
+    (async () => { await fetchCameras(controller.signal); })();
+    (async () => { await fetchAlerts(controller.signal); })();
+    // Poll alerts every 15s; interval fetches are independent of the mount abort.
+    const interval = setInterval(() => fetchAlerts(), 15000);
+    return () => { controller.abort(); clearInterval(interval); };
+  }, [fetchCameras, fetchAlerts]);
 
   const clearAlert = async (id) => {
     try {

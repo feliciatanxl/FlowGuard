@@ -1,5 +1,4 @@
 // Frontend tests — Smart Logistics page renders, with loading → empty state.
-import React from "react";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { vi, describe, test, expect, beforeEach } from "vitest";

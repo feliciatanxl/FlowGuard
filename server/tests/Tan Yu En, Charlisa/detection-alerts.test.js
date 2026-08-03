@@ -5,9 +5,13 @@
 const request = require("supertest");
 const express = require("express");
 const jwt = require("jsonwebtoken");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
 process.env.APP_SECRET = "test-secret";
 process.env.AI_SERVICE_KEY = "test-service-key";
+process.env.DETECTION_SNAPSHOT_DIR = path.join(os.tmpdir(), "flowguard-detection-alert-read-tests");
 
 const mockDetectionAlert = {
   findAll: jest.fn(),
@@ -118,6 +122,70 @@ describe("GET /api/detection-alerts/:id", () => {
   test("unauthenticated request returns 401", async () => {
     const res = await request(app).get("/api/detection-alerts/4");
     expect(res.status).toBe(401);
+  });
+});
+
+describe("GET /api/detection-alerts/:id/snapshot/:filename", () => {
+  const filename = "123e4567-e89b-42d3-a456-426614174000.jpg";
+  const snapshotUrl = `/api/detection-alerts/4/snapshot/${filename}`;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    fs.rmSync(process.env.DETECTION_SNAPSHOT_DIR, { recursive: true, force: true });
+    fs.mkdirSync(process.env.DETECTION_SNAPSHOT_DIR, { recursive: true });
+  });
+
+  afterAll(() => {
+    fs.rmSync(process.env.DETECTION_SNAPSHOT_DIR, { recursive: true, force: true });
+  });
+
+  test("serves only the UUID filename recorded on the authenticated alert", async () => {
+    const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+    fs.writeFileSync(path.join(process.env.DETECTION_SNAPSHOT_DIR, filename), bytes);
+    mockDetectionAlert.findByPk.mockResolvedValue({ id: 4, snapshot_url: snapshotUrl });
+
+    const res = await request(app).get(snapshotUrl).set("Authorization", `Bearer ${staffToken}`);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/^image\/jpeg/);
+    expect(res.body).toEqual(bytes);
+  });
+
+  test("returns a stable safe 404 when an ephemeral snapshot has expired", async () => {
+    mockDetectionAlert.findByPk.mockResolvedValue({ id: 4, snapshot_url: snapshotUrl });
+    fs.rmSync(process.env.DETECTION_SNAPSHOT_DIR, { recursive: true, force: true });
+
+    const res = await request(app).get(snapshotUrl).set("Authorization", `Bearer ${staffToken}`);
+
+    expect(res.status).toBe(404);
+    expect(res.text).toBe("Not Found");
+    expect(JSON.stringify({ body: res.body, text: res.text })).not.toMatch(/\/tmp|\/app|ENOENT|stack|detection-snapshots/i);
+    expect(fs.existsSync(process.env.DETECTION_SNAPSHOT_DIR)).toBe(false);
+  });
+
+  test.each([
+    "..%2Fescape.jpg",
+    "..%5Cescape.jpg",
+    "%2Ftmp%2Fescape.jpg",
+    "C%3A%5Ctemp%5Cescape.jpg",
+    "%252e%252e%252fescape.jpg",
+    "nested%2Fescape.jpg",
+  ])("rejects untrusted read filename %s before any DB or filesystem lookup", async (untrusted) => {
+    const res = await request(app)
+      .get(`/api/detection-alerts/4/snapshot/${untrusted}`)
+      .set("Authorization", `Bearer ${staffToken}`);
+    expect(res.status).toBe(404);
+    expect(mockDetectionAlert.findByPk).not.toHaveBeenCalled();
+    expect(fs.readdirSync(process.env.DETECTION_SNAPSHOT_DIR)).toHaveLength(0);
+  });
+
+  test("does not serve a valid-looking UUID unless it exactly matches the stored URL", async () => {
+    mockDetectionAlert.findByPk.mockResolvedValue({ id: 4, snapshot_url: snapshotUrl });
+    const other = "123e4567-e89b-42d3-b456-426614174001.jpg";
+    const res = await request(app)
+      .get(`/api/detection-alerts/4/snapshot/${other}`)
+      .set("Authorization", `Bearer ${staffToken}`);
+    expect(res.status).toBe(404);
+    expect(fs.readdirSync(process.env.DETECTION_SNAPSHOT_DIR)).toHaveLength(0);
   });
 });
 
@@ -287,16 +355,25 @@ describe("POST /api/detection-alerts (AI engine service key)", () => {
 
   test("incident creation failure rolls back: 500 and both creates share the transaction", async () => {
     primeCreateMocks();
-    mockIncidentLog.create.mockRejectedValue(new Error("db down"));
-    const res = await request(app)
-      .post("/api/detection-alerts")
-      .set("x-service-key", "test-service-key")
-      .send(alertPayload);
-    expect(res.status).toBe(500);
-    // The alert create ran inside the SAME transaction that the failure aborts,
-    // so the detection alert cannot survive the incident failure.
-    expect(mockDetectionAlert.create.mock.calls[0][1]).toEqual({ transaction: mockTx });
-    expect(mockSequelize.transaction).toHaveBeenCalledTimes(1);
+    const dbError = new Error("db down: detection_alerts.secret_column");
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockIncidentLog.create.mockRejectedValue(dbError);
+    try {
+      const res = await request(app)
+        .post("/api/detection-alerts")
+        .set("x-service-key", "test-service-key")
+        .send(alertPayload);
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Unable to process the request.' });
+      expect(JSON.stringify(res.body)).not.toMatch(/secret_column|db down/i);
+      expect(log).toHaveBeenCalledWith('Detection alert creation failed:', dbError);
+      // The alert create ran inside the SAME transaction that the failure aborts,
+      // so the detection alert cannot survive the incident failure.
+      expect(mockDetectionAlert.create.mock.calls[0][1]).toEqual({ transaction: mockTx });
+      expect(mockSequelize.transaction).toHaveBeenCalledTimes(1);
+    } finally {
+      log.mockRestore();
+    }
   });
 });
 

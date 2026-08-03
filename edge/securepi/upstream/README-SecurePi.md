@@ -1,5 +1,11 @@
 # SecurePi
 
+> **Historical compatibility runtime.** This runnable implementation is retained
+> with its matching off-device tests for legacy regression coverage. It is not the
+> authoritative runtime for new FlowGuard deployments. Use
+> `../repositories/SecurePi_FlowGuard-main/` and its `deploy/` templates for new
+> installations; do not run both runtimes against the same camera simultaneously.
+
 An unattended-bag security monitor for the **Raspberry Pi AI Camera (IMX500)**.
 
 SecurePi runs object detection *on the IMX500 sensor* to spot people and bags
@@ -193,7 +199,10 @@ default). If you change the resolution, scale `--proximity` and
 
 ## Running as a service (headless)
 
-To run automatically on boot, create a systemd unit, e.g.
+The following is the historical standalone layout. New FlowGuard deployments
+should use `../repositories/SecurePi_FlowGuard-main/deploy/securepi.service`
+instead. To run this legacy snapshot automatically on boot, create a systemd unit,
+e.g.
 `/etc/systemd/system/securepi.service`:
 
 ```ini
@@ -252,10 +261,11 @@ camera required:
 python tests/test_securepi.py
 ```
 
-The 10 tests cover: box smoothing, order-independent track matching (two
+The 25 tests cover: box smoothing, order-independent track matching (two
 nearby bags can't swap ids), stable person ids across jittery detections,
 alert threshold + cooldown timing, snapshot pruning (SD-card cap), the
-`events.csv` alert log, and preset resolution/layering/enforcement.
+`events.csv` alert log, preset resolution/layering/enforcement, FlowGuard alert
+payloads, crowd gating, and the legacy MJPEG/health/people-count server.
 
 ## Notes & limitations
 

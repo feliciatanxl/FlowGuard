@@ -1,7 +1,6 @@
 // Frontend tests — Gate Scanner camera source behaviour.
 // Raspberry Pi Gate Camera stays the primary source; the laptop webcam is the
 // automatic fallback when the Pi is unreachable.
-import React from "react";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 

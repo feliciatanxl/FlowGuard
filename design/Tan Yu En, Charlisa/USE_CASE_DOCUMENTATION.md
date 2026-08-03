@@ -24,7 +24,7 @@ Only actors backed by actual code (role constants, middleware checks, or a disti
 | **Security/Operational Staff** | `ROLES.STAFF` | Can view and act on `/camera-inventory` (read-only in the UI) and `/detection-settings`, and can view + transition `DetectionAlert.status` via the API (`requireRole('FM','Staff')`). Has no route access to `/cameras` or `/object-detection` (blocked by `ACCESS.FM_ONLY` route guards) and no nav link to any of these pages in the sidebar. |
 | **Tenant** | `ROLES.TENANT` | Explicitly excluded from every Camera/Zone/DetectionAlert route and page in this feature (`ACCESS.FM_ONLY` / `ACCESS.FM_STAFF` never include `TENANT`); confirmed blocked (403) from alert status changes in `server/tests/.../detection-alerts.test.js`. |
 | **AI Engine (Python YOLO service)** | `verifyServiceOrRole` + `x-service-key` header matched against `AI_SERVICE_KEY` (`server/middlewares/auth.js`) | A trusted private service that can create `DetectionAlert` rows via `POST /api/detection-alerts` without a user JWT. Browser people-count and frame-analysis calls first pass through Node JWT/RBAC, Google ID-token, and service-key handling. |
-| **SecurePi Edge Node** | Bearer token compared to `EDGE_INGEST_TOKEN` (`server/routes/edgeDetectionAlerts.js` lines 35-45) | A physical/simulated Raspberry Pi + IMX500 device that performs its own on-device detection/tracking and pushes alerts to `POST /api/edge/detection-alerts` using a static shared bearer token distinct from the AI engine's service key. Also serves an MJPEG stream and `/health` endpoint that the FlowGuard frontend consumes directly (browser-to-Pi, not through the Node backend). |
+| **SecurePi Edge Node** | Bearer token compared to `EDGE_INGEST_TOKEN` (`server/routes/edgeDetectionAlerts.js` lines 35-45) | A physical/simulated Raspberry Pi + IMX500 device that performs its own on-device detection/tracking and pushes alerts to `POST /api/edge/detection-alerts` using a static shared bearer token distinct from the AI engine's service key. The separate `raspberry-pi/pi_camera_steam.py` camera node serves the MJPEG stream and `/health` endpoint that the FlowGuard frontend consumes directly (browser-to-Pi, not through the Node backend). |
 | **Browser Camera User** | `sourceMode === 'camera'` in `ObjectDetection.jsx` | Not a distinct account/role — this is an FM user who selects the "Browser Camera" video source (their own device webcam via `getUserMedia`) instead of a hardware/SecurePi feed or an uploaded file. Included here only because the prompt's candidate actor list names it and it is a genuine, code-backed mode of interacting with the system, not because it is a separate authentication identity. |
 
 **Actors explicitly not included** because nothing in the code supports them: "System Administrator" (no such role exists — the only roles are `FM`/`Staff`/`Tenant`, confirmed against `client/src/constants/roles.js` and the `User` model's `ENUM('FM','Tenant','Staff')`).
@@ -150,7 +150,7 @@ flowchart LR
 ### UC5 — View SecurePi MJPEG Stream
 - **Actors:** Facilities Manager only
 - **Trigger:** FM selects "Hardware/SecurePi" as the video source on Object Detection (or a camera whose inventory `stream_url` is an `http(s)://.../video_feed` URL is shown on the Camera Wall/`CameraFeed.jsx`).
-- **Preconditions:** SecurePi's upstream script (`edge/securepi/upstream/securePi.py`) must be running its `ThreadingHTTPServer` exposing `GET /video_feed`; frontend resolves the URL via `client/src/utils/securepiStream.js`.
+- **Preconditions:** A configured Pi camera endpoint must expose `GET /video_feed`. New deployments use the maintained FlowGuard Pi camera service (`raspberry-pi/pi_camera_steam.py`); the historical `edge/securepi/upstream/securePi.py` runtime exposes a compatible annotated stream for legacy installations. The frontend resolves the URL via `client/src/utils/securepiStream.js`.
 - **Main flow:** Browser renders a plain `<img>` tag pointed at the MJPEG endpoint — the browser natively decodes the `multipart/x-mixed-replace` stream frame-by-frame; no YOLO `analyze-frame` calls are made for this mode since annotation happens on-device.
 - **Postconditions:** None (view-only). `hardwareStatus` UI state reflects `loading`/`live`/`error` based on the `<img>` `onLoad`/`onError` events.
 - **Exception flow:** On stream error, UI shows "SecurePi feed unavailable" and a "Reconnect SecurePi" button that forces a cache-busted reload.
@@ -158,7 +158,7 @@ flowchart LR
 ### UC6 — Monitor SecurePi Health
 - **Actors:** Facilities Manager only
 - **Trigger:** Automatic, while the Object Detection page is open in hardware mode.
-- **Main flow:** Frontend polls `GET <stream-origin>/health` every 10s; SecurePi's upstream script responds `{status:"online", camera:"IMX500", streaming:true, latest_frame_age_seconds}`.
+- **Main flow:** Frontend polls `GET <stream-origin>/health` every 10s. The maintained camera service returns operational camera status (`status`, `camera`, `targetFps`, `frameAgeMs`, and `sequence`); the historical all-in-one runtime returns its legacy online/stream status. The frontend relies only on HTTP success or failure.
 - **Postconditions:** Drives a `securepi_edge_live`/`securepi_edge_offline` banner state; no data is persisted.
 
 ### UC7 — Create Detection Alert
@@ -266,7 +266,9 @@ flowchart LR
 | `server/routes/zones.js` | — | `monitoring_zones` |
 | `server/routes/detectionAlerts.js` | — | `detection_alerts`, `monitoring_zones`/`cameras` lookup, `incident_logs` atomic create/link and bidirectional sync |
 | `server/routes/edgeDetectionAlerts.js` | — | `detection_alerts`, `monitoring_zones` (lookup), `cameras` (lookup) |
-| `edge/securepi/upstream/securePi.py` | Serves `/video_feed`, `/health`; calls FlowGuard `POST /api/edge/detection-alerts` | `detection_alerts` (via the above route) |
+| `raspberry-pi/pi_camera_steam.py` | Serves `/video_feed`, `/snapshot`, and `/health` for direct browser-to-Pi camera access | none directly |
+| `edge/securepi/repositories/SecurePi_FlowGuard-main/edge/securePi.py` | Runs on-device detection and calls FlowGuard `POST /api/edge/detection-alerts`; it does not provide the browser MJPEG server | `detection_alerts` (via the above route) |
+| `edge/securepi/upstream/securePi.py` | Historical compatibility runtime with integrated annotated `/video_feed`, `/health`, and `/people-count`; not authoritative for new deployments | `detection_alerts` through its FlowGuard bridge |
 
 ## 10. Current Limitations
 
@@ -276,6 +278,6 @@ flowchart LR
 - **`DetectionAlert.incident_log_id` is nullable and not unique.** Current standard and edge ingestion create one linked alert/incident pair atomically, but older alerts can remain unlinked and the database does not enforce one-to-one cardinality.
 - **Two independent implementations of alert validation/link-resolution logic** exist (`server/routes/detectionAlerts.js` and `server/routes/edgeDetectionAlerts.js`) — both now create/link incidents transactionally, but duplicated validation/default mapping can still drift.
 - **Zone/camera link resolution for alerts depends on exact, case-sensitive string matches** against non-unique `zone_name`/`camera_name`/`location` fields — duplicate names can cause an alert to link to the wrong zone/camera, or none at all.
-- **The fallback edge script (`edge/securepi/securepi_edge.py`) has no working OpenCV detector and no MJPEG/health server** — only the "upstream" script (`edge/securepi/upstream/securePi.py`) provides the full streaming + detection experience the frontend is built to consume; the fallback exists only as bridge/demo plumbing per its own README.
+- **The fallback edge script (`edge/securepi/securepi_edge.py`) has no working OpenCV detector and no MJPEG/health server.** The bundled SecurePi_FlowGuard runtime provides on-device detection and alert ingestion, while the separate `raspberry-pi/pi_camera_steam.py` service provides the maintained browser MJPEG/health/snapshot endpoints; deployments that need both must run both components. The historical `edge/securepi/upstream/` runtime retains an all-in-one stream server for compatibility only.
 - **No use-case in this system exposes camera-stream authentication** — the SecurePi `/video_feed` and `/health` endpoints are fetched directly by the browser with no token, relying solely on network placement/firewalling for protection.
 - **The 30-day alert auto-purge (UC13) is unconditional** — it deletes alerts regardless of whether they were ever acknowledged/resolved, with no configurable retention policy in the code.

@@ -1,5 +1,4 @@
 // Frontend tests — V-Patrol Security Timeline cards and compact filters.
-import React from "react";
 import fs from "node:fs";
 import path from "node:path";
 import { render, screen, waitFor, fireEvent, cleanup } from "@testing-library/react";

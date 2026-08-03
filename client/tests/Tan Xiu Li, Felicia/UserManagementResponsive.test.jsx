@@ -2,7 +2,6 @@
 // filtered data: a desktop table (>=1025px) and a dedicated responsive card
 // list (<=1024px, its own DOM — not a CSS table-to-card conversion). Both must
 // carry every field + action, share one data fetch, and preserve FM access.
-import React from 'react';
 import { render, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { vi, describe, test, expect, beforeEach } from 'vitest';

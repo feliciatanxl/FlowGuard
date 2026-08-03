@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
@@ -45,7 +45,7 @@ const Attendance = () => {
     : isTenant ? 'Attendance summaries for your directly linked Staff'
     : 'View your own check-in status and attendance history';
 
-  const fetchAttendanceData = async () => {
+  const fetchAttendanceData = useCallback(async (signal) => {
     setLoading(true);
     setError('');
     try {
@@ -53,21 +53,27 @@ const Attendance = () => {
       if (filter === 'custom') params.date = customDate;
       const res = await axios.get(`${API_BASE_URL}/api/attendance/logs`, {
         headers: { Authorization: `Bearer ${token}` },
-        params
+        params,
+        signal
       });
       setAttendance(res.data);
     } catch (err) {
+      if (axios.isCancel?.(err) || err?.code === 'ERR_CANCELED') return;
       console.error('Failed to load workforce attendance metrics:', err);
       setError(err.response?.data?.error || 'Unable to load attendance right now.');
       setAttendance(null);
     } finally {
-      setLoading(false);
+      // On abort (unmount / filter change) the superseding fetch owns the
+      // spinner — don't clear it here or it flickers off mid-refresh.
+      if (!signal?.aborted) setLoading(false);
     }
-  };
+  }, [token, filter, customDate]);
 
   useEffect(() => {
-    fetchAttendanceData();
-  }, [token, filter, customDate]);
+    const controller = new AbortController();
+    (async () => { await fetchAttendanceData(controller.signal); })();
+    return () => controller.abort();
+  }, [fetchAttendanceData]);
 
   const cards = useMemo(() => {
     const summary = attendance?.summary || {};

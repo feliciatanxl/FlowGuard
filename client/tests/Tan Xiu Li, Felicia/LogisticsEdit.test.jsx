@@ -1,5 +1,4 @@
 // Frontend tests — manual Edit Booking flow (modal reuse + PATCH /api/bookings/:id).
-import React from "react";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";

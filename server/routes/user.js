@@ -20,6 +20,7 @@ const { generateResetToken, digestResetToken } = require('../utils/resetTokenDig
 const { sendPasswordResetEmail } = require('../services/mailer');
 const { assignStableEvaluationLabel, retireEvaluationParticipant } = require('../services/evaluationParticipants');
 const { aiServiceHeaders } = require('../services/aiServiceAuth');
+const { PUBLIC_INTERNAL_ERROR } = require('../utils/safeHttpError');
 require('dotenv').config();
 
 const TENANT_INVITE_TTL_MS = 48 * 60 * 60 * 1000;
@@ -140,10 +141,10 @@ router.post("/register", authLimiter, async (req, res) => {
         let errorMessages = [];
         if (err.name === 'SequelizeUniqueConstraintError') {
             errorMessages = ["This email is already registered in our system."];
-        } else if (err.errors) {
+        } else if ((err.name === 'ValidationError' || err.name === 'SequelizeValidationError') && Array.isArray(err.errors)) {
             errorMessages = err.errors.map(e => (typeof e === 'object' ? e.message : e));
         } else {
-            errorMessages = [err.message || "An unexpected system error occurred."];
+            return res.status(500).json({ errors: [PUBLIC_INTERNAL_ERROR] });
         }
         res.status(400).json({ errors: errorMessages });
     }

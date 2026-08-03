@@ -4,7 +4,6 @@
 // "Element type is invalid ... got: object". These tests supply REAL fake
 // module objects (Vitest auto-unwraps genuine MUI imports, so relying on
 // normal imports alone would prove nothing).
-import React from "react";
 import { render, screen, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";

@@ -1,6 +1,5 @@
 // Frontend tests — Face ID enrolment badges and the FM re-enrol action on
 // User Management, plus API-base consistency across Felicia's pages.
-import React from "react";
 import fs from "node:fs";
 import path from "node:path";
 import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";

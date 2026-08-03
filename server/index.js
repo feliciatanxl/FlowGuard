@@ -71,30 +71,42 @@ app.use('/api/support', supportRoutes);
 const yoloRoutes = require('./routes/yolo');
 app.use('/api/yolo', yoloRoutes);
 
+// Database-backed health endpoints. Liveness only confirms the process can serve
+// HTTP; readiness also requires successful startup schema validation and a fresh
+// Sequelize connection check.
+const db = require('./models');
+const { createHealthRouter } = require('./routes/health');
+const {
+    createReadinessState,
+    initializeDatabase,
+    createGracefulShutdown
+} = require('./services/serverLifecycle');
+const readiness = createReadinessState();
+app.use('/health', createHealthRouter({ sequelize: db.sequelize, readiness }));
+
 // Fallback handlers - MUST stay last, after every route is mounted.
 const { notFound, errorHandler } = require('./middlewares/errorHandlers');
 app.use(notFound);       // unknown route -> 404 JSON
 app.use(errorHandler);   // anything thrown/forwarded -> 500 JSON (no stack leak)
 
 // Sync DB and Start Server
-const db = require('./models');
 const startCleanupCron = require('./cron/cleanupTranscripts');
 // Cloud-compatible binding: PORT (cloud) -> APP_PORT (local .env) -> 5001,
 // listening on 0.0.0.0 so deployed containers accept external traffic.
 const { resolvePort, resolveHost } = require('./config/serverConfig');
 
-async function startServer() {
+let httpServer = null;
+let cleanupTask = null;
+let shutdown = null;
+
+async function startServer({ exitOnFailure = require.main === module } = {}) {
+    readiness.markNotReady();
     try {
         // IMPORTANT: faceVector is stored as a PostgreSQL FLOAT[] (Sequelize ARRAY(FLOAT)),
         // NOT pgvector. We intentionally do NOT create the pgvector extension or drop the
         // "faceVector" column on startup. The previous drop-on-fallback logic wiped every
         // enrolled face on each restart, so it has been removed. Sequelize sync (below)
         // manages the column safely without data loss.
-
-        const modelNames = Object.keys(db).filter(
-            k => k !== 'sequelize' && k !== 'Sequelize'
-        );
-        const failedModels = [];
 
         // Schema alteration is opt-in: set DB_SYNC_ALTER=true only when a model
         // schema intentionally changed. Normal startup creates missing tables
@@ -104,46 +116,50 @@ async function startServer() {
         // Visible startup progress: the HTTP listener only binds AFTER this
         // loop, so a slow remote database must never look like a silent hang
         // (the classic symptom is the Vite proxy timing out on 127.0.0.1:5001).
-        console.log(`Syncing ${modelNames.length} models (alter:${alterSchema}) - port ${resolvePort()} opens when this finishes...`);
+        const modelCount = Object.keys(db).filter((name) => name !== 'sequelize' && name !== 'Sequelize').length;
+        console.log(`Validating ${modelCount} models (alter:${alterSchema}) - port ${resolvePort()} opens only after this succeeds...`);
         const syncStart = Date.now();
-
-        for (const [i, name] of modelNames.entries()) {
-            // Heartbeat: if one model sync stalls (slow/unreachable DB), keep
-            // saying so instead of going quiet.
-            const heartbeat = setInterval(() => {
-                console.log(`  ... still syncing ${name} (${Math.round((Date.now() - syncStart) / 1000)}s elapsed) - check DB_HOST/network if this persists`);
-            }, 10000);
-            const modelStart = Date.now();
-            try {
-                await db[name].sync({ alter: alterSchema });
-                console.log(`  OK [${i + 1}/${modelNames.length}] Synced: ${name} (${Date.now() - modelStart}ms)`);
-            } catch (syncErr) {
-                failedModels.push(name);
-                console.error(`  FAIL [${i + 1}/${modelNames.length}] Failed to sync ${name}:`, syncErr.message);
-            } finally {
-                clearInterval(heartbeat);
-            }
-        }
-        console.log(`Model sync finished in ${Math.round((Date.now() - syncStart) / 1000)}s.`);
-
-        if (failedModels.length > 0) {
-            console.warn(`\nWARNING: ${failedModels.length} model(s) failed to sync: ${failedModels.join(', ')}`);
-            console.warn("The server will start, but those tables may be missing or outdated.\n");
-        }
+        const modelNames = await initializeDatabase(db, { alter: alterSchema });
+        console.log(`Database and ${modelNames.length} model schemas validated in ${Math.round((Date.now() - syncStart) / 1000)}s.`);
 
         // Start PDPA 90-day transcript cleanup cron
-        startCleanupCron(db);
+        cleanupTask = startCleanupCron(db);
 
         const port = resolvePort();
         const host = resolveHost();
-        app.listen(port, host, () => {
+        httpServer = app.listen(port, host, () => {
+            readiness.markReady();
             console.log("--------------------------------------------------");
             console.log(`FlowGuard Server is FULLY READY on ${host}:${port}`);
             console.log("--------------------------------------------------");
         });
+        httpServer.once('close', () => readiness.markNotReady());
+
+        shutdown = createGracefulShutdown({
+            getServer: () => httpServer,
+            sequelize: db.sequelize,
+            cleanupTasks: [cleanupTask],
+        });
+        const handleSignal = (signal) => {
+            readiness.markNotReady();
+            void shutdown(signal);
+        };
+        process.once('SIGTERM', () => handleSignal('SIGTERM'));
+        process.once('SIGINT', () => handleSignal('SIGINT'));
+        return httpServer;
     } catch (err) {
-        console.error("Database Sync Error: ", err);
+        readiness.markNotReady();
+        console.error('Critical database/schema initialization failed; HTTP server was not started:', err);
+        try { await db.sequelize.close(); } catch (closeError) {
+            console.error('Failed to close Sequelize after startup failure:', closeError);
+        }
+        if (exitOnFailure) process.exit(1);
+        return null;
     }
 }
 
-startServer();
+if (require.main === module) {
+    void startServer();
+}
+
+module.exports = { app, startServer, readiness };

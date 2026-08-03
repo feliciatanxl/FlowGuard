@@ -5,6 +5,8 @@ import Sidebar from '../components/Sidebar';
 import { getHardwareStreamUrl, getHardwareHealthUrl, getHardwarePeopleCountUrl } from '../utils/securepiStream';
 import { validateVideoFile, createTemporaryObjectUrl, revokeTemporaryObjectUrl } from '../utils/mediaPreview';
 import { buildAnalyzeFramePayload, buildBearerHeaders } from '../utils/analyzeFrame';
+import { resolveAlertSource } from '../utils/alertSource';
+import { API_BASE_URL } from '../constants/api';
 import '../css/Dashboard.css';
 import '../css/ObjectDetection.css';
 
@@ -25,14 +27,59 @@ const SECUREPI_PEOPLE_COUNT_POLL_MS = 3000;
 const Icon = ({ name }) => <span className={`od-icon od-icon-${name}`} aria-hidden="true" />;
 
 const alertSource = (alert) => alert?.source || 'Object Detection';
-const isCrowdAlert = (alert) => /crowd/i.test(alert?.alert_type || '');
-const isUnattendedAlert = (alert) => /unattended/i.test(`${alert?.alert_type || ''} ${alert?.object_class || ''}`);
+
+// Readable titles for every alert family, including the SecurePi edge types
+// (pest / restricted-zone motion / forgotten belonging / item movement). The key
+// is resolved from alert_type first, then a text heuristic on alert_type+object_class.
+const ALERT_TYPE_LABELS = {
+  PEST_DETECTION: 'Pest detected',
+  UNATTENDED_OBJECT: 'Unattended pallet/object detected',
+  FORGOTTEN_BELONGING: 'Forgotten belonging detected',
+  RESTRICTED_MOTION: 'Restricted-zone motion detected',
+  ITEM_PICKED_UP: 'Item picked up',
+  ITEM_SET_DOWN: 'Item set down',
+  ITEM_MOVEMENT: 'Item movement detected',
+  OVERCROWDING: 'Crowd density threshold exceeded',
+};
+const normalizeAlertKey = (value) => String(value || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+const alertTypeKey = (alert) => {
+  const key = normalizeAlertKey(alert?.alert_type);
+  if (key === 'RESTRICTED_ZONE_MOTION') return 'RESTRICTED_MOTION';
+  if (ALERT_TYPE_LABELS[key]) return key;
+  const hay = `${alert?.alert_type || ''} ${alert?.object_class || ''}`.toLowerCase();
+  if (/\b(rat|mouse|mice|rodent|pest)\b/.test(hay)) return 'PEST_DETECTION';
+  if (/motion/.test(hay) && /(restricted|after|night)/.test(hay)) return 'RESTRICTED_MOTION';
+  if (/forgotten|belonging/.test(hay)) return 'FORGOTTEN_BELONGING';
+  if (/picked up|set down|item mov/.test(hay)) return 'ITEM_MOVEMENT';
+  if (/crowd/.test(hay)) return 'OVERCROWDING';
+  if (/unattended/.test(hay)) return 'UNATTENDED_OBJECT';
+  return '';
+};
 const alertTitle = (alert) => {
   if (!alert) return '';
-  if (isCrowdAlert(alert)) return 'Crowd density threshold exceeded';
-  if (isUnattendedAlert(alert)) return 'Unattended pallet/object detected';
+  const key = alertTypeKey(alert);
+  if (key && ALERT_TYPE_LABELS[key]) return ALERT_TYPE_LABELS[key];
   const rawTitle = String(alert.object_class || alert.alert_type || 'Detection Alert').replace(/^(Critical|Warning):\s*/i, '');
   return /detect/i.test(rawTitle) ? rawTitle : `${rawTitle} Detected`;
+};
+
+// Only a valid remote http(s) URL is safe to render as a clickable snapshot link.
+// A Raspberry Pi local path (runtime/snapshots/...) must NEVER be turned into an
+// href — it isn't reachable from a browser and could be a misleading dead link.
+const isRemoteSnapshot = (url) => typeof url === 'string' && /^https?:\/\//i.test(url.trim());
+const isProtectedSnapshot = (url) => typeof url === 'string' && /^\/api\/detection-alerts\/\d+\/snapshot\/[^/]+$/i.test(url.trim());
+const snapshotRequestUrl = (url) => `${API_BASE_URL}${url}`;
+
+// WhatsApp security-alert notification status (persisted on the alert by the edge route).
+const whatsappStatusOf = (alert) => alert?.whatsapp_status || 'Not Requested';
+const whatsappStatusClass = (status) => `od-wa-pill od-wa-${String(status || 'Not Requested').replace(/\s+/g, '-').toLowerCase()}`;
+
+// Confidence may arrive as a 0–1 float or an already-scaled percentage.
+const confidencePercent = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  if (Number.isNaN(n)) return null;
+  return Math.round(n <= 1 ? n * 100 : n);
 };
 const alertTimestamp = (alert) => {
   const raw = alert?.occurred_at || alert?.createdAt || alert?.timestamp;
@@ -41,21 +88,6 @@ const alertTimestamp = (alert) => {
   if (Number.isNaN(date.getTime())) return 'n/a';
   return date.toLocaleString('en-SG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
 };
-
-// Keep the existing page export for callers/tests while the implementation is
-// shared with CameraFeed so both surfaces obey one Node/FastAPI contract.
-export { buildAnalyzeFramePayload } from '../utils/analyzeFrame';
-
-// Canonical alert-source label per sourceMode — the AI service whitelists these before
-// forwarding them into POST /api/detection-alerts, so keep values in sync with
-// ai-service/main.py's _ALLOWED_BROWSER_SOURCES.
-export const ALERT_SOURCE_BY_MODE = {
-  camera: 'Browser Webcam',
-  file: 'Uploaded Video',
-  hardware: 'SecurePi Edge Node',
-};
-
-export const resolveAlertSource = (sourceMode) => ALERT_SOURCE_BY_MODE[sourceMode] || 'Browser Webcam';
 
 const ObjectDetection = () => {
   const [zones, setZones] = useState([]);
@@ -68,6 +100,9 @@ const ObjectDetection = () => {
   const [alertActionBusy, setAlertActionBusy] = useState(false);
   const [selectedAlertId, setSelectedAlertId] = useState(null);
   const [alertsRefreshing, setAlertsRefreshing] = useState(false);
+  const [alertTypeFilter, setAlertTypeFilter] = useState('all');
+  const [alertSeverityFilter, setAlertSeverityFilter] = useState('all');
+  const [snapshotPreview, setSnapshotPreview] = useState({ url: '', source: '', error: false });
 
   const [streamError, setStreamError] = useState(false);
   const [aiOffline, setAiOffline] = useState(false);
@@ -86,39 +121,72 @@ const ObjectDetection = () => {
   const canvasRef = useRef(null);
   const processingFrameRef = useRef(false);
   const aiHealthFailuresRef = useRef(0);
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const token = localStorage.getItem('accessToken');
-  const headers = buildBearerHeaders(token);
+  // Memoised so the fetch callbacks below can list `headers` as a stable
+  // dependency without being recreated (and re-polling) on every render.
+  const headers = useMemo(() => buildBearerHeaders(token), [token]);
 
   const fetchZones = useCallback(() => {
     axios.get(ZONES_URL, { headers })
-      .then(res => { setZones(res.data); setNodeOffline(false); })
-      .catch(() => setNodeOffline(true));
-  }, []);
+      .then(res => {
+        if (!mountedRef.current) return;
+        setZones(res.data);
+        setNodeOffline(false);
+      })
+      .catch(() => {
+        if (mountedRef.current) setNodeOffline(true);
+      });
+  }, [headers]);
 
   const fetchCameras = useCallback(() => {
     axios.get(CAMERAS_URL, { headers })
       .then(res => {
+        if (!mountedRef.current) return;
         const list = Array.isArray(res.data) ? res.data : [];
         setCameras(list);
         setSelectedCameraId((prev) => (list.some((cam) => String(cam.id) === String(prev)) ? prev : (list[0]?.id ?? '')));
       })
-      .catch(() => setCameras([]));
-  }, []);
+      .catch(() => {
+        if (mountedRef.current) setCameras([]);
+      });
+  }, [headers]);
 
   const fetchAlerts = useCallback(() => {
     axios.get(ALERTS_URL, { headers })
-      .then(res => { setAlerts(res.data); setNodeOffline(false); })
-      .catch(() => setNodeOffline(true));
-  }, []);
+      .then(res => {
+        if (!mountedRef.current) return;
+        setAlerts(res.data);
+        setNodeOffline(false);
+      })
+      .catch(() => {
+        if (mountedRef.current) setNodeOffline(true);
+      });
+  }, [headers]);
 
   const handleRefreshAlerts = useCallback(() => {
     setAlertsRefreshing(true);
     axios.get(ALERTS_URL, { headers })
-      .then(res => { setAlerts(res.data); setNodeOffline(false); })
-      .catch(() => setNodeOffline(true))
-      .finally(() => setAlertsRefreshing(false));
-  }, []);
+      .then(res => {
+        if (!mountedRef.current) return;
+        setAlerts(res.data);
+        setNodeOffline(false);
+      })
+      .catch(() => {
+        if (mountedRef.current) setNodeOffline(true);
+      })
+      .finally(() => {
+        if (mountedRef.current) setAlertsRefreshing(false);
+      });
+  }, [headers]);
 
   // Read by fetchPeopleCount to skip the browser-YOLO poll while SecurePi hardware mode
   // owns peopleCount/detectionActive (see the hardware people-count effect below) — a
@@ -133,6 +201,7 @@ const ObjectDetection = () => {
     if (sourceModeRef.current === 'hardware') return;
     axios.get(PEOPLE_URL, { timeout: 8000, headers })
       .then(res => {
+        if (!mountedRef.current) return;
         aiHealthFailuresRef.current = 0;
         setPeopleCount(res.data.count ?? 0);
         setDetectionActive(res.data.detection_active ?? false);
@@ -140,6 +209,7 @@ const ObjectDetection = () => {
         setStreamError(false);
       })
       .catch(() => {
+        if (!mountedRef.current) return;
         aiHealthFailuresRef.current += 1;
         setPeopleCount(0);
         setDetectionActive(false);
@@ -147,7 +217,7 @@ const ObjectDetection = () => {
           setAiOffline(true);
         }
       });
-  }, []);
+  }, [headers]);
 
   const monitoredCamera = useMemo(
     () => cameras.find((cam) => String(cam.id) === String(selectedCameraId)) || null,
@@ -186,11 +256,12 @@ const ObjectDetection = () => {
       clearInterval(peopleInterval);
       clearInterval(alertsInterval);
     };
-  }, []);
+  }, [fetchZones, fetchCameras, fetchAlerts, fetchPeopleCount]);
 
   useEffect(() => {
     let stream;
     let frameInterval;
+    let sourceCancelled = false;
 
     const stopBrowserCamera = () => {
       if (stream) {
@@ -224,6 +295,7 @@ const ObjectDetection = () => {
 
       try {
         const res = await axios.post(ANALYZE_FRAME_URL, payload, { timeout: 20000, headers });
+        if (sourceCancelled || !mountedRef.current) return;
         setDetections(res.data.detections ?? []);
         setPeopleCount(res.data.count ?? 0);
         setDetectionActive(res.data.detection_active ?? false);
@@ -235,6 +307,7 @@ const ObjectDetection = () => {
         setAiOffline(false);
         setStreamError(false);
       } catch (err) {
+        if (sourceCancelled || !mountedRef.current) return;
         setDetectionActive(false);
         setCameraStatus(err.response ? 'analysis_error' : 'analysis_retrying');
       } finally {
@@ -256,22 +329,31 @@ const ObjectDetection = () => {
           audio: false,
         });
 
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.onloadedmetadata = async () => {
+        if (sourceCancelled || !mountedRef.current) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+
+        const video = videoRef.current;
+        if (video) {
+          video.srcObject = stream;
+          video.onloadedmetadata = async () => {
+            if (sourceCancelled || !mountedRef.current) return;
             try {
-              await videoRef.current.play();
+              await video.play();
+              if (sourceCancelled || !mountedRef.current) return;
               setCameraReady(true);
               setCameraStatus('browser_camera_active');
               analyzeCurrentFrame();
             } catch {
-              setCameraStatus('browser_camera_paused');
+              if (!sourceCancelled && mountedRef.current) setCameraStatus('browser_camera_paused');
             }
           };
           setBrowserCameraError(false);
           frameInterval = setInterval(analyzeCurrentFrame, 2200);
         }
       } catch {
+        if (sourceCancelled || !mountedRef.current) return;
         setBrowserCameraError(true);
         setCameraStatus('browser_camera_denied');
       }
@@ -291,12 +373,14 @@ const ObjectDetection = () => {
       video.src = uploadedVideoUrl;
       video.loop = true;
       video.onloadedmetadata = async () => {
+        if (sourceCancelled || !mountedRef.current) return;
         try {
           await video.play();
+          if (sourceCancelled || !mountedRef.current) return;
           setCameraReady(true);
           analyzeCurrentFrame();
         } catch {
-          setCameraStatus('uploaded_video_paused');
+          if (!sourceCancelled && mountedRef.current) setCameraStatus('uploaded_video_paused');
         }
       };
       frameInterval = setInterval(analyzeCurrentFrame, 2200);
@@ -317,19 +401,26 @@ const ObjectDetection = () => {
     }
 
     return () => {
+      sourceCancelled = true;
       clearInterval(frameInterval);
       stopBrowserCamera();
     };
-  }, [sourceMode, uploadedVideoUrl]);
+  }, [sourceMode, uploadedVideoUrl, headers]);
 
   useEffect(() => () => {
     if (uploadedVideoUrl) URL.revokeObjectURL(uploadedVideoUrl);
   }, [uploadedVideoUrl]);
 
-  // Hardware connection state reacts to the selected inventory camera changing
-  // without restarting the browser-camera/uploaded-video effect above.
+  // Synchronises the SecurePi connection UI to the external hardware selection:
+  // when the operator switches to hardware mode or picks a different inventory
+  // camera, the stream/health effects below need a clean "connecting" (or
+  // "not configured") baseline before their async probes report live/offline.
+  // This is an external-system reset, not derivable during render (cameraStatus
+  // is also written by the async health poll), so the synchronous reset is
+  // intentional here.
   useEffect(() => {
     if (sourceMode !== 'hardware') return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- external-system (SecurePi) selection reset; see comment above
     setStreamError(false);
     setCameraReady(false);
     setCameraStatus(hardwareStreamUrl ? 'connecting_securepi_edge' : 'securepi_stream_not_configured');
@@ -396,13 +487,14 @@ const ObjectDetection = () => {
     setWorkflowMessage('');
     try {
       const res = await axios.put(`${ALERTS_URL}/${id}`, { status }, { headers });
+      if (!mountedRef.current) return;
       setAlerts(prev => prev.map(a => a.id === id ? res.data : a));
       setWorkflowMessage(status === 'Cleared' ? 'Alert marked cleared.' : `Alert marked ${status.toLowerCase()}.`);
     } catch (err) {
       console.error('Update alert error:', err);
-      setWorkflowMessage('Could not update this alert. Check that the Node.js server is running.');
+      if (mountedRef.current) setWorkflowMessage('Could not update this alert. Check that the Node.js server is running.');
     } finally {
-      setAlertActionBusy(false);
+      if (mountedRef.current) setAlertActionBusy(false);
     }
   };
 
@@ -431,6 +523,7 @@ const ObjectDetection = () => {
       const results = await Promise.all(
         openAlerts.map((a) => axios.put(`${ALERTS_URL}/${a.id}`, { status: 'Cleared' }, { headers }))
       );
+      if (!mountedRef.current) return;
       setAlerts((prev) => prev.map((a) => {
         const updated = results.find((r) => r.data.id === a.id);
         return updated ? updated.data : a;
@@ -438,9 +531,9 @@ const ObjectDetection = () => {
       setWorkflowMessage('All active alerts cleared.');
     } catch (err) {
       console.error('Clear all alerts error:', err);
-      setWorkflowMessage('Could not clear all alerts. Check that the Node.js server is running.');
+      if (mountedRef.current) setWorkflowMessage('Could not clear all alerts. Check that the Node.js server is running.');
     } finally {
-      setAlertActionBusy(false);
+      if (mountedRef.current) setAlertActionBusy(false);
     }
   };
 
@@ -474,6 +567,37 @@ const ObjectDetection = () => {
     if (!displayedAlert) return '';
     return alertTitle(displayedAlert);
   }, [displayedAlert]);
+  const displayedSnapshotUrl = displayedAlert?.snapshot_url || '';
+  const activeSnapshotPreview = isRemoteSnapshot(displayedSnapshotUrl)
+    ? { url: displayedSnapshotUrl, error: false }
+    : snapshotPreview.source === displayedSnapshotUrl
+      ? snapshotPreview
+      : { url: '', error: false };
+  useEffect(() => {
+    const snapshotUrl = displayedSnapshotUrl;
+    if (!isProtectedSnapshot(snapshotUrl)) return undefined;
+
+    let cancelled = false;
+    let objectUrl = '';
+    axios.get(snapshotRequestUrl(snapshotUrl), { headers, responseType: 'blob' })
+      .then((res) => {
+        if (cancelled) return;
+        if (typeof URL.createObjectURL !== 'function') {
+          setSnapshotPreview({ url: '', source: snapshotUrl, error: true });
+          return;
+        }
+        objectUrl = URL.createObjectURL(res.data);
+        setSnapshotPreview({ url: objectUrl, source: snapshotUrl, error: false });
+      })
+      .catch(() => {
+        if (!cancelled) setSnapshotPreview({ url: '', source: snapshotUrl, error: true });
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [displayedSnapshotUrl, headers]);
   const sourceTitle = sourceMode === 'hardware'
     ? 'SecurePi Edge Live'
     : sourceMode === 'file'
@@ -706,16 +830,34 @@ const ObjectDetection = () => {
                       <span>Object <strong>{displayedAlert.object_class || 'Package-like object'}</strong></span>
                       <span>Source <strong>{alertSource(displayedAlert)}</strong></span>
                       <span>Severity <strong>{displayedAlert.severity || 'High'}</strong></span>
+                      {confidencePercent(displayedAlert.confidence) != null && (
+                        <span>Confidence <strong>{confidencePercent(displayedAlert.confidence)}%</strong></span>
+                      )}
+                      {displayedAlert.device_id && (
+                        <span>Device <strong>{displayedAlert.device_id}</strong></span>
+                      )}
                       <span>Timestamp <strong>{alertTimestamp(displayedAlert)}</strong></span>
                       {displayedAlert.duration_seconds != null && (
                         <span>Duration <strong>{displayedAlert.duration_seconds}s</strong></span>
                       )}
+                      <span>WhatsApp <strong className={whatsappStatusClass(whatsappStatusOf(displayedAlert))}>{whatsappStatusOf(displayedAlert)}</strong></span>
                     </div>
-                    {displayedAlert.snapshot_url && (
-                      <a className="od-snapshot-link" href={displayedAlert.snapshot_url} target="_blank" rel="noreferrer">
-                        View edge snapshot
-                      </a>
-                    )}
+                    {activeSnapshotPreview.url ? (
+                      <div className="od-snapshot-preview">
+                        <img
+                          src={activeSnapshotPreview.url}
+                          alt={`${displayedAlert.object_class || 'Object'} detection snapshot`}
+                          className="od-snapshot-img"
+                        />
+                        <a className="od-snapshot-link" href={activeSnapshotPreview.url} target="_blank" rel="noreferrer">
+                          View edge snapshot
+                        </a>
+                      </div>
+                    ) : activeSnapshotPreview.error ? (
+                      <p className="od-snapshot-note">Snapshot upload found, but the image could not be loaded.</p>
+                    ) : displayedAlert.snapshot_url ? (
+                      <p className="od-snapshot-note">Snapshot captured on the edge device; remote upload unavailable.</p>
+                    ) : null}
                   </div>
 
                   <div className="od-resolution-actions">
@@ -769,6 +911,32 @@ const ObjectDetection = () => {
                   <h2>Latest Detection Alerts</h2>
                 </div>
                 <div className="od-alert-heading-actions">
+                  <select
+                    className="od-alert-filter"
+                    aria-label="Filter by alert type"
+                    value={alertTypeFilter}
+                    onChange={(e) => setAlertTypeFilter(e.target.value)}
+                  >
+                    <option value="all">All types</option>
+                    <option value="PEST_DETECTION">Pest</option>
+                    <option value="UNATTENDED_OBJECT">Unattended object</option>
+                    <option value="FORGOTTEN_BELONGING">Forgotten belonging</option>
+                    <option value="RESTRICTED_MOTION">Restricted-zone motion</option>
+                    <option value="ITEM_MOVEMENT">Item movement</option>
+                    <option value="OVERCROWDING">Overcrowding</option>
+                  </select>
+                  <select
+                    className="od-alert-filter"
+                    aria-label="Filter by severity"
+                    value={alertSeverityFilter}
+                    onChange={(e) => setAlertSeverityFilter(e.target.value)}
+                  >
+                    <option value="all">All severities</option>
+                    <option value="Critical">Critical</option>
+                    <option value="High">High</option>
+                    <option value="Medium">Medium</option>
+                    <option value="Low">Low</option>
+                  </select>
                   <button
                     type="button"
                     className="od-refresh-btn"
@@ -789,7 +957,11 @@ const ObjectDetection = () => {
                 </div>
               </div>
               <div className="od-live-alert-list">
-                {alerts.filter((alert) => OPEN_ALERT_STATUSES.includes(alert.status)).map((alert) => (
+                {alerts
+                  .filter((alert) => OPEN_ALERT_STATUSES.includes(alert.status))
+                  .filter((alert) => alertTypeFilter === 'all' || alertTypeKey(alert) === alertTypeFilter)
+                  .filter((alert) => alertSeverityFilter === 'all' || alert.severity === alertSeverityFilter)
+                  .map((alert) => (
                   <button
                     key={alert.id}
                     type="button"
@@ -800,6 +972,7 @@ const ObjectDetection = () => {
                     <strong>{alert.status}</strong>
                     <small>{alert.zone_name} - {alert.camera_location}</small>
                     <small>{alertSource(alert)}{alert.severity ? ` - ${alert.severity}` : ''}</small>
+                    <small className={whatsappStatusClass(whatsappStatusOf(alert))}>WhatsApp: {whatsappStatusOf(alert)}</small>
                   </button>
                 ))}
                 {activeAlertCount === 0 && <p>No active alerts from Object Detection.</p>}

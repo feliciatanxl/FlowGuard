@@ -1,11 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import { useState } from 'react';
 import CloseIcon from '@mui/icons-material/Close';
 import SafeMuiIcon from './SafeMuiIcon';
 import useEvaluationParticipants from '../hooks/useEvaluationParticipants';
 import '../css/EvaluationRecorderModal.css';
 import {
   CONDITIONS,
-  IDENTITY_LABELS,
   DETECTION_OUTCOMES,
   loadRecords,
   saveRecords,
@@ -17,20 +16,26 @@ import {
 // writes one local evaluation record — it never re-runs recognition and never
 // creates Attendance, access events, SecurityLogs or User changes.
 const EvaluationRecorderModal = ({ open, draft, onSaved, onClose }) => {
+  const initialError = () => (draft?.needsMapping ? 'Assign evaluation label first' : '');
   const [actualLabel, setActualLabel] = useState('');
   const [condition, setCondition] = useState('Front');
   const [notes, setNotes] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState(initialError);
   const { participants, loading: participantsLoading } = useEvaluationParticipants();
 
-  useEffect(() => {
+  // Reset the recorder to a clean slate each time it opens (React's
+  // "adjusting state when a prop changes" pattern — no effect, no extra
+  // repaint). Initial state above already covers the first (mounted-open) render.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) {
       setActualLabel('');
       setCondition('Front');
       setNotes('');
-      setError(draft?.needsMapping ? 'Assign evaluation label first' : '');
+      setError(initialError());
     }
-  }, [open, draft]);
+  }
 
   if (!open || !draft) return null;
 

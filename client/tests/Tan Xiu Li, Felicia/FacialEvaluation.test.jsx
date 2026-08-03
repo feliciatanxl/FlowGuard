@@ -3,7 +3,6 @@
 // mutation APIs, evaluation-record CRUD + localStorage persistence, the
 // confusion-matrix math (accuracy, macro P/R/F1, FAR, FRR, zero-sample safety),
 // CSV export, and that no raw image/vector/template data is rendered or stored.
-import React from "react";
 import { render, screen, fireEvent, within, cleanup, act } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";

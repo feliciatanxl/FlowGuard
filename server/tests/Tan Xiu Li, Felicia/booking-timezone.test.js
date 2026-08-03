@@ -69,16 +69,18 @@ describe("POST /create — stores Singapore wall clock as UTC", () => {
     mockBooking.findOne.mockResolvedValue(null); // no clash
     mockBooking.create.mockResolvedValue({ id: 1, ...validCreate, booking_ref: "FG-NEW" });
 
+    // A valid 1-hour window (6:01–7:01 PM SG) so the duration rule passes while this
+    // test stays focused on the Singapore→UTC conversion.
     const res = await request(app)
       .post("/api/bookings/create")
       .set("Authorization", `Bearer ${tokenFor("FM")}`)
-      .send({ ...validCreate, slot_start: "2026-07-27T18:01", slot_end: "2026-07-27T18:03" });
+      .send({ ...validCreate, slot_start: "2026-07-27T18:01", slot_end: "2026-07-27T19:01" });
 
     expect(res.status).toBe(201);
     const arg = mockBooking.create.mock.calls[0][0];
     expect(arg.slot_start).toBeInstanceOf(Date);
     expect(arg.slot_start.toISOString()).toBe("2026-07-27T10:01:00.000Z");
-    expect(arg.slot_end.toISOString()).toBe("2026-07-27T10:03:00.000Z");
+    expect(arg.slot_end.toISOString()).toBe("2026-07-27T11:01:00.000Z");
   });
 
   test("an explicit-Z ISO payload (what the fixed frontend sends) is preserved", async () => {
@@ -88,7 +90,7 @@ describe("POST /create — stores Singapore wall clock as UTC", () => {
     await request(app)
       .post("/api/bookings/create")
       .set("Authorization", `Bearer ${tokenFor("FM")}`)
-      .send({ ...validCreate, slot_start: "2026-07-27T10:01:00.000Z", slot_end: "2026-07-27T10:03:00.000Z" });
+      .send({ ...validCreate, slot_start: "2026-07-27T10:01:00.000Z", slot_end: "2026-07-27T11:01:00.000Z" });
 
     const arg = mockBooking.create.mock.calls[0][0];
     expect(arg.slot_start.toISOString()).toBe("2026-07-27T10:01:00.000Z");
@@ -118,11 +120,11 @@ describe("POST /create — stores Singapore wall clock as UTC", () => {
     await request(app)
       .post("/api/bookings/create")
       .set("Authorization", `Bearer ${tokenFor("FM")}`)
-      .send({ ...validCreate, slot_start: "2026-07-27T18:30", slot_end: "2026-07-27T18:45" });
+      .send({ ...validCreate, slot_start: "2026-07-27T18:30", slot_end: "2026-07-27T19:30" });
 
     const where = mockBooking.findOne.mock.calls[0][0].where;
     // overlap test: existing.start < newEnd AND existing.end > newStart, both in UTC.
-    expect(where.slot_start[Op.lt].toISOString()).toBe("2026-07-27T10:45:00.000Z");
+    expect(where.slot_start[Op.lt].toISOString()).toBe("2026-07-27T11:30:00.000Z");
     expect(where.slot_end[Op.gt].toISOString()).toBe("2026-07-27T10:30:00.000Z");
   });
 });
@@ -136,12 +138,12 @@ describe("PATCH /:id — edit stores correct UTC + isolates the record", () => {
     const res = await request(app)
       .patch("/api/bookings/42")
       .set("Authorization", `Bearer ${tokenFor("FM")}`)
-      .send({ slot_start: "2026-07-27T19:00", slot_end: "2026-07-27T19:15" });
+      .send({ slot_start: "2026-07-27T19:00", slot_end: "2026-07-27T20:00" });
 
     expect(res.status).toBe(200);
     const patch = booking.update.mock.calls[0][0];
     expect(patch.slot_start.toISOString()).toBe("2026-07-27T11:00:00.000Z");
-    expect(patch.slot_end.toISOString()).toBe("2026-07-27T11:15:00.000Z");
+    expect(patch.slot_end.toISOString()).toBe("2026-07-27T12:00:00.000Z");
   });
 
   test("editing booking 42 only touches booking 42", async () => {

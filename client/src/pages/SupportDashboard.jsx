@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
@@ -7,10 +7,8 @@ import '../css/Management.css';
 import '../css/SupportDashboard.css';
 
 const TOKEN = () => localStorage.getItem('accessToken');
-const FM_NAME = () => localStorage.getItem('userName') || 'FM';
 
 const TICKET_STATUSES = ['Pending', 'In Progress', 'Resolved'];
-const PRIORITIES = ['High', 'Medium', 'Low'];
 
 // ─── SUPPORT DASHBOARD ────────────────────────────────────────────────────────
 const SupportDashboard = () => {
@@ -59,7 +57,7 @@ const SupportDashboard = () => {
     }
   }, [ticketFilter]);
 
-  useEffect(() => { fetchTickets(); }, [fetchTickets]);
+  useEffect(() => { (async () => { await fetchTickets(); })(); }, [fetchTickets]);
 
   const setDraft = (id, field, value) =>
     setStatusDrafts(prev => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
@@ -126,7 +124,7 @@ const SupportDashboard = () => {
     }
   }, []);
 
-  useEffect(() => { if (activeTab === 'kb') fetchKB(); }, [activeTab, fetchKB]);
+  useEffect(() => { if (activeTab === 'kb') { (async () => { await fetchKB(); })(); } }, [activeTab, fetchKB]);
 
   const resetKbForm = () => {
     setKbForm({ category: 'General', question: '', answer: '', keywords: '' });

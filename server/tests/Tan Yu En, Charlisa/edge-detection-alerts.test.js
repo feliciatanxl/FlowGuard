@@ -4,9 +4,15 @@
 const request = require("supertest");
 const express = require("express");
 const jwt = require("jsonwebtoken");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 
 process.env.EDGE_INGEST_TOKEN = "test-edge-token";
 process.env.APP_SECRET = "test-secret";
+process.env.DETECTION_SNAPSHOT_DIR = path.join(os.tmpdir(), "flowguard-edge-alert-test-snapshots");
+const originalSnapshotMaxBytes = process.env.DETECTION_SNAPSHOT_MAX_BYTES;
+process.env.DETECTION_SNAPSHOT_MAX_BYTES = "16";
 
 const mockDetectionAlert = {
   create: jest.fn(),
@@ -29,7 +35,13 @@ jest.mock("../../models", () => ({
   sequelize: mockSequelize,
 }));
 
+const importMkdirSyncSpy = jest.spyOn(fs, "mkdirSync");
+const importMkdirSpy = jest.spyOn(fs.promises, "mkdir");
 const edgeDetectionAlertsRouter = require("../../routes/edgeDetectionAlerts");
+const importMkdirSyncCalls = importMkdirSyncSpy.mock.calls.length;
+const importMkdirCalls = importMkdirSpy.mock.calls.length;
+importMkdirSyncSpy.mockRestore();
+importMkdirSpy.mockRestore();
 // Mounted alongside the incident router so the test can confirm an edge-ingested
 // incident is visible through the Incident Dashboard API.
 const incidentRouter = require("../../routes/incident");
@@ -60,14 +72,73 @@ const securePiPayload = {
 const primeCreateMocks = () => {
   mockMonitoringZone.findOne.mockResolvedValue(null);
   mockCamera.findOne.mockResolvedValue(null);
-  const created = { id: 9, update: jest.fn().mockResolvedValue() };
+  const created = { id: 9 };
+  created.update = jest.fn(async (fields) => {
+    Object.assign(created, fields);
+  });
   mockDetectionAlert.create.mockResolvedValue(created);
   mockIncidentLog.create.mockResolvedValue({ id: 77 });
   return created;
 };
 
+const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+const snapshotFiles = () => fs.existsSync(process.env.DETECTION_SNAPSHOT_DIR)
+  ? fs.readdirSync(process.env.DETECTION_SNAPSHOT_DIR)
+  : [];
+const uploadSnapshot = ({ filename = "edge.jpg", contentType = "image/jpeg", bytes = jpegBytes } = {}) => request(app)
+  .post("/api/edge/detection-alerts")
+  .set("Authorization", "Bearer test-edge-token")
+  .field("zone_name", "Loading Bay")
+  .field("camera_location", "Loading Bay Camera 01")
+  .field("alert_type", "Pest Detection")
+  .field("object_class", "rat")
+  .field("severity", "High")
+  .field("confidence", "0.87")
+  .attach("snapshot", bytes, { filename, contentType });
+
+// Superagent's high-level .attach() normalizes path separators in filenames.
+// Build the multipart body directly so traversal metadata reaches Multer exactly
+// as an attacker could send it over HTTP.
+const uploadRawMultipartSnapshot = (filename) => {
+  const boundary = "----flowguard-codeql-path-test";
+  const field = (name, value) => Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`
+  );
+  const body = Buffer.concat([
+    field("zone_name", "Loading Bay"),
+    field("camera_location", "Loading Bay Camera 01"),
+    field("alert_type", "Pest Detection"),
+    field("object_class", "rat"),
+    field("severity", "High"),
+    Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="snapshot"; filename="${filename}"\r\nContent-Type: image/jpeg\r\n\r\n`
+    ),
+    jpegBytes,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return request(app)
+    .post("/api/edge/detection-alerts")
+    .set("Authorization", "Bearer test-edge-token")
+    .set("Content-Type", `multipart/form-data; boundary=${boundary}`)
+    .send(body);
+};
+
 describe("POST /api/edge/detection-alerts", () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    fs.rmSync(process.env.DETECTION_SNAPSHOT_DIR, { recursive: true, force: true });
+  });
+  afterAll(() => {
+    fs.rmSync(process.env.DETECTION_SNAPSHOT_DIR, { recursive: true, force: true });
+    if (originalSnapshotMaxBytes === undefined) delete process.env.DETECTION_SNAPSHOT_MAX_BYTES;
+    else process.env.DETECTION_SNAPSHOT_MAX_BYTES = originalSnapshotMaxBytes;
+  });
+
+  test("imports the edge route without creating a snapshot directory", () => {
+    expect(importMkdirSyncCalls).toBe(0);
+    expect(importMkdirCalls).toBe(0);
+    expect(fs.existsSync(process.env.DETECTION_SNAPSHOT_DIR)).toBe(false);
+  });
 
   test("rejects missing bearer token (401)", async () => {
     const res = await request(app)
@@ -114,11 +185,103 @@ describe("POST /api/edge/detection-alerts", () => {
       object_class: "package-like object",
       severity: "High",
       confidence: 0.87,
-      snapshot_url: "alerts/loading-bay/event.jpg",
+      snapshot_url: null,
       device_id: "securepi-loading-bay-01",
       duration_seconds: 65,
     }));
     expect(mockDetectionAlert.create.mock.calls[0][0]).not.toHaveProperty("ignored_extra");
+  });
+
+  test("stores an uploaded JPEG as a protected snapshot URL", async () => {
+    const created = primeCreateMocks();
+    expect(fs.existsSync(process.env.DETECTION_SNAPSHOT_DIR)).toBe(false);
+    const res = await uploadSnapshot({ filename: "pest_rat.jpeg" });
+
+    expect(res.status).toBe(201);
+    expect(fs.existsSync(process.env.DETECTION_SNAPSHOT_DIR)).toBe(true);
+    expect(mockDetectionAlert.create.mock.calls[0][0].snapshot_url).toBeNull();
+    expect(created.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        snapshot_url: expect.stringMatching(/^\/api\/detection-alerts\/9\/snapshot\/[0-9a-f-]{36}\.jpg$/),
+      })
+    );
+    const storedFilename = created.snapshot_url.split("/").pop();
+    expect(storedFilename).toMatch(/^[0-9a-f-]{36}\.jpg$/);
+    expect(fs.readFileSync(path.join(process.env.DETECTION_SNAPSHOT_DIR, storedFilename))).toEqual(jpegBytes);
+    expect(JSON.stringify(res.body)).not.toContain(process.env.DETECTION_SNAPSHOT_DIR);
+    expect(JSON.stringify(res.body)).not.toMatch(/[A-Za-z]:\\|\/tmp\//);
+  });
+
+  test.each([
+    ["parent traversal with forward slash", "../escape.jpg"],
+    ["parent traversal with backslash", "..\\escape.jpg"],
+    ["absolute Windows path", "C:\\temp\\escape.jpg"],
+    ["absolute Unix path", "/tmp/escape.jpg"],
+    ["encoded traversal", "%2e%2e%2fescape.jpg"],
+    ["double-encoded traversal", "%252e%252e%252fescape.jpg"],
+    ["nested forward-slash path", "nested/folder/escape.jpg"],
+    ["nested backslash path", "nested\\folder\\escape.jpg"],
+  ])("rejects %s multipart filename", async (_label, filename) => {
+    const res = await uploadRawMultipartSnapshot(filename);
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "snapshot filename is invalid." });
+    expect(mockDetectionAlert.create).not.toHaveBeenCalled();
+    expect(snapshotFiles()).toHaveLength(0);
+  });
+
+  test("rejects a non-JPEG extension even with a JPEG MIME type", async () => {
+    const res = await uploadSnapshot({ filename: "edge.png", contentType: "image/jpeg" });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "snapshot filename must use a .jpg or .jpeg extension." });
+    expect(mockDetectionAlert.create).not.toHaveBeenCalled();
+    expect(snapshotFiles()).toHaveLength(0);
+  });
+
+  test("rejects a non-JPEG MIME type even with a .jpg extension", async () => {
+    const res = await uploadSnapshot({ filename: "edge.jpg", contentType: "image/png" });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "snapshot must be a JPEG image." });
+    expect(mockDetectionAlert.create).not.toHaveBeenCalled();
+    expect(snapshotFiles()).toHaveLength(0);
+  });
+
+  test("rejects spoofed JPEG metadata when the bytes lack JPEG markers", async () => {
+    const res = await uploadSnapshot({ filename: "edge.jpg", bytes: Buffer.from("not-a-jpeg") });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "snapshot content is not a valid JPEG image." });
+    expect(mockDetectionAlert.create).not.toHaveBeenCalled();
+    expect(snapshotFiles()).toHaveLength(0);
+  });
+
+  test("preserves the configured snapshot upload-size limit", async () => {
+    const oversized = Buffer.concat([
+      Buffer.from([0xff, 0xd8]),
+      Buffer.alloc(16, 0x00),
+      Buffer.from([0xff, 0xd9]),
+    ]);
+    const res = await uploadSnapshot({ bytes: oversized });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: "snapshot exceeds the configured maximum size." });
+    expect(mockDetectionAlert.create).not.toHaveBeenCalled();
+    expect(snapshotFiles()).toHaveLength(0);
+  });
+
+  test("cleans the generated file when post-commit snapshot linking fails", async () => {
+    const created = primeCreateMocks();
+    const log = jest.spyOn(console, "error").mockImplementation(() => {});
+    created.update.mockImplementation(async (fields) => {
+      if (fields.snapshot_url) throw new Error("snapshot column unavailable at C:\\private\\db");
+      Object.assign(created, fields);
+    });
+    try {
+      const res = await uploadSnapshot();
+      expect(res.status).toBe(201);
+      expect(snapshotFiles()).toHaveLength(0);
+      expect(JSON.stringify(res.body)).not.toMatch(/private|snapshot column|C:\\/i);
+      expect(log).toHaveBeenCalledWith("[Edge] Snapshot persistence failed:", expect.any(Error));
+    } finally {
+      log.mockRestore();
+    }
   });
 
   test("creates both records with matching severity, linked, in one transaction", async () => {
@@ -149,14 +312,23 @@ describe("POST /api/edge/detection-alerts", () => {
 
   test("incident creation failure rolls back the detection alert (500, shared transaction)", async () => {
     primeCreateMocks();
-    mockIncidentLog.create.mockRejectedValue(new Error("db down"));
-    const res = await request(app)
-      .post("/api/edge/detection-alerts")
-      .set("Authorization", "Bearer test-edge-token")
-      .send(securePiPayload);
-    expect(res.status).toBe(500);
-    expect(mockDetectionAlert.create.mock.calls[0][1]).toEqual({ transaction: mockTx });
-    expect(mockSequelize.transaction).toHaveBeenCalledTimes(1);
+    const dbError = new Error("db down: incident_logs.private_column");
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockIncidentLog.create.mockRejectedValue(dbError);
+    try {
+      const res = await request(app)
+        .post("/api/edge/detection-alerts")
+        .set("Authorization", "Bearer test-edge-token")
+        .send(securePiPayload);
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Unable to process the request.' });
+      expect(JSON.stringify(res.body)).not.toMatch(/private_column|db down/i);
+      expect(log).toHaveBeenCalledWith('Edge detection alert ingestion failed:', dbError);
+      expect(mockDetectionAlert.create.mock.calls[0][1]).toEqual({ transaction: mockTx });
+      expect(mockSequelize.transaction).toHaveBeenCalledTimes(1);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   test("edge-ingested incident is visible through the Incident Dashboard API", async () => {

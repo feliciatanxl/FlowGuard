@@ -1,7 +1,6 @@
 // Frontend tests — Attendance toolbar still exposes the date filter, Refresh and
 // (FM-only) Launch Gate Terminal, and the FM privacy model is unchanged: FMs see
 // the aggregate occupancy note only, never an individual attendance/lateness table.
-import React from 'react';
 import { render, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { vi, describe, test, expect, beforeEach } from 'vitest';
