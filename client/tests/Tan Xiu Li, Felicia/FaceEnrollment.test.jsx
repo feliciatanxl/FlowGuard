@@ -2,7 +2,7 @@
 // Covers: page renders, Pi-primary camera source with webcam fallback, manual
 // upload validation, submit hits the correct backend endpoint, and missing
 // required images blocks submission.
-import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { vi, describe, test, expect, beforeEach, afterEach } from "vitest";
 import "@testing-library/jest-dom";
@@ -11,7 +11,11 @@ const { mockPost } = vi.hoisted(() => ({ mockPost: vi.fn(() => Promise.resolve({
 vi.mock("axios", () => ({ default: { post: mockPost } }));
 
 import FaceEnrollment from "../../src/pages/FaceEnrollment";
-import { PI_CAMERA_STREAM_URL, CAMERA_STATUS_MESSAGES } from "../../src/constants/piCamera";
+import {
+  PI_CAMERA_STREAM_URL,
+  CAMERA_STATUS_MESSAGES,
+  saveRuntimePiCameraBaseUrl,
+} from "../../src/constants/piCamera";
 
 const renderPage = () =>
   render(<MemoryRouter><FaceEnrollment /></MemoryRouter>);
@@ -27,6 +31,7 @@ beforeEach(() => {
   localStorage.clear();
   localStorage.setItem("accessToken", "test-token");
   localStorage.setItem("userName", "Felicia");
+  saveRuntimePiCameraBaseUrl("http://pi.test:8081");
 
   // Default: Pi camera unreachable — the page falls back to the laptop webcam.
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("pi down")));
@@ -45,7 +50,10 @@ afterEach(() => {
 
 describe("FaceEnrollment camera source (Pi primary, webcam fallback)", () => {
   test("Pi Camera is the primary source when reachable — webcam never requested", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "ok", camera: "Pi Camera Module 3" }),
+    }));
     renderPage();
     await waitFor(() =>
       expect(screen.getByText(CAMERA_STATUS_MESSAGES.PI_CONNECTED)).toBeInTheDocument()
@@ -71,6 +79,23 @@ describe("FaceEnrollment camera source (Pi primary, webcam fallback)", () => {
     await waitFor(() =>
       expect(screen.getByText(CAMERA_STATUS_MESSAGES.PI_UNAVAILABLE)).toBeInTheDocument()
     );
+  });
+
+  test("a webcam stream that resolves after unmount is stopped without attachment", async () => {
+    let resolveStream;
+    const pendingStream = new Promise((resolve) => { resolveStream = resolve; });
+    const stop = vi.fn();
+    mockGetUserMedia.mockReturnValueOnce(pendingStream);
+    const view = renderPage();
+
+    await waitFor(() => expect(mockGetUserMedia).toHaveBeenCalledTimes(1));
+    view.unmount();
+    await act(async () => {
+      resolveStream({ getTracks: () => [{ stop }] });
+      await pendingStream;
+    });
+
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 });
 

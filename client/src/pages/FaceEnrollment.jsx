@@ -10,6 +10,7 @@ import {
   isPiCameraReachable,
   fetchPiSnapshotBitmap,
 } from '../constants/piCamera';
+import { drawBitmapToCanvasAndClose } from '../utils/cameraSource';
 
 const FaceEnrollment = () => {
   const videoRef = useRef(null);
@@ -30,6 +31,9 @@ const FaceEnrollment = () => {
   const [cameraStatusMsg, setCameraStatusMsg] = useState("Connecting to Raspberry Pi Camera Module 3…");
   const cameraSourceRef = useRef(CAMERA_SOURCES.PI);
   const piFailStreakRef = useRef(0);
+  const cameraSessionRef = useRef(0);
+  const piRequestControllersRef = useRef(new Set());
+  const piPreviewRef = useRef(null);
 
   const token = localStorage.getItem("accessToken");
   const userName = localStorage.getItem("userName");
@@ -41,12 +45,25 @@ const FaceEnrollment = () => {
 
   const allUploaded = photos.front && photos.left && photos.right;
 
+  const abortActivePiRequests = useCallback(() => {
+    piRequestControllersRef.current.forEach((controller) => controller.abort());
+    piRequestControllersRef.current.clear();
+  }, []);
+
+  const clearPiPreview = useCallback(() => {
+    try { piPreviewRef.current?.removeAttribute('src'); } catch { /* ignore */ }
+  }, []);
+
   const applyCameraSource = useCallback((source, statusMsg) => {
+    if (source !== CAMERA_SOURCES.PI) {
+      abortActivePiRequests();
+      clearPiPreview();
+    }
     cameraSourceRef.current = source;
     setCameraSource(source);
     setCameraStatusMsg(statusMsg);
     piFailStreakRef.current = 0;
-  }, []);
+  }, [abortActivePiRequests, clearPiPreview]);
 
   const stopWebcam = useCallback(() => {
     if (videoRef.current && videoRef.current.srcObject) {
@@ -56,7 +73,7 @@ const FaceEnrollment = () => {
     }
   }, []);
 
-  const startWebcam = useCallback(async () => {
+  const startWebcam = useCallback(async (cameraSession = cameraSessionRef.current) => {
     // No camera API (insecure context / no webcam): steer the user to manual upload.
     if (!navigator.mediaDevices?.getUserMedia) {
       setErrorMessage("No webcam detected on this device. Use the “Upload Photos” option instead.");
@@ -71,12 +88,30 @@ const FaceEnrollment = () => {
           facingMode: "user"
         }
       });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
+      if (
+        cameraSession !== cameraSessionRef.current
+        || cameraSourceRef.current !== CAMERA_SOURCES.WEBCAM
+        || !videoRef.current
+      ) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
       }
+      videoRef.current.srcObject = stream;
     } catch (err) {
-      console.error("Camera access denied", err);
-      setErrorMessage("Camera access denied. Enable camera permissions, or use the “Upload Photos” option instead.");
+      if (cameraSession === cameraSessionRef.current) {
+        console.error("Camera access denied", err);
+        setErrorMessage("Camera access denied. Enable camera permissions, or use the “Upload Photos” option instead.");
+      }
+    }
+  }, []);
+
+  const probePiReachable = useCallback(async () => {
+    const controller = new AbortController();
+    piRequestControllersRef.current.add(controller);
+    try {
+      return await isPiCameraReachable(3500, { signal: controller.signal });
+    } finally {
+      piRequestControllersRef.current.delete(controller);
     }
   }, []);
 
@@ -85,7 +120,9 @@ const FaceEnrollment = () => {
   // fall back to the laptop webcam automatically. Node/FastAPI being offline
   // must NEVER trigger this fallback — only Pi reachability does.
   const initCameraSource = useCallback(async () => {
-    const piReachable = await isPiCameraReachable();
+    const cameraSession = cameraSessionRef.current;
+    const piReachable = await probePiReachable();
+    if (cameraSession !== cameraSessionRef.current) return;
     if (piReachable) {
       stopWebcam();
       applyCameraSource(CAMERA_SOURCES.PI, CAMERA_STATUS_MESSAGES.PI_CONNECTED);
@@ -93,21 +130,31 @@ const FaceEnrollment = () => {
       applyCameraSource(CAMERA_SOURCES.WEBCAM, CAMERA_STATUS_MESSAGES.PI_UNAVAILABLE);
       await startWebcam();
     }
-  }, [applyCameraSource, startWebcam, stopWebcam]);
+  }, [applyCameraSource, probePiReachable, startWebcam, stopWebcam]);
 
   // Declared after the camera helpers above so the effect references no
   // later-declared value (React Compiler immutability rule).
   useEffect(() => {
     (async () => { await initCameraSource(); })();
-    return () => stopWebcam();
-  }, [initCameraSource, stopWebcam]);
+    return () => {
+      cameraSessionRef.current += 1;
+      abortActivePiRequests();
+      clearPiPreview();
+      stopWebcam();
+    };
+  }, [abortActivePiRequests, clearPiPreview, initCameraSource, stopWebcam]);
 
   // Manual camera source switch (Pi Camera / Laptop Webcam)
   const selectCameraSource = async (source) => {
     if (source === cameraSourceRef.current) return;
+    cameraSessionRef.current += 1;
+    abortActivePiRequests();
+    clearPiPreview();
     setErrorMessage(null);
     if (source === CAMERA_SOURCES.PI) {
-      const piReachable = await isPiCameraReachable();
+      const cameraSession = cameraSessionRef.current;
+      const piReachable = await probePiReachable();
+      if (cameraSession !== cameraSessionRef.current) return;
       if (piReachable) {
         stopWebcam();
         applyCameraSource(CAMERA_SOURCES.PI, CAMERA_STATUS_MESSAGES.PI_CONNECTED);
@@ -141,10 +188,14 @@ const FaceEnrollment = () => {
 
     if (cameraSourceRef.current === CAMERA_SOURCES.PI) {
       let bitmap;
+      const cameraSession = cameraSessionRef.current;
+      const controller = new AbortController();
+      piRequestControllersRef.current.add(controller);
       try {
-        bitmap = await fetchPiSnapshotBitmap();
+        bitmap = await fetchPiSnapshotBitmap({ signal: controller.signal });
         piFailStreakRef.current = 0;
-      } catch {
+      } catch (error) {
+        if (error?.code === 'aborted' || cameraSession !== cameraSessionRef.current) return;
         piFailStreakRef.current += 1;
         if (piFailStreakRef.current >= 3) {
           applyCameraSource(CAMERA_SOURCES.WEBCAM, CAMERA_STATUS_MESSAGES.PI_UNAVAILABLE);
@@ -154,12 +205,14 @@ const FaceEnrollment = () => {
           setErrorMessage("Pi Camera snapshot failed. Please try capturing again.");
         }
         return;
+      } finally {
+        piRequestControllersRef.current.delete(controller);
       }
-      const scale = Math.min(1, maxWidth / bitmap.width);
-      canvas.width = Math.round(bitmap.width * scale);
-      canvas.height = Math.round(bitmap.height * scale);
-      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      bitmap.close?.();
+      if (cameraSession !== cameraSessionRef.current || cameraSourceRef.current !== CAMERA_SOURCES.PI) {
+        try { bitmap?.close?.(); } catch { /* ignore */ }
+        return;
+      }
+      drawBitmapToCanvasAndClose(bitmap, canvas, { maxWidth });
     } else {
       const video = videoRef.current;
       if (!video || !video.videoWidth) return;
@@ -184,6 +237,9 @@ const FaceEnrollment = () => {
     if (mode === 'camera') {
       initCameraSource();
     } else {
+      cameraSessionRef.current += 1;
+      abortActivePiRequests();
+      clearPiPreview();
       stopWebcam();
     }
   };
@@ -332,8 +388,9 @@ const FaceEnrollment = () => {
               </div>
             ) : (
               <div className="video-wrapper">
-                {isPiPreview && (
+                {isPiPreview && PI_CAMERA_STREAM_URL && (
                   <img
+                    ref={piPreviewRef}
                     src={PI_CAMERA_STREAM_URL}
                     alt="Raspberry Pi camera live preview"
                     className="live-video"

@@ -11,6 +11,7 @@ import '../css/FacialEvaluation.css';
 import { API_BASE_URL } from '../constants/api';
 import { validateImageFile, createTemporaryObjectUrl, revokeTemporaryObjectUrl } from '../utils/mediaPreview';
 import { CAMERA_SOURCES, CAMERA_STATUS_MESSAGES, isPiCameraReachable, fetchPiSnapshotBitmap } from '../constants/piCamera';
+import { drawBitmapToCanvasAndClose } from '../utils/cameraSource';
 import {
   SCENARIOS,
   ENROLLED_LABELS,
@@ -121,6 +122,7 @@ const FacialEvaluation = () => {
   const canvasRef = useRef(null);
   const webcamStreamRef = useRef(null);
   const cameraSessionRef = useRef(0);
+  const piRequestControllersRef = useRef(new Set());
 
   const [lastResult, setLastResult] = useState(null);
   const [simCondition, setSimCondition] = useState('Front');
@@ -182,6 +184,8 @@ const FacialEvaluation = () => {
   // and release the owned stream without relying on the detached video node.
   useEffect(() => () => {
     cameraSessionRef.current += 1;
+    piRequestControllersRef.current.forEach((controller) => controller.abort());
+    piRequestControllersRef.current.clear();
     const stream = webcamStreamRef.current;
     webcamStreamRef.current = null;
     stream?.getTracks().forEach((track) => track.stop());
@@ -197,7 +201,16 @@ const FacialEvaluation = () => {
     setLiveError('');
     const cameraSession = cameraSessionRef.current + 1;
     cameraSessionRef.current = cameraSession;
-    const piReachable = await isPiCameraReachable();
+    piRequestControllersRef.current.forEach((active) => active.abort());
+    piRequestControllersRef.current.clear();
+    const controller = new AbortController();
+    piRequestControllersRef.current.add(controller);
+    let piReachable;
+    try {
+      piReachable = await isPiCameraReachable(3500, { signal: controller.signal });
+    } finally {
+      piRequestControllersRef.current.delete(controller);
+    }
     if (cameraSession !== cameraSessionRef.current) return;
     if (piReachable) {
       stopWebcam();
@@ -250,12 +263,20 @@ const FacialEvaluation = () => {
     if (!canvas) return null;
     const ctx = canvas.getContext('2d');
     if (cameraSource === CAMERA_SOURCES.PI) {
-      const bitmap = await fetchPiSnapshotBitmap();
-      const scale = Math.min(1, 640 / bitmap.width);
-      canvas.width = Math.round(bitmap.width * scale);
-      canvas.height = Math.round(bitmap.height * scale);
-      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      bitmap.close?.();
+      const cameraSession = cameraSessionRef.current;
+      const controller = new AbortController();
+      piRequestControllersRef.current.add(controller);
+      let bitmap;
+      try {
+        bitmap = await fetchPiSnapshotBitmap({ signal: controller.signal });
+      } finally {
+        piRequestControllersRef.current.delete(controller);
+      }
+      if (cameraSession !== cameraSessionRef.current) {
+        try { bitmap?.close?.(); } catch { /* ignore */ }
+        return null;
+      }
+      drawBitmapToCanvasAndClose(bitmap, canvas, { maxWidth: 640 });
       return canvas.toDataURL('image/jpeg', 0.4);
     }
     const video = videoRef.current;

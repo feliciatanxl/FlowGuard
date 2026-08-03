@@ -15,7 +15,7 @@ import {
   CAMERA_SOURCE, SOURCE_LABELS, sourceLabel, isPiConfigured,
   markPiUnavailable, fallbackMessage, FALLBACK_REASON,
   CAMERA_STATUS, resolvePreferredCameraSource, fetchPiSnapshotBitmap,
-  PI_CAMERA_STREAM_URL, stopStream, drawBitmapToCanvasAndClose,
+  PI_CAMERA_STREAM_URL, PI_CONNECTION_STATUS, stopStream, drawBitmapToCanvasAndClose,
 } from '../utils/cameraSource';
 import { recognizePlate } from '../utils/plateOcr';
 import { formatSingaporeBookingDateTime } from '../constants/datetime';
@@ -42,7 +42,22 @@ const SCANNER_STATE_TEXT = {
   'cloud-trying': 'Trying cloud-assisted scan…',
   'manual-available': 'Manual entry available',
   'permission-denied': 'Camera permission denied',
+  'camera-in-use': 'Camera already in use',
   'camera-unavailable': 'Camera unavailable',
+};
+
+const cameraFailureState = (code) => (
+  code === 'permission' ? SCANNER_STATE.PERMISSION_DENIED
+    : code === 'in-use' ? SCANNER_STATE.IN_USE
+      : SCANNER_STATE.UNAVAILABLE
+);
+
+const inactiveWebcamMessage = (state) => {
+  if (state === SCANNER_STATE.LOADING || state === SCANNER_STATE.STARTING) return 'Starting camera';
+  if (state === SCANNER_STATE.PERMISSION_DENIED) return 'Permission denied';
+  if (state === SCANNER_STATE.IN_USE) return 'Camera already in use';
+  if (state === SCANNER_STATE.UNAVAILABLE) return 'Camera unavailable';
+  return 'Camera is off';
 };
 
 // Frontend copy per stable server reasonCode — the UI never parses English error
@@ -98,7 +113,7 @@ const GateVerification = () => {
   const piConfigured = isPiConfigured();
   const [primarySource, setPrimarySource] = useState(CAMERA_SOURCE.WEBCAM); // auto-selected preferred
   const [sourceStatus, setSourceStatus] = useState(
-    piConfigured ? CAMERA_STATUS.CHECKING_PI : CAMERA_STATUS.WEBCAM_ACTIVE
+    piConfigured ? CAMERA_STATUS.CHECKING_PI : CAMERA_STATUS.WEBCAM_SELECTED
   );
   const [piReachable, setPiReachable] = useState(null);    // null = checking / unknown
   const [actualQrSource, setActualQrSource] = useState(null);   // pi | webcam | manual
@@ -114,6 +129,7 @@ const GateVerification = () => {
   // PoC OCR
   const [plateCamSource, setPlateCamSource] = useState(CAMERA_SOURCE.WEBCAM); // webcam | pi
   const [plateCamActive, setPlateCamActive] = useState(false);
+  const [plateCameraState, setPlateCameraState] = useState(null);
   const [ocr, setOcr] = useState(null);                   // { raw, normalized, confidence, simulated? }
   const [ocrBusy, setOcrBusy] = useState(false);
   const [ocrError, setOcrError] = useState('');
@@ -162,7 +178,10 @@ const GateVerification = () => {
     try { plateStopRef.current?.stop?.(); } catch { /* ignore */ }
     plateStopRef.current = null;
     stopStream(plateVideoRef.current);
-    if (mountedRef.current) setPlateCamActive(false);
+    if (mountedRef.current) {
+      setPlateCamActive(false);
+      setPlateCameraState(null);
+    }
   };
 
   const stopAllCameraResources = () => {
@@ -173,15 +192,29 @@ const GateVerification = () => {
 
   const stopQr = () => {
     invalidateCameraWork();
+    cameraStartPromiseRef.current = null;
     stopQrResources();
+    setSourceStatus((current) => (
+      current === CAMERA_STATUS.WEBCAM_ACTIVE ? CAMERA_STATUS.WEBCAM_SELECTED : current
+    ));
   };
   const stopPlateCam = () => {
     invalidateCameraWork();
+    cameraStartPromiseRef.current = null;
     stopPlateResources();
+    setSourceStatus((current) => (
+      current === CAMERA_STATUS.WEBCAM_ACTIVE ? CAMERA_STATUS.WEBCAM_SELECTED : current
+    ));
   };
   const stopAllCameras = () => {
     invalidateCameraWork();
+    cameraStartPromiseRef.current = null;
     stopAllCameraResources();
+    if (mountedRef.current) {
+      setSourceStatus((current) => (
+        current === CAMERA_STATUS.WEBCAM_ACTIVE ? CAMERA_STATUS.WEBCAM_SELECTED : current
+      ));
+    }
   };
   const beginCameraWork = () => {
     const generation = invalidateCameraWork();
@@ -216,11 +249,12 @@ const GateVerification = () => {
   // after this runs. Probing happens once here, never on every render.
   useEffect(() => {
     const generation = cameraGenerationRef.current;
+    const controller = new AbortController();
     // The initial status ("Checking…" / "Laptop Webcam active") is already set by the
     // sourceStatus useState initializer, so the effect only updates state AFTER the
     // async probe resolves (never synchronously in the effect body).
     (async () => {
-      const pref = await resolvePreferredCameraSource();
+      const pref = await resolvePreferredCameraSource(Date.now(), { signal: controller.signal });
       if (!isCameraWorkCurrent(generation)) return;
       setPrimarySource(pref.source);
       setPiReachable(pref.source === CAMERA_SOURCE.PI);
@@ -228,10 +262,13 @@ const GateVerification = () => {
       setPlateCamSource(pref.source);
       setSourceStatus(
         pref.source === CAMERA_SOURCE.PI ? CAMERA_STATUS.PI_CONNECTED
-          : piConfigured ? CAMERA_STATUS.PI_FALLBACK
-            : CAMERA_STATUS.WEBCAM_ACTIVE
+          : pref.reason === FALLBACK_REASON.LOCAL_NETWORK_PERMISSION_REQUIRED
+            ? CAMERA_STATUS.PI_PERMISSION_REQUIRED
+            : piConfigured ? CAMERA_STATUS.PI_FALLBACK
+            : CAMERA_STATUS.WEBCAM_SELECTED
       );
     })();
+    return () => controller.abort();
   }, [piConfigured]);
 
   if (role !== ROLES.FM) {
@@ -250,13 +287,23 @@ const GateVerification = () => {
 
   // When the Pi fails during a capture, drop back to the webcam for the whole page and
   // reflect it in the shared status line + cooldown (so we don't re-probe immediately).
-  const activatePiFallback = () => {
+  const activatePiFallback = (error) => {
     stopAllCameras();
     markPiUnavailable();
     setPiReachable(false);
     setPrimarySource(CAMERA_SOURCE.WEBCAM);
-    setSourceStatus(CAMERA_STATUS.PI_FALLBACK);
+    setSourceStatus(
+      error?.code === PI_CONNECTION_STATUS.PERMISSION_REQUIRED
+        ? CAMERA_STATUS.PI_PERMISSION_REQUIRED
+        : CAMERA_STATUS.PI_FALLBACK
+    );
   };
+
+  const piFailureMessage = (error) => fallbackMessage(
+    error?.code === PI_CONNECTION_STATUS.PERMISSION_REQUIRED
+      ? FALLBACK_REASON.LOCAL_NETWORK_PERMISSION_REQUIRED
+      : FALLBACK_REASON.PI_UNREACHABLE
+  );
 
   // --- QR scanning ---
   // Uploads a still to the Node /api/qr/decode proxy (which forwards to the
@@ -290,10 +337,13 @@ const GateVerification = () => {
     if (cameraStartPromiseRef.current) return cameraStartPromiseRef.current;
     const { generation, signal } = beginCameraWork();
     setQrError('');
-    setScannerState(SCANNER_STATE.LOADING);
+    setPrimarySource(CAMERA_SOURCE.WEBCAM);
+    setSourceStatus(CAMERA_STATUS.WEBCAM_SELECTED);
+    setScanning(false);
+    setScannerState(SCANNER_STATE.STARTING);
     if (!isSecureCameraContext()) { setQrError(cameraErrorMessage('insecure')); setScannerState(SCANNER_STATE.UNAVAILABLE); return; }
     if (!isCameraSupported()) { setQrError(cameraErrorMessage('unsupported')); setScannerState(SCANNER_STATE.UNAVAILABLE); return; }
-    setScanning(true);
+    let startFailure = null;
     const promise = (async () => {
       try {
         const stop = await startQrScan({
@@ -301,10 +351,12 @@ const GateVerification = () => {
           onResult: (text) => {
             if (isCameraWorkCurrent(generation)) onQrResult(text, CAMERA_SOURCE.WEBCAM);
           },
-          onError: ({ message }) => {
+          onError: ({ code, message }) => {
             if (!isCameraWorkCurrent(generation)) return;
+            startFailure = code || 'unknown';
             setQrError(message);
             setScanning(false);
+            setScannerState(cameraFailureState(startFailure));
           },
           onState: (state) => { if (isCameraWorkCurrent(generation)) setScannerState(state); },
           onMetrics: (metrics) => { if (isCameraWorkCurrent(generation)) setQrMetrics(metrics); },
@@ -321,9 +373,19 @@ const GateVerification = () => {
           stopStream(qrVideoRef.current);
           return;
         }
-        stopQrResources();
+        if (startFailure) {
+          try { stop?.(); } catch { /* ignore */ }
+          stopStream(qrVideoRef.current);
+          return;
+        }
         qrStopRef.current = stop;
         setScanning(true);
+        setSourceStatus(CAMERA_STATUS.WEBCAM_ACTIVE);
+        setScannerState((current) => (
+          current === SCANNER_STATE.STARTING || current === SCANNER_STATE.LOADING
+            ? SCANNER_STATE.CAMERA_READY
+            : current
+        ));
       } catch (error) {
         if (!isCameraWorkCurrent(generation) || error?.code === 'aborted') return;
         setQrError(error?.message || cameraErrorMessage('unknown'));
@@ -348,13 +410,13 @@ const GateVerification = () => {
     setScannerState(SCANNER_STATE.STARTING);
     let bitmap;
     try {
-      bitmap = await fetchPiSnapshotBitmap();
-    } catch {
+      bitmap = await fetchPiSnapshotBitmap({ signal });
+    } catch (error) {
       if (!isCameraWorkCurrent(generation)) return;
-      activatePiFallback();
+      activatePiFallback(error);
       setQrSource(CAMERA_SOURCE.WEBCAM);
       setScannerState(SCANNER_STATE.UNAVAILABLE);
-      setQrError(`${fallbackMessage(FALLBACK_REASON.PI_UNREACHABLE)} Switched to the laptop webcam — or use manual entry.`);
+      setQrError(`${piFailureMessage(error)} Switched to the laptop webcam — or use manual entry.`);
       return;
     }
     const canvas = document.createElement('canvas');
@@ -382,12 +444,31 @@ const GateVerification = () => {
   };
 
   const switchQrSource = (next) => {
-    if (next === qrSource) return;
+    if (next === qrSource) {
+      if (next === CAMERA_SOURCE.PI) stopAllCameras();
+      return;
+    }
     stopAllCameras();
     setQrError('');
     setScannerState(null);
     setQrMetrics(null);
     setQrSource(next);
+    setPrimarySource(next);
+    if (next === CAMERA_SOURCE.PI) {
+      setSourceStatus(piReachable ? CAMERA_STATUS.PI_CONNECTED : CAMERA_STATUS.PI_FALLBACK);
+    }
+  };
+
+  const selectQrSource = (next) => {
+    if (next === CAMERA_SOURCE.PI) return switchQrSource(next);
+    if (
+      qrSource === CAMERA_SOURCE.WEBCAM
+      && (scanning || scannerState === SCANNER_STATE.STARTING || scannerState === SCANNER_STATE.LOADING)
+    ) return cameraStartPromiseRef.current;
+    if (qrSource !== CAMERA_SOURCE.WEBCAM) switchQrSource(CAMERA_SOURCE.WEBCAM);
+    setPrimarySource(CAMERA_SOURCE.WEBCAM);
+    setSourceStatus(CAMERA_STATUS.WEBCAM_SELECTED);
+    return startQr();
   };
 
   const useTypedRef = () => {
@@ -407,6 +488,10 @@ const GateVerification = () => {
     if (cameraStartPromiseRef.current) return cameraStartPromiseRef.current;
     const { generation, signal } = beginCameraWork();
     setOcrError('');
+    setPrimarySource(CAMERA_SOURCE.WEBCAM);
+    setSourceStatus(CAMERA_STATUS.WEBCAM_SELECTED);
+    setPlateCamActive(false);
+    setPlateCameraState(SCANNER_STATE.STARTING);
     const promise = (async () => {
       try {
         const controls = await startCamera(plateVideoRef.current, { signal });
@@ -415,13 +500,15 @@ const GateVerification = () => {
           stopStream(plateVideoRef.current);
           return;
         }
-        stopPlateResources();
         plateStopRef.current = controls;
         setPlateCamActive(true);
+        setPlateCameraState(SCANNER_STATE.CAMERA_READY);
+        setSourceStatus(CAMERA_STATUS.WEBCAM_ACTIVE);
       } catch (e) {
         if (!isCameraWorkCurrent(generation) || e?.code === 'aborted') return;
         setOcrError(e.message || cameraErrorMessage('unknown'));
         setPlateCamActive(false);
+        setPlateCameraState(cameraFailureState(e?.code));
       }
     })();
     cameraStartPromiseRef.current = promise;
@@ -465,18 +552,18 @@ const GateVerification = () => {
   // canvas (released immediately, never saved), then run the existing OCR on it. On Pi
   // failure, automatically activate the laptop-webcam fallback.
   const capturePlateFromPi = async () => {
-    const { generation } = beginCameraWork();
+    const { generation, signal } = beginCameraWork();
     setOcrError('');
     setOcrBusy(true);
     let bitmap;
     try {
-      bitmap = await fetchPiSnapshotBitmap();
-    } catch {
+      bitmap = await fetchPiSnapshotBitmap({ signal });
+    } catch (error) {
       if (!isCameraWorkCurrent(generation)) return;
-      activatePiFallback();
+      activatePiFallback(error);
       setPlateCamSource(CAMERA_SOURCE.WEBCAM);
       setOcrBusy(false);
-      setOcrError(`${fallbackMessage(FALLBACK_REASON.PI_UNREACHABLE)} Switched to the laptop webcam — press Start Camera.`);
+      setOcrError(`${piFailureMessage(error)} Switched to the laptop webcam — press Start Camera.`);
       return;
     }
     const canvas = document.createElement('canvas');
@@ -535,10 +622,29 @@ const GateVerification = () => {
   };
 
   const switchPlateSource = (next) => {
-    if (next === plateCamSource) return;
+    if (next === plateCamSource) {
+      if (next === CAMERA_SOURCE.PI) stopAllCameras();
+      return;
+    }
     stopAllCameras();
     setOcrError('');
     setPlateCamSource(next);
+    setPrimarySource(next);
+    if (next === CAMERA_SOURCE.PI) {
+      setSourceStatus(piReachable ? CAMERA_STATUS.PI_CONNECTED : CAMERA_STATUS.PI_FALLBACK);
+    }
+  };
+
+  const selectPlateSource = (next) => {
+    if (next === CAMERA_SOURCE.PI) return switchPlateSource(next);
+    if (
+      plateCamSource === CAMERA_SOURCE.WEBCAM
+      && (plateCamActive || plateCameraState === SCANNER_STATE.STARTING)
+    ) return cameraStartPromiseRef.current;
+    if (plateCamSource !== CAMERA_SOURCE.WEBCAM) switchPlateSource(CAMERA_SOURCE.WEBCAM);
+    setPrimarySource(CAMERA_SOURCE.WEBCAM);
+    setSourceStatus(CAMERA_STATUS.WEBCAM_SELECTED);
+    return startPlateCam();
   };
 
   // --- Verification ---
@@ -655,7 +761,9 @@ const GateVerification = () => {
   // Connection state for the compact source card.
   const connectionState = piReachable === null
     ? (piConfigured ? 'Checking…' : 'Webcam only')
-    : piReachable ? 'Pi connected' : (piConfigured ? 'Pi unavailable — webcam fallback' : 'Webcam only');
+    : piReachable ? 'Pi connected'
+      : sourceStatus === CAMERA_STATUS.PI_PERMISSION_REQUIRED ? 'Local-network permission required'
+        : (piConfigured ? 'Pi unreachable — webcam fallback' : 'Webcam only');
 
   const fallbackSourceLabel = piConfigured ? SOURCE_LABELS.webcam : SOURCE_LABELS.upload;
 
@@ -759,28 +867,36 @@ const GateVerification = () => {
                         type="button"
                         className={`gate-source-btn ${qrSource === CAMERA_SOURCE.PI ? 'active' : ''}`}
                         aria-pressed={qrSource === CAMERA_SOURCE.PI}
-                        onClick={() => switchQrSource(CAMERA_SOURCE.PI)}
+                        onClick={() => selectQrSource(CAMERA_SOURCE.PI)}
                       >{SOURCE_LABELS.pi}</button>
                     )}
                     <button
                       type="button"
                       className={`gate-source-btn ${qrSource === CAMERA_SOURCE.WEBCAM ? 'active' : ''}`}
                       aria-pressed={qrSource === CAMERA_SOURCE.WEBCAM}
-                      onClick={() => switchQrSource(CAMERA_SOURCE.WEBCAM)}
+                      onClick={() => selectQrSource(CAMERA_SOURCE.WEBCAM)}
                     >{SOURCE_LABELS.webcam}</button>
                   </div>
 
                   <div className="gate-video-wrap">
                     {/* A Pi MJPEG stream is shown via an <img> (never attached to a
                         MediaStream <video>); processing always uses a fresh /snapshot. */}
-                    {qrSource === CAMERA_SOURCE.PI && PI_CAMERA_STREAM_URL ? (
+                    {qrSource === CAMERA_SOURCE.PI && PI_CAMERA_STREAM_URL && (
                       <img className="gate-video" src={PI_CAMERA_STREAM_URL} alt="Raspberry Pi Camera Module 3 live preview" />
-                    ) : (
-                      <video ref={qrVideoRef} className="gate-video" muted playsInline aria-label="QR scanner preview" />
                     )}
+                    {/* Keep the video mounted while Pi is selected so a user click can
+                        switch sources and acquire the webcam against a valid ref. */}
+                    <video
+                      ref={qrVideoRef}
+                      className="gate-video"
+                      muted
+                      playsInline
+                      aria-label="QR scanner preview"
+                      style={qrSource === CAMERA_SOURCE.PI ? { display: 'none' } : undefined}
+                    />
                     {qrSource === CAMERA_SOURCE.PI
                       ? (!PI_CAMERA_STREAM_URL && <div className="gate-video-idle">{SOURCE_LABELS.pi} — capture a snapshot to scan</div>)
-                      : (!scanning && <div className="gate-video-idle">Camera is off</div>)}
+                      : (!scanning && <div className="gate-video-idle">{inactiveWebcamMessage(scannerState)}</div>)}
                   </div>
 
                   {scannerState && SCANNER_STATE_TEXT[scannerState] && (
@@ -850,7 +966,7 @@ const GateVerification = () => {
                         className={`gate-source-btn ${plateCamSource === CAMERA_SOURCE.PI ? 'active' : ''}`}
                         aria-pressed={plateCamSource === CAMERA_SOURCE.PI}
                         aria-label={`Plate camera source: ${SOURCE_LABELS.pi}`}
-                        onClick={() => switchPlateSource(CAMERA_SOURCE.PI)}
+                        onClick={() => selectPlateSource(CAMERA_SOURCE.PI)}
                       >{SOURCE_LABELS.pi}</button>
                     )}
                     <button
@@ -858,20 +974,29 @@ const GateVerification = () => {
                       className={`gate-source-btn ${plateCamSource === CAMERA_SOURCE.WEBCAM ? 'active' : ''}`}
                       aria-pressed={plateCamSource === CAMERA_SOURCE.WEBCAM}
                       aria-label={`Plate camera source: ${SOURCE_LABELS.webcam}`}
-                      onClick={() => switchPlateSource(CAMERA_SOURCE.WEBCAM)}
+                      onClick={() => selectPlateSource(CAMERA_SOURCE.WEBCAM)}
                     >{SOURCE_LABELS.webcam}</button>
                   </div>
 
                   <div className="gate-video-wrap">
-                    {plateCamSource === CAMERA_SOURCE.PI && PI_CAMERA_STREAM_URL ? (
+                    {plateCamSource === CAMERA_SOURCE.PI && PI_CAMERA_STREAM_URL && (
                       <img className="gate-video" src={PI_CAMERA_STREAM_URL} alt="Raspberry Pi Camera Module 3 plate preview" />
-                    ) : (
-                      <video ref={plateVideoRef} className="gate-video" muted playsInline aria-label="Plate camera preview" />
                     )}
+                    <video
+                      ref={plateVideoRef}
+                      className="gate-video"
+                      muted
+                      playsInline
+                      aria-label="Plate camera preview"
+                      style={plateCamSource === CAMERA_SOURCE.PI ? { display: 'none' } : undefined}
+                    />
                     {plateCamSource === CAMERA_SOURCE.PI
                       ? (!PI_CAMERA_STREAM_URL && <div className="gate-video-idle">{SOURCE_LABELS.pi} — capture a snapshot to read</div>)
-                      : (!plateCamActive && <div className="gate-video-idle">Camera is off</div>)}
+                      : (!plateCamActive && <div className="gate-video-idle">{inactiveWebcamMessage(plateCameraState)}</div>)}
                   </div>
+                  {plateCameraState && SCANNER_STATE_TEXT[plateCameraState] && (
+                    <p className="gate-scanner-state" aria-live="polite">{SCANNER_STATE_TEXT[plateCameraState]}</p>
+                  )}
                   {ocrError && <div className="gate-inline-error" role="alert">⚠️ {ocrError}</div>}
                   <div className="gate-btn-row">
                     {plateCamSource === CAMERA_SOURCE.PI ? (
