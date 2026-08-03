@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
@@ -25,26 +25,41 @@ const IncidentAnalytics = () => {
   const [incidents, setIncidents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
+  const [requestVersion, setRequestVersion] = useState(0);
+  const requestIdRef = useRef(0);
 
-  const getToken = () => localStorage.getItem('accessToken');
+  useEffect(() => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    const controller = new AbortController();
 
-  const fetchIncidents = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await axios.get('/api/incident', {
-        headers: { Authorization: `Bearer ${getToken()}` },
-      });
+    void axios.get('/api/incident', {
+      headers: { Authorization: `Bearer ${localStorage.getItem('accessToken')}` },
+      signal: controller.signal,
+    }).then((res) => {
+      if (controller.signal.aborted || requestId !== requestIdRef.current) return;
       setIncidents(Array.isArray(res.data) ? res.data : []);
       setUnavailable(false);
-    } catch (err) {
+    }).catch((err) => {
+      if (controller.signal.aborted || requestId !== requestIdRef.current) return;
       console.error('Failed to fetch incidents for analytics:', err);
       setUnavailable(true);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    }).finally(() => {
+      if (!controller.signal.aborted && requestId === requestIdRef.current) {
+        setLoading(false);
+      }
+    });
 
-  useEffect(() => { fetchIncidents(); }, [fetchIncidents]);
+    return () => {
+      controller.abort();
+      if (requestId === requestIdRef.current) requestIdRef.current += 1;
+    };
+  }, [requestVersion]);
+
+  const handleRefresh = () => {
+    setLoading(true);
+    setRequestVersion((version) => version + 1);
+  };
 
   const mttr = computeMTTR(incidents);
   const accuracy = computeAIAccuracy(incidents);
@@ -66,7 +81,7 @@ const IncidentAnalytics = () => {
             <button type="button" className="inc-support-btn" onClick={() => navigate('/incidents')}>
               ← Back to Incident Dashboard
             </button>
-            <button type="button" className="inc-analytics-btn" onClick={fetchIncidents} disabled={loading}>
+            <button type="button" className="inc-analytics-btn" onClick={handleRefresh} disabled={loading}>
               {loading ? 'Refreshing…' : 'Refresh'}
             </button>
           </div>
