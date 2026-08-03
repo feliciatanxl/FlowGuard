@@ -366,6 +366,61 @@ describe('GET /api/support/tickets', () => {
   });
 });
 
+describe('POST /api/support/tickets', () => {
+  test('rejects unauthenticated requests', async () => {
+    const res = await request(app).post('/api/support/tickets').send({ issueTitle: 'x', issueDescription: 'y' });
+    expect(res.status).toBe(401);
+  });
+
+  test('rejects non-FM roles', async () => {
+    const res = await request(app)
+      .post('/api/support/tickets')
+      .set('Authorization', `Bearer ${tokenFor('Tenant', 50)}`)
+      .send({ issueTitle: 'x', issueDescription: 'y' });
+    expect(res.status).toBe(403);
+  });
+
+  test('requires issueTitle and issueDescription', async () => {
+    const res = await request(app).post('/api/support/tickets').set(fmAuth).send({ issueTitle: 'Only a title' });
+    expect(res.status).toBe(400);
+  });
+
+  test('rejects an invalid priority', async () => {
+    const res = await request(app)
+      .post('/api/support/tickets')
+      .set(fmAuth)
+      .send({ issueTitle: 'x', issueDescription: 'y', priority: 'Critical' });
+    expect(res.status).toBe(400);
+  });
+
+  test('creates a manual ticket with no linked transcript, defaulting category/priority', async () => {
+    mockSupportTicket.create.mockResolvedValue({ id: TICKET_ID, status: 'Pending' });
+
+    const res = await request(app)
+      .post('/api/support/tickets')
+      .set(fmAuth)
+      .send({ issueTitle: 'Incident #1 escalated: Gate A', issueDescription: 'Escalated from Incident #1.', category: 'Security', priority: 'High', tenantName: 'Charlie Kirk' });
+
+    expect(res.status).toBe(201);
+    const created = mockSupportTicket.create.mock.calls[0][0];
+    expect(created.category).toBe('Security');
+    expect(created.priority).toBe('High');
+    expect(created.status).toBe('Pending');
+    expect(created.tenantName).toBe('Charlie Kirk');
+    expect(created.transcriptId).toBeUndefined();
+  });
+
+  test('defaults category to General and priority to Medium when omitted', async () => {
+    mockSupportTicket.create.mockResolvedValue({ id: TICKET_ID, status: 'Pending' });
+
+    await request(app).post('/api/support/tickets').set(fmAuth).send({ issueTitle: 'x', issueDescription: 'y' });
+
+    const created = mockSupportTicket.create.mock.calls[0][0];
+    expect(created.category).toBe('General');
+    expect(created.priority).toBe('Medium');
+  });
+});
+
 describe('GET /api/support/tickets/stats', () => {
   test('returns aggregate counts scoped to the active queue', async () => {
     mockSupportTicket.count

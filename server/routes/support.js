@@ -166,6 +166,38 @@ router.get('/tickets', verifyToken, requireRole('FM'), async (req, res) => {
   }
 });
 
+// ─── C: POST /api/support/tickets ────────────────────────────────────────────
+// FM only — manually create a ticket without going through the tenant chat/
+// auto-escalation flow (e.g. escalating an incident from another module).
+// transcriptId is intentionally omitted; there is no chat transcript behind a
+// manual escalation.
+router.post('/tickets', verifyToken, requireRole('FM'), async (req, res) => {
+  const { issueTitle, issueDescription, category, priority, tenantName, unitNumber } = req.body;
+
+  if (!issueTitle?.trim() || !issueDescription?.trim()) {
+    return res.status(400).json({ error: 'issueTitle and issueDescription are required.' });
+  }
+  if (priority && !['Low', 'Medium', 'High'].includes(priority)) {
+    return res.status(400).json({ error: 'priority must be one of: Low, Medium, High.' });
+  }
+
+  try {
+    const ticket = await SupportTicket.create({
+      issueTitle: issueTitle.trim().substring(0, 255),
+      issueDescription: issueDescription.trim(),
+      category: category?.trim() || 'General',
+      priority: priority || 'Medium',
+      status: 'Pending',
+      tenantName: tenantName?.trim() || null,
+      unitNumber: unitNumber?.trim() || null
+    });
+    res.status(201).json({ message: 'Ticket created.', ticket });
+  } catch (err) {
+    console.error('Manual ticket create error:', err);
+    res.status(500).json({ error: 'Could not create ticket.' });
+  }
+});
+
 // ─── R: GET /api/support/tickets/stats ───────────────────────────────────────
 // FM only — summary counts for the dashboard cards. Scoped to the active
 // (non-archived) queue, matching what the ticket list shows by default.
