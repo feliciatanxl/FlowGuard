@@ -35,6 +35,7 @@ import FacialEvaluation from './pages/FacialEvaluation';
 import IncidentDashboard from './pages/IncidentDashboard';
 import IncidentAnalytics from './pages/IncidentAnalytics';
 import SupportDashboard from './pages/SupportDashboard';
+import KnowledgeBase from './pages/KnowledgeBase';
 import { ACCESS } from './constants/roles';
 import './App.css';
 
@@ -178,9 +179,16 @@ function App() {
             <Settings />
           </ProtectedRoute>
         } />
+        {/* No longer in the sidebar — the Incident Dashboard's "Support Tickets ->"
+            button is now the only entry point, but the route/page stay as-is. */}
         <Route path="/support-dashboard" element={
           <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
             <SupportDashboard />
+          </ProtectedRoute>
+        } />
+        <Route path="/knowledge-base" element={
+          <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
+            <KnowledgeBase />
           </ProtectedRoute>
         } />
         

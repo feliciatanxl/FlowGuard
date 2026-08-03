@@ -78,40 +78,6 @@
   }
 }
 
-/* ── Tabs ───────────────────────────────────────────────────────────────── */
-.support-tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 1.5rem;
-  background: #0f172a;
-  border: 1px solid #1e293b;
-  border-radius: 10px;
-  padding: 4px;
-  width: fit-content;
-}
-
-.support-tab {
-  padding: 10px 24px;
-  border-radius: 8px;
-  border: none;
-  background: transparent;
-  color: #94a3b8;
-  font-weight: 600;
-  font-size: 0.9rem;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.support-tab.active {
-  background: #1e293b;
-  color: #f8fafc;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-}
-
-.support-tab:hover:not(.active) {
-  color: #e2e8f0;
-}
-
 /* ── Status badge extras ─────────────────────────────────────────────────── */
 .status-badge.inprogress {
   background: rgba(59, 130, 246, 0.1);
@@ -267,17 +233,6 @@
 
 /* ── Mobile ──────────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
-  .support-tabs {
-    width: 100%;
-  }
-
-  .support-tab {
-    flex: 1;
-    text-align: center;
-    padding: 10px 12px;
-    font-size: 0.85rem;
-  }
-
   .support-kb-form-card {
     padding: 18px 16px;
   }
