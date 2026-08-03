@@ -11,11 +11,19 @@ const { verifyToken, requireRole, verifyServiceOrRole } = require('../middleware
 const { aiServiceHeaders } = require('../services/aiServiceAuth');
 require('dotenv').config();
 
-const ALLOWED_STATUSES = ['Active', 'Investigating', 'Escalated to Security', 'Cleared'];
+const ALLOWED_STATUSES = ['Active', 'Investigating', 'Escalated to Security', 'Cleared', 'False Positive'];
 const SEVERITIES = ['Low', 'Medium', 'High', 'Critical'];
+
+// Terminal states for MTTR purposes — resolvedAt is stamped entering either one and
+// cleared when an incident is reopened back to a non-terminal status (see PATCH below).
+const TERMINAL_STATUSES = ['Cleared', 'False Positive'];
 
 // Mirrors detectionAlerts.js's STATUS_TO_RESOLUTION in reverse — only values both
 // IncidentLog.resolutionStatus and DetectionAlert.status already support.
+// 'False Positive' has no DetectionAlert.status analog (see VALID_STATUSES in
+// detectionAlerts.js) and is deliberately left unmapped here — the PATCH route's
+// existing "no key in this map -> don't touch the linked alert's status" behavior
+// already handles that safely, same as any other unmapped value would.
 const RESOLUTION_TO_ALERT_STATUS = {
     Active: 'Active',
     Investigating: 'Investigating',
@@ -217,6 +225,21 @@ router.patch("/:id", verifyToken, requireRole('FM'), async (req, res) => {
     if (severity !== undefined && severity !== null && !SEVERITIES.includes(severity)) {
         return res.status(400).json({ error: `severity must be one of: ${SEVERITIES.join(', ')}.` });
     }
+
+    // undefined = don't touch resolvedAt; null = clear it; Date = stamp it.
+    let resolvedAtUpdate;
+    if (resolutionStatus !== undefined) {
+        const enteringTerminal = TERMINAL_STATUSES.includes(resolutionStatus);
+        if (enteringTerminal && !log.resolvedAt) {
+            resolvedAtUpdate = new Date();
+        } else if (!enteringTerminal && log.resolvedAt) {
+            // Reopened from a terminal state back to Active/Investigating/Escalated —
+            // clear the stamp so a future re-resolution is timed from this new cycle,
+            // not the stale first resolution.
+            resolvedAtUpdate = null;
+        }
+    }
+
     try {
         await withTransaction(async (t) => {
             const opts = t ? { transaction: t } : undefined;
@@ -224,7 +247,8 @@ router.patch("/:id", verifyToken, requireRole('FM'), async (req, res) => {
                 resolutionStatus: resolutionStatus ?? log.resolutionStatus,
                 notes: notes !== undefined ? notes : log.notes,
                 ...(severity !== undefined && { severity }),
-                ...(person_name !== undefined && { person_name })
+                ...(person_name !== undefined && { person_name }),
+                ...(resolvedAtUpdate !== undefined && { resolvedAt: resolvedAtUpdate })
             }, opts);
 
             // Old incidents predating incident_log_id linking, or ones whose linked

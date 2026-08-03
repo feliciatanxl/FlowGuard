@@ -7,7 +7,8 @@ module.exports = (sequelize, DataTypes) => {
     },
     transcriptId: {
       type: DataTypes.UUID,
-      allowNull: true
+      allowNull: true,
+      unique: true // at most one ticket per transcript; Postgres allows many NULLs
     },
     userId: {
       type: DataTypes.INTEGER,
@@ -29,15 +30,25 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: false
     },
+    category: {
+      type: DataTypes.STRING(100),
+      allowNull: false,
+      defaultValue: 'General'
+    },
     priority: {
       type: DataTypes.ENUM('Low', 'Medium', 'High'),
       allowNull: false,
       defaultValue: 'High'
     },
     status: {
-      type: DataTypes.ENUM('Pending', 'In Progress', 'Resolved'),
+      type: DataTypes.ENUM('Pending', 'Investigating', 'Resolved', 'Closed'),
       allowNull: false,
       defaultValue: 'Pending'
+    },
+    isArchived: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false
     },
     resolvedBy: {
       type: DataTypes.STRING,

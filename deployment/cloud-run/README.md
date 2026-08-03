@@ -98,9 +98,12 @@ never use them for secrets and do not bake a transient hotspot IP into a shared 
 ## Deploy
 
 Put every secret in **Secret Manager** first (`APP_SECRET`, `DB_PWD`,
-`AI_SERVICE_KEY`, `RECAPTCHA_SECRET_KEY`, `SMTP_PASS`, `EDGE_INGEST_TOKEN`, …)
+`AI_SERVICE_KEY`, `RECAPTCHA_SECRET_KEY`, `SMTP_PASS`, `EDGE_INGEST_TOKEN`,
+`GEMINI_API_KEY`, …)
 and grant the runtime service account `roles/secretmanager.secretAccessor`.
 See [env.example](env.example) for the full variable list per service.
+The Node server secret list also includes `GEMINI_API_KEY`, bound from the
+staging Secret Manager secret named `flowguard-gemini-api-key-staging`.
 
 ```bash
 REGION=asia-southeast1
@@ -151,6 +154,30 @@ gcloud run deploy flowguard-client \
 gcloud run services update flowguard-server --region $REGION \
   --update-env-vars CLIENT_URL=$CLIENT_URL,FRONTEND_URL=$CLIENT_URL
 ```
+
+### Incremental Gemini configuration for staging
+
+`flowguard-server-staging` runs as
+`flowguard-server-sa@flowguard-502613.iam.gserviceaccount.com`. That runtime
+service account requires **Secret Manager Secret Accessor** on
+`flowguard-gemini-api-key-staging`. The secret value stays in Secret Manager;
+it is never stored in Git or supplied as a plain environment variable.
+
+Use an incremental service update so the existing configuration remains in
+place:
+
+```bash
+gcloud run services update flowguard-server-staging \
+  --region asia-southeast1 \
+  --update-secrets GEMINI_API_KEY=flowguard-gemini-api-key-staging:latest \
+  --update-env-vars GEMINI_MODEL=gemini-flash-latest,GEMINI_TIMEOUT_MS=30000,RATE_LIMIT_CHAT_WINDOW_MS=60000,RATE_LIMIT_CHAT_MAX=20
+```
+
+`--update-secrets` adds or updates only the named mapping and preserves the
+service's existing secret mappings. Do not replace or remove `APP_SECRET`,
+`DB_PWD`, `AI_SERVICE_KEY`, `RECAPTCHA_SECRET_KEY`, `SMTP_PASS`,
+`EDGE_INGEST_TOKEN`, or any WhatsApp secret mapping. Keep
+`DB_SYNC_ALTER=false`, and never set `PORT`; Cloud Run injects it.
 
 ## Recommended resources
 

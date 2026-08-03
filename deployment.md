@@ -1,119 +1,196 @@
-# FlowGuard Google Cloud deployment
+# FlowGuard deployment and assessment guide
 
-This document records the current repository-backed deployment design. It contains environment-variable names and placeholders only; it does not contain credentials.
+This assessor-facing guide describes the current Google Cloud staging deployment and the remaining manual preparation. The application is already deployed; incomplete role-specific checks do not mean deployment is incomplete. Passwords and other credentials remain placeholders in Git.
 
-## Current architecture
+## Deployed application
 
-| Tier | Google Cloud service | Access | Verified detail |
-|---|---|---|---|
-| React client | Cloud Run `flowguard-client`, Nginx static SPA/reverse proxy | Public | Repository-configured region `asia-southeast1`; staging URL below returned HTTP 200 on 28 July 2026. |
-| Node API | Cloud Run `flowguard-server` | Public through the client proxy and API URL | Direct public URL is not recorded as a verified value in the repository. |
-| FastAPI AI | Cloud Run `flowguard-ai` | **Private/authenticated** | `--no-allow-unauthenticated`; Node service account needs `roles/run.invoker`; app key remains defence in depth. No public URL is published. |
-| Database | Cloud SQL for PostgreSQL | Private application data service | Instance and database names are not verified in repository files. |
-| Secrets | Secret Manager and Cloud Run secret bindings | Runtime service identities | Real values must never enter source, images, build arguments, or `VITE_` variables. |
-| Images/build | Artifact Registry and Cloud Build | Deployment pipeline | Repository documents image tags and `gcloud builds submit`; Developer Connect/trigger names and branch filters are not checked in and remain evidence to capture from Google Cloud Console. |
+| Item | Current value/status |
+|---|---|
+| Application | FlowGuard |
+| Environment | Google Cloud staging |
+| Public client | <https://flowguard-client-staging-590663319889.asia-southeast1.run.app> |
+| Login | <https://flowguard-client-staging-590663319889.asia-southeast1.run.app/login> |
+| Client service | `flowguard-client-staging` — **Deployed** |
+| Server service | `flowguard-server-staging` — **Deployed** |
+| AI service | `flowguard-ai-staging` — **Deployed**, designed as private |
+| Database | Cloud SQL PostgreSQL |
+| Build/images | Cloud Build -> Artifact Registry -> Cloud Run |
+| Runtime secrets | Secret Manager bindings/runtime environment |
+| Public smoke status | **Passed 3 Aug 2026** for client, route refreshes, one static asset, public Knowledge Base GET, and unknown Driver Pass booking handling |
+| Automated status | **Passed**; exact results and non-fatal advisories are below |
+| Role-specific staging status | **Manual role verification required**; no credentials or records were created by this documentation task |
 
-Repository-configured Google Cloud project/region: `flowguard-502613`, `asia-southeast1`. These values are present in `deployment/cloud-run/README.md`; the `gcloud` CLI was unavailable on the audit machine, so live console state was not queried.
+The public client serves the React SPA through Nginx and proxies relative `/api/*` and `/user/*` requests to Node. Node invokes private FastAPI for facial, QR-cloud-fallback, and YOLO work. Node calls Gemini and WhatsApp only when their runtime configuration is present. The browser, not Cloud Run, reaches a private Raspberry Pi camera address.
 
-## Verified public URLs
+The repository verifies the service names but does not contain a verified direct server URL, current revision IDs, live IAM export, Cloud SQL instance/database identifier, or build IDs. Copy those values from Google Cloud through an authorised operator; do not infer them from the client URL.
 
-| Surface | URL | Audit status |
+## Test accounts
+
+| Role | Display name | Email | Password | Preparation status | Main demonstration |
+|---|---|---|---|---|---|
+| `FM` | Existing System Root Admin | `admin@harrison.com` | `<ENTER EXISTING FLOWGUARD DEMO PASSWORD>` | Existing; verify privately | Dashboard, users, gate, detection, incidents, security, support, knowledge, analytics |
+| `Tenant` | FlowGuard Demo Tenant | `tenant.demo@harrison.com` | `<CREATE AND VERIFY DEMO PASSWORD>` | Create/verify manually if absent | Own Staff, attendance, bookings, Settings |
+| `Staff` | FlowGuard Demo Staff | `staff.demo@harrison.com` | `<CREATE AND VERIFY DEMO PASSWORD>` | Create/verify manually under demo Tenant if absent | Own attendance, permitted logistics, Settings |
+
+Account rules:
+
+- `FM`, `Tenant`, and `Staff` are the exact stored roles. Drivers do not receive accounts.
+- The FM seed email is repository-defined, but the seed password comes only from `FLOWGUARD_SEED_FM_PASSWORD`. Do not run the seed or reset an account as part of documentation verification.
+- Use fake assessment data. Never place an actual password, personal email password, Google Cloud credential, API key, database secret, face image, personal phone number, or private Tenant record in this file.
+- Give passwords to the assessor only through the approved private submission channel; keep placeholders in Git.
+- Verify each account in a separate browser profile/Incognito session and complete required Face ID enrolment before the lesson.
+
+## Role journey and access boundary
+
+| User | Intended pages/workflows | Negative check |
 |---|---|---|
-| Client | <https://flowguard-client-staging-590663319889.asia-southeast1.run.app> | Verified with HTTP 200 and `Google Frontend` response on 28 July 2026. |
-| Node server | Not stated | Direct service URL not independently verified; the client proxies `/api/*` and `/user/*` to Node through runtime `BACKEND_HOST`. |
-| AI service | Not published | Intentionally private; authentication is required. |
+| `FM` | Facility dashboard, users/tenants, attendance, logistics/gate verification, camera/zone/detection, incidents/analytics, security review, support tickets, Knowledge Base | Confirm the authorised pages load and their database data survives refresh. |
+| `Tenant` | Own dashboard, own Staff, own attendance/logistics, Settings, own enrolment | Reject FM-only users, gate verification, monitoring, incident, support-management, and Knowledge Base administration routes. |
+| `Staff` | Own dashboard/attendance, permitted linked-unit logistics, Settings, own enrolment | Reject user/staff/tenant administration, gate verification, FM monitoring, incidents, support management, and knowledge administration. |
+| Driver | `/driver-pass/:ref` public safe booking view | Unknown/empty references fail safely; no login or private booking fields are exposed. |
 
-Do not replace missing URLs with guessed Cloud Run hostnames.
+## Driver Pass and prepared booking
 
-## Request and trust flow
+No Driver account is required. The booking reference is also the QR token.
 
-1. Browser requests the public Cloud Run client.
-2. Nginx serves the React SPA and proxies `/api/*` and `/user/*` to the Node Cloud Run service.
-3. Node validates application JWT/RBAC before forwarding facial, QR, or YOLO work.
-4. Node obtains a Google ID token for the AI service audience and supplies `X-AI-Service-Key`.
-5. Private FastAPI performs transient inference. Node remains authoritative for users, bookings, gate decisions, and audit writes.
-6. Node/FastAPI use Cloud SQL PostgreSQL. SecurePi sends authenticated outbound alert events to Node.
+URL format:
 
-Local browser QR detection does not leave the browser. Cloud QR fallback is Browser -> Node `/api/qr/decode` -> private FastAPI `/api/qr/decode`.
+`https://flowguard-client-staging-590663319889.asia-southeast1.run.app/driver-pass/<BOOKING_REFERENCE>`
 
-## Build and trigger flow
+Generated references use the `FG-XXXXXX` pattern. Use an actual prepared `Confirmed` booking rather than inventing a successful reference.
 
-The checked-in Dockerfiles build these images:
+| Prepared item | Value |
+|---|---|
+| Booking reference | `<ENTER CONFIRMED BOOKING REFERENCE>` |
+| Verified Driver Pass URL | `<ENTER VERIFIED DRIVER PASS URL>` |
+| Demonstration plate | `<ENTER NON-PERSONAL VEHICLE PLATE>` |
+| Slot | `<YYYY-MM-DD, START-END SGT>` |
+| Status | `<CONFIRM Confirmed>` |
+| Bay | `<Bay A OR Bay B>` |
 
-```bash
-REG=asia-southeast1-docker.pkg.dev/flowguard-502613/flowguard-containers
-docker build -t $REG/flowguard-server:<revision> server/
-docker build -t $REG/flowguard-ai:<revision> ai-service/
-docker build -t $REG/flowguard-client:<revision> client/
-```
+The public DTO must not expose driver phone, Tenant ID, or notes. Gate Verification is FM-only; QR and proof-of-concept plate results are candidates, and the server owns the audited grant/deny decision.
 
-`deployment/cloud-run/README.md` also documents `gcloud builds submit` and Cloud Run deployment commands. If Developer Connect/Cloud Build triggers are used, submission evidence still needs the actual connection, repository, trigger name, branch pattern, successful build ID, and resulting Cloud Run revision screenshot/export. No trigger YAML or live trigger output is available in this repository.
+## Health and public smoke checks
 
-Suggested branch flow: merge reviewed work to the configured deployment branch -> Developer Connect/Cloud Build trigger -> build tagged images -> push to Artifact Registry -> deploy a new Cloud Run revision -> smoke test -> shift traffic. The actual trigger branch must be copied from Google Cloud, not inferred from the current local Git branch.
+Server health routes are mounted at `/health/live` and `/health/ready` on the direct Node service. The client Nginx does not proxy `/health`, so appending those paths to the client URL is not a valid test.
 
-## Environment-variable names
+| Check | Expected | Result on 3 Aug 2026 |
+|---|---|---|
+| Client `/` | HTTP 200 HTML | **Passed** — 200, React HTML returned |
+| Client `/login` refresh | HTTP 200 SPA fallback | **Passed** — 200 |
+| Client `/driver-pass/FG-DOCS-SMOKE` refresh | HTTP 200 SPA fallback | **Passed** — 200; this proves route handling, not a valid booking |
+| Hashed JS asset | HTTP 200 JavaScript | **Passed** — `/assets/index-Dk3nhDIU.js`, 776,454 bytes at check time |
+| Public `GET /api/support/knowledge` through Nginx | HTTP 200 JSON | **Passed** — 200, JSON array with 2 entries; no write performed |
+| Unknown `GET /api/bookings/FG-DOCS-SMOKE` | Safe not-found response | **Passed** — 404 JSON |
+| Direct server `/health/live` | 200 `{"status":"live"}` | **Manual operator check required** — verified direct URL unavailable in repository |
+| Direct server `/health/ready` | 200 `{"status":"ready","database":true}` | **Manual operator check required** — verifies database readiness/schema path |
 
-### `flowguard-server`
+Readiness returns 503 with database false when startup/database checks fail. That is a safe failure, not a successful readiness result. The smoke checks above did not authenticate, create records, upload images, trigger alerts, run migrations, or change cloud configuration.
 
-Plain configuration: `NODE_ENV`, `APP_PORT` (local only; Cloud Run injects `PORT`), `CLIENT_URL`, `FRONTEND_URL`, `ALLOWED_ORIGINS`, `TRUST_PROXY`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_SYNC_ALTER`, `FACE_AI_URL`, `PYTHON_AI_URL`, `AI_ID_TOKEN`, `GATE_EARLY_MINUTES`, `GATE_LATE_MINUTES`, `WHATSAPP_ENABLED`, `WHATSAPP_API_URL`, `WHATSAPP_PHONE_NUMBER_ID`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `MAIL_FROM`, and the `RATE_LIMIT_*` overrides.
+## Current automated test results
 
-Secret Manager candidates: `APP_SECRET`, `DB_PWD`, `AI_SERVICE_KEY`, `RECAPTCHA_SECRET_KEY`, `SMTP_PASS`, `EDGE_INGEST_TOKEN`, `EDGE_SERVICE_TOKEN`, `WHATSAPP_ACCESS_TOKEN`, and optional `WHATSAPP_API_KEY`.
+Executed on the current branch after the chatbot merge on 3 Aug 2026:
 
-### `flowguard-ai`
+| Area | Command | Exact result |
+|---|---|---|
+| Client lint | `cd client && npm run lint` | **Passed:** 0 errors. |
+| Client tests | `cd client && npx vitest run` | **Passed:** 69 test files, 655 tests. Test environment also printed non-fatal jsdom canvas/navigation notices. |
+| Client production build | `cd client && npm run build` | **Passed:** 759 modules transformed. Vite warned that the approximately 801.50 kB main chunk exceeds 500 kB; build completed. |
+| Server tests | `cd server && npm test -- --runInBand` | **Passed:** 46 Jest suites, 686 tests in 8 bounded batches. Runner force-exit notices indicate open handles should be investigated separately. |
+| AI safe tests | `cd ai-service && .venv/Scripts/python -m pytest -q test/test_qr_endpoint.py test/test_track_endpoint.py tests/test_zone_resolution.py tests/test_zone_threshold_env.py` | **Passed:** 4 files, 35 tests; 9 deprecation warnings. Hardware/private-image scripts were not run. |
+| Pi tests | `cd raspberry-pi && python -m pytest test_pi_camera_stream.py` | **Passed:** 1 file, 19 tests. |
+| Pi syntax | `cd raspberry-pi && python -m py_compile pi_camera_steam.py` | **Passed:** exit 0. |
 
-Plain configuration: `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `NODE_SERVER_URL`, `USE_SERVER_CAMERA=false`, `FACE_CTX_ID=-1`, `FACE_MODEL_NAME`, `FACE_DET_SIZE`, `TRACK_DET_SIZE`, `YOLO_IMG_SIZE`, `YOLO_CONFIDENCE`, `AI_CAMERA_LOCATION`, and optional `ALLOWED_ORIGINS` for local use.
+Excluded AI scripts are `test_webcam.py`, `test_manpower.py`, and `test_insightface.py` (camera/private images) plus `test_yolo.py` (real `test.jpg` inference). Their absence is not recorded as a pass.
 
-Secrets: `DB_PWD`, `AI_SERVICE_KEY`.
+## Deployed Feature Verification Matrix
 
-### `flowguard-client`
+| Area | Implemented | Automated evidence | Deployed verification | Remaining manual check |
+|---|---|---|---|---|
+| Authentication/RBAC | Yes | Client route/RBAC tests; server account, RBAC, CORS, rate-limit tests | Public login route loads | Log in as prepared FM/Tenant/Staff; check allowed pages, denials, logout, expiry, and refresh. |
+| Facial recognition | Yes | Enrolment, tracking, liveness, recognition, attendance, audit, privacy tests; safe AI track tests | Not authenticated in this task | Enrol front/left/right with consented demo identity; verify known, unknown, multiple-face, failed-liveness, and Pi/webcam fallback paths. |
+| Smart Logistics | Yes | Booking time/conflict/edit/pass, QR, plate, gate, WhatsApp tests | Unknown booking 404 and Driver Pass route refresh passed | With prepared FM/Tenant and `Confirmed` booking, verify create/edit/status, public pass/QR, plate match/mismatch, audited entry/exit, and persistence. |
+| Raspberry Pi Camera | Yes, local PoC | 19 Pi tests + syntax pass; camera-source client tests | Public client route only | On lesson hotspot, verify browser permission and Pi `/health`, `/video_feed`, `/snapshot`, then disconnect Pi and confirm Laptop Webcam fallback. |
+| Object detection | Yes | Client source-mode tests; server camera/zone/alert/edge/YOLO tests; safe AI zone tests | Not authenticated in this task | Load configured deployed camera/zone and prepared alert; verify source, threshold, status, snapshot behaviour, and SecurePi hardware only if available. |
+| Incidents/security review | Yes | Alert bridge/sync/auth, resolved timestamp, security review tests | Not authenticated in this task | Verify prepared alert links to incident; update status/notes/resolution, reopen, review a security log, and confirm sync after refresh. |
+| Attendance/dashboard | Yes | Attendance and dashboard/analytics client/server tests | Not authenticated in this task | FM all-data, Tenant own-unit, Staff self views; verify counts/statistics with prepared current data. |
+| AI chatbot | Yes | Support and Gemini service tests | Public Knowledge Base read only; chat POST intentionally not called | Send messages, refresh/restore transcript, observe Gemini response **or clearly identified deterministic fallback**, and verify fixed escalation rules. |
+| Knowledge Base | Yes | Support route/service tests | Public read passed with 2 entries | As FM, create/edit/search/delete a temporary approved demo entry, or use an existing prepared record if writes are not authorised. Confirm Tenant/Staff cannot administer. |
+| Incident analytics | Yes | Gladwin client analytics/page tests and server resolved-at test | Not authenticated in this task | As FM, load deployed incident data; verify MTTR excludes missing timestamps and confidence/funnel values match prepared records. |
+| Support tickets | Yes | Support route/service tests, transcript uniqueness migration | Not authenticated in this task | Verify chat escalation or prepared ticket, transcript view, category/status/notes, archive/restore, and permitted deletion policy. |
 
-Runtime: `BACKEND_HOST` is a hostname without a scheme for the Nginx template. Build-time public variables include `VITE_RECAPTCHA_SITE_KEY`. `VITE_API_BASE_URL` stays empty for the same-origin Cloud Run/Nginx design. Production should leave `VITE_PI_CAMERA_*` unset unless an explicitly reachable, secure Pi gateway exists.
+Lucas's helpdesk/Knowledge Base and Gladwin's incident/analytics areas are implemented and automated-tested. They are **not** labelled manually verified on staging because no role credentials or prepared records were used by this task.
 
-## CORS, proxy, and rate-limit requirements
+## Gemini, WhatsApp, and private AI configuration
 
-- Set `NODE_ENV=production` and configure the exact client origin in `CLIENT_URL`, `FRONTEND_URL`, or `ALLOWED_ORIGINS`. Production/staging fails closed if no origin exists.
-- Set `TRUST_PROXY=1` for the single Cloud Run proxy hop unless the deployed topology proves a different hop count. Never trust every proxy.
-- The current `express-rate-limit` store is `MemoryStore`. Quotas reset on cold start and apply per Node instance; autoscaling means this is not a global distributed limit. A shared store is required for production-wide enforcement.
-- The client uses credentials with an exact-origin allowlist; do not combine credentialed CORS with a wildcard.
+- `server/.env.example` defines `GEMINI_API_KEY`, model, timeout, and retry settings. The checked-in Cloud Run environment template predates the chatbot merge, so an authorised operator must confirm that the staging server has the Gemini secret/runtime variables before claiming live Gemini output.
+- If Gemini is absent or fails, the support service uses deterministic Knowledge Base or fixed fallback text; escalation remains deterministic in both cases.
+- WhatsApp real sending requires its enable flag, credentials, phone-number ID, and recipients. Simulation or failure must be described by its stored status, not as real delivery.
+- The AI service must remain private with the Node service identity as invoker and the matching `AI_SERVICE_KEY` in Secret Manager/runtime configuration.
 
-## Storage and privacy
+## Pi and SecurePi setup boundary
 
-- Facial enrolment images, recognition frames, QR images, and plate images are transient request memory/canvas data and are not permanently stored by the current PoC.
-- PostgreSQL stores the facial `FLOAT[]` embedding and audit/operational metadata.
-- Detection alerts may store `snapshot_url`/`snapshot_path` metadata; SecurePi can keep local snapshots. This is not a general Cloud Storage upload pipeline.
-- InsightFace and YOLO models are baked into the AI container image. No model download is required per request.
-- Current scope does not require persistent user-upload storage.
+### Raspberry Pi Camera Module 3
 
-## Local container validation
+1. Connect the laptop and Pi to the same trusted hotspot/LAN.
+2. Start `raspberry-pi/pi_camera_steam.py` on the Pi (default documented port 8081).
+3. Verify the local `/health`, `/video_feed`, and `/snapshot` endpoints from the demo browser/network.
+4. In **Settings -> Raspberry Pi Camera**, save only the device base URL and use **Test Connection**.
+5. Grant browser local-network/camera permission if prompted.
+6. Confirm the relevant page can select the Pi and then the Laptop Webcam fallback.
 
-Use explicit local-only tags:
+The browser-local setting contains only the normalised device URL. Never put a credential in `VITE_` configuration or expose the unauthenticated local camera service to the public internet.
 
-```bash
-docker build -t flowguard-server:local server/
-docker build -t flowguard-ai:local ai-service/
-docker build -t flowguard-client:local client/
+### SecurePi / IMX500
 
-docker run --rm -p 8080:8080 -e PORT=8080 --env-file server/.env flowguard-server:local
-docker run --rm -p 8081:8081 -e PORT=8081 --env-file ai-service/.env flowguard-ai:local
-docker run --rm -p 8082:8082 -e PORT=8082 -e BACKEND_HOST=<server-host> flowguard-client:local
-```
+SecurePi is separate from the Camera Module 3 service. It runs on Raspberry Pi 5 + Sony IMX500, performs edge inference, and sends outbound authenticated events to Node. Follow [docs/securepi-flowguard-edge-ai.md](docs/securepi-flowguard-edge-ai.md). Do not restore a copied `edge/securepi/` folder. Do not claim physical pest/model or snapshot-upload interoperability until the documented hardware/parser/contract checks pass.
 
-Never paste real environment values into shell history, documentation, Dockerfiles, or build arguments.
+## Demo-data checklist
 
-## Rollback and revision handling
+- [ ] Existing FM credential privately verified
+- [ ] Demo Tenant and linked demo Staff available
+- [ ] All three role sessions verified in separate profiles
+- [ ] Required three-angle enrolment completed with approved demo images/live user
+- [ ] Confirmed booking, Driver Pass, QR/reference, plate, slot, and bay prepared
+- [ ] Attendance records and dashboard data prepared
+- [ ] Camera and monitoring zone prepared
+- [ ] Alert with known source and linked incident prepared
+- [ ] Security review record prepared
+- [ ] Chat session/support ticket and Knowledge Base entries prepared
+- [ ] Incident set includes known resolution timestamps/confidence values for analytics
+- [ ] Pi and Laptop Webcam permissions/fallback verified
+- [ ] Prepared records remain available after refresh
 
-1. Record the current serving revisions and image digests before changing traffic.
-2. Deploy with immutable revision/image tags rather than reusing `latest`.
-3. Smoke-test client deep links, Node health, login/RBAC, private AI invocation, database access, Driver Pass, and CORS.
-4. If validation fails, route traffic back to the last known-good Cloud Run revision; do not rebuild an old tag in place.
-5. Database changes require a separate rollback plan. Normal startup uses `DB_SYNC_ALTER=false`; do not use schema alteration as an automatic rollback mechanism.
-6. Keep the AI service private throughout rollback. Do not temporarily enable unauthenticated access to diagnose invocation failures.
+## Deployment-verification checklist
 
-## Remaining deployment evidence
+- [x] Public client root, login refresh, Driver Pass refresh, static asset, public KB GET, and unknown-booking response checked on 3 Aug 2026
+- [ ] Direct server liveness and readiness recorded from verified server URL
+- [ ] Current client/server/AI revisions and traffic confirmed healthy in Cloud Run
+- [ ] Node-to-private-AI IAM invocation confirmed without exposing credentials
+- [ ] Cloud SQL connection/readiness and current migrations confirmed by an authorised operator
+- [ ] Gemini runtime secret/configuration confirmed or deterministic fallback deliberately demonstrated
+- [ ] Real/simulated WhatsApp mode identified before the demo
+- [ ] FM/Tenant/Staff role journeys and negative checks completed
+- [ ] Facial, logistics, object/incident, attendance/dashboard, chatbot/KB/support, and analytics workflows verified with prepared data
+- [ ] No localhost/private Pi URL appears as a cloud dependency; Pi path is browser-local only
 
-- Direct Node service URL and health response.
-- Cloud SQL instance/database name, region, connectivity method, backup status, and least-privilege database user evidence.
-- Private AI IAM policy showing only the intended invoker identity.
-- Secret Manager bindings without secret values.
-- Developer Connect/Cloud Build trigger name, branch rule, recent successful build, and deployed revision mapping.
-- Rollback exercise or revision traffic-shift evidence.
+## Security and privacy rules
+
+- Do not store passwords, JWT/API/edge tokens, Google Cloud/DB credentials, private keys, personal phone numbers, biometric images, or private Tenant data in documentation or Git.
+- Keep facial, QR, and plate frames transient. Cloud SQL stores templates and operational metadata, not continuous video.
+- Treat temporary FlowGuard snapshots and SecurePi-local evidence according to their actual retention; neither is automatically a durable archive.
+- Keep `DB_SYNC_ALTER=false` for normal deployment and apply migrations only through an authorised deployment procedure—not this checklist.
+- Do not expose the AI service or local Pi stream publicly. Never use a browser-visible `VITE_` value for a secret.
+
+## Implementation references
+
+| Topic | Repository evidence |
+|---|---|
+| Cloud services and build/runtime guidance | `deployment/cloud-run/README.md`, Dockerfiles, Nginx config |
+| Roles, token/account checks, readiness | `client/src/App.jsx`, `client/src/constants/roles.js`, `server/middlewares/auth.js`, `server/routes/health.js`, `server/services/serverLifecycle.js` |
+| Facial, attendance, user security | `server/routes/user.js`, `facialRecognition.js`, `attendance.js`, access services/tests |
+| Logistics and Driver Pass | `server/routes/booking.js`, `qr.js`, gate/WhatsApp services, logistics pages/tests |
+| Monitoring, edge, incidents | camera/zone/detection/edge/incident routes, models, migrations, tests |
+| Chatbot, Gemini, support, Knowledge Base | `AIChatPopup.jsx`, support route/services/models/migrations/tests |
+| Incident analytics | `IncidentAnalytics.jsx`, `client/src/utils/incidentAnalytics.js`, incident migration/tests |
+| Pi and SecurePi | `raspberry-pi/`, `client/src/constants/piCamera.js`, `docs/securepi-flowguard-edge-ai.md` |

@@ -1,6 +1,6 @@
 # FlowGuard
 
-FlowGuard is the academic proof of concept for SCCCI Problem Statement 5B, Asset & Manpower Monitoring for Harrison Food Factory. It combines access management, object and space monitoring, facility support, incident resolution, and loading-bay operations in one full-stack application.
+FlowGuard is the academic proof of concept for SCCCI Problem Statement 5B, Asset & Manpower Monitoring for Harrison Food Factory. It combines access management, object and space monitoring, Smart Logistics, incident resolution/analytics, and an AI-assisted facility helpdesk with a shared Knowledge Base.
 
 The working application is the source of truth. This repository does not claim production safety certification, production-grade licence-plate recognition, explosive detection, a real gate actuator, or continuous cross-camera person re-identification.
 
@@ -16,7 +16,7 @@ Primary actors are Facilities Manager (`FM`), `Tenant`, `Staff`, public Driver, 
 |---|---|---|---|
 | Module 1 - Facial Recognition & Access Management | Felicia | User enrolment/re-enrolment, Gate Scanner, V-Patrol, attendance, access audit, FM evaluation, PDPA off-boarding | Smart Logistics and loading-bay verification |
 | Module 2 - Object Detection & Space Management | Charlisa | Camera and zone configuration, browser/upload/SecurePi sources, people count, unattended-object alerts, alert lifecycle | Configurable edge and zone workflows |
-| Module 3 - AI Helpdesk & Facility Support | Lucas | Chat transcripts, keyword/knowledge-base replies, automatic ticket escalation, ticket and knowledge-base CRUD | Linked transcript and FM resolution workflow |
+| Module 3 - AI Helpdesk & Facility Support | Lucas | Chat transcripts, Gemini-generated knowledge-base-grounded replies (deterministic keyword-match fallback), automatic ticket escalation, ticket and knowledge-base CRUD | Linked transcript and FM resolution workflow |
 | Module 4 - Incident Tracking & Resolution | Gladwin | Automatic incidents from detection alerts, manual incidents, search, resolution updates, notes, and soft deletion | Bidirectional alert/incident synchronisation |
 | Shared team infrastructure | Team | Accounts, registration, login, JWT verification, RBAC, CORS, rate limiting, deployment configuration | Not a main assigned module |
 
@@ -53,20 +53,22 @@ Primary actors are Facilities Manager (`FM`), `Tenant`, `Staff`, public Driver, 
 - Browser camera/upload analysis through Node's authenticated YOLO proxy, plus optional IMX500/SecurePi edge ingestion.
 - People counting and proximity/timer-based unattended-object detection for model-supported classes.
 - Every current detection-alert creation path atomically creates and links an `IncidentLog` through `DetectionAlert.incident_log_id`; status, severity, person, and soft deletion synchronise in both directions.
-- SecurePi edge events (`POST /api/edge/detection-alerts`, `EDGE_INGEST_TOKEN`) are idempotent on a stable `edge_event_id` and can notify FM/security staff through the existing WhatsApp Cloud API — a separate message family from driver/booking notifications, sent to `WHATSAPP_SECURITY_RECIPIENTS`, never a driver phone. WhatsApp is attempted only after the alert commits, so a send failure never loses the alert; the notification status is stored on the alert and shown on the page. Alert types cover pest, unattended object, forgotten belonging, restricted-zone motion, and item movement. See [docs/Tan Xiu Li, Felicia/securepi-flowguard-integration.md](docs/Tan%20Xiu%20Li,%20Felicia/securepi-flowguard-integration.md). The Raspberry Pi never calls WhatsApp directly; snapshots stored only as local Pi paths are never presented as remote links; and this adds alert *delivery* for these categories, not pest analytics, rat re-identification, or person re-identification (still post-PoC).
+- SecurePi edge events (`POST /api/edge/detection-alerts`, `EDGE_INGEST_TOKEN`) are idempotent on a stable `edge_event_id` and can notify configured FM/security recipients through the WhatsApp Cloud API. Notification runs after the alert commits, and the outcome is stored on the alert. SecurePi remains a separate Pi 5/IMX500 subsystem; physical pest/model and snapshot-contract validation are still required. See the group [SecurePi edge-AI reference](docs/securepi-flowguard-edge-ai.md).
 
 ### AI Helpdesk & Facility Support
 
 - `ChatTranscript`, `SupportTicket`, and `KnowledgeBase` persistence.
-- Public chat records exchanges, scores keyword/knowledge-base overlap, and escalates after configured phrases or five user messages.
-- FM ticket list/detail reads include the linked transcript; FM can update status and resolution notes or hard-delete a ticket and its linked transcript.
-- FM knowledge-base create/read/update/delete. The current response engine is deterministic keyword logic, not a large-language model.
+- Public chat records exchanges and escalates after configured phrases or five user messages — escalation and ticket categorisation are fully deterministic, never decided by the AI reply engine.
+- Non-escalating replies are generated by Google Gemini, grounded in the FM-curated `KnowledgeBase` entries (passed as context so the model answers from actual facility policy rather than invented ones); if Gemini is unavailable (no key, network failure, timeout, quota) the response falls back to the previous deterministic keyword/knowledge-base match, so the chatbot degrades rather than breaking.
+- FM ticket list/detail reads include the linked transcript; FM can categorise, investigate, resolve/close, archive/restore, or delete a ticket and its linked transcript according to the implemented lifecycle.
+- FM Knowledge Base create/read/update/delete, search, and category filtering; chatbot history is restored from its persisted transcript.
 
 ### Incident Tracking & Resolution
 
 - Incidents are created automatically with detection alerts and can also be created manually by FM.
 - FM can list/search/read incidents, update resolution status/notes/severity/person, and soft-delete records.
 - Linked detection alerts mirror resolution, severity, person, and delete operations.
+- `resolvedAt` records terminal transitions; the FM-only deep analytics page derives MTTR, confidence buckets, AI accuracy, and the resolution funnel from current incident data.
 
 ## Repository layout and architecture
 
@@ -74,7 +76,10 @@ Primary actors are Facilities Manager (`FM`), `Tenant`, `Staff`, public Driver, 
 - `server/` - Node.js/Express API, Sequelize models, RBAC, integration services, and cron cleanup.
 - `ai-service/` - private Python/FastAPI service for InsightFace, QR decoding, and YOLO.
 - `raspberry-pi/` - Raspberry Pi Camera Module 3 snapshot/MJPEG PoC.
-- `edge/securepi/` - optional IMX500/SecurePi object-detection edge integration.
+- `design/` - group design sources and rendered PNG diagrams.
+- `docs/` - group evidence/run sheet plus separately owned documentation.
+- `deployment/` - Google Cloud Run guidance and environment placeholders.
+- SecurePi source is maintained in dedicated repositories; FlowGuard contains its browser/API integration and `docs/securepi-flowguard-edge-ai.md`, not a copied `edge/securepi/` folder.
 - PostgreSQL/Cloud SQL is authoritative. `User.faceVector` is Sequelize `ARRAY(FLOAT)` / PostgreSQL `FLOAT[]`; matching is performed with NumPy. No pgvector extension is used by the application.
 
 Normal cloud request path:
@@ -86,7 +91,18 @@ Node and FastAPI -> Cloud SQL PostgreSQL
 SecurePi -> Node edge-ingest endpoint
 ```
 
-The browser normally calls Node, never private FastAPI. Local QR decoding is the exception because it executes in the browser; the cloud QR fallback is Browser -> Node -> FastAPI. See [design/architecture.md](design/architecture.md), [design/architecture-diagram.md](design/architecture-diagram.md), and [design/er-diagram.md](design/er-diagram.md).
+The browser normally calls Node, never private FastAPI. Local QR/plate assistance executes in the browser; cloud QR fallback is Browser -> Node -> FastAPI. Group submission references:
+
+- [Problem statement](design/problem-statement.md)
+- [Architecture document](design/architecture.md)
+- [Architecture Mermaid](design/architecture-diagram.md) and [architecture PNG](design/png/architecture-diagram.png)
+- [ER Mermaid](design/er-diagram.md) and [ER PNG](design/png/er-diagram.png)
+- Additional group flows: [facial recognition and access](design/md/facial-recognition-flow.md), [smart logistics](design/md/logistics-flow.md), and [RBAC](design/md/rbac-flow.md)
+- [Client-feedback traceability](design/client-feedback-traceability.md)
+- [Deployment and verification guide](deployment.md)
+- [Group rubric evidence map](docs/group-rubric-evidence-map.md)
+- [Final-review run sheet](docs/final-review-run-sheet.md)
+- [SecurePi integration reference](docs/securepi-flowguard-edge-ai.md)
 
 ## Local setup
 
@@ -118,6 +134,10 @@ cd ai-service && uvicorn main:app --host 0.0.0.0 --port 8501
 ```
 
 For local development, Node reaches FastAPI through `FACE_AI_URL=http://127.0.0.1:8501`. Production uses the private Cloud Run AI URL and Google identity-token authentication in addition to `X-AI-Service-Key`.
+
+## Edge AI — SecurePi
+
+SecurePi is FlowGuard's separate Raspberry Pi and Sony IMX500 edge-AI subsystem for local person/object tracking, unattended-object decisions, local evidence, and authenticated alert submission. Its source stays in dedicated hardware repositories while FlowGuard provides the edge API, browser, alert, incident, and notification integration. See the [SecurePi Edge AI integration guide](docs/securepi-flowguard-edge-ai.md); the recommended canonical reference from the current repository review is [feliciatanxl/SecurePi_FlowGuard](https://github.com/feliciatanxl/SecurePi_FlowGuard).
 
 ## Gate camera source (Raspberry Pi Camera Module 3)
 
@@ -205,43 +225,27 @@ Safe manual verification (no unauthenticated test endpoint is added):
 4. Remove the test data with the existing FM-only `DELETE /api/detection-alerts/:id`
    (soft-deletes the alert and its linked incident).
 
-## Tests and 28 July 2026 audit snapshot
+## Tests and 3 August 2026 integration snapshot
 
-Audit date: 28 July 2026. No camera or private face images were required.
+These commands ran on the current `feature/facial-smart-logistics` branch after the chatbot merge. No camera, private face image, database migration, test account, or cloud write was required.
 
 | Area | Command | Exact result |
 |---|---|---|
-| Client install | `cd client && npm ci` | Passed; 625 packages installed, 0 vulnerabilities reported. |
-| Full client | `npm test -- --run` | Passed: 60/60 files and 552/552 tests in 35.91 s. |
-| Felicia client subset | `npx vitest run "tests/Tan Xiu Li, Felicia"` | Passed: 54/54 files and 501/501 tests in 31.30 s. |
-| Charlisa client focus | Three named files plus `CameraFeed.test.jsx` | Passed three consecutive runs: 4/4 files and 38/38 tests each run. |
-| Client build | `npm run build` | Passed; 744 modules transformed. The existing >500 kB chunk warning remains. |
-| Server install | `cd server && npm ci` | Passed; 502 packages installed, 0 vulnerabilities reported. |
-| Full server | `npm test -- --runInBand --forceExit` | Passed: 36/36 suites and 501/501 tests in six bounded Windows-safe batches. Jest still prints its `--forceExit` advisory for each child process. |
-| Charlisa server subset | Seven named Jest files | Passed: 7/7 suites and 143/143 tests in 5.70 s. |
-| Python dependency check | `python -m pip check` and `ai-service/.venv/Scripts/python -m pip check` | Passed in both environments: no broken requirements. |
-| Safe AI/edge set | `ai-service/.venv/Scripts/python -m pytest ai-service/tests/test_zone_resolution.py ai-service/test/test_track_endpoint.py ai-service/test/test_qr_endpoint.py edge/securepi/test_securepi_edge.py -q` | Passed three consecutive runs: 29/29 tests each run; 9 dependency deprecation warnings. |
-| Pi camera cache suite | Global Python; `raspberry-pi/test_pi_camera_stream.py` | Passed: 9/9. The AI virtualenv lacks Flask, so this suite was run in the global environment. |
+| Client lint | `cd client && npm run lint` | **Passed:** 0 errors. |
+| Client tests | `cd client && npx vitest run` | **Passed:** 69 test files, 655 tests. |
+| Client build | `cd client && npm run build` | **Passed:** 759 modules transformed; Vite retained the >500 kB chunk warning (main chunk approximately 801.50 kB). |
+| Server tests | `cd server && npm test -- --runInBand` | **Passed:** 46 Jest suites, 686 tests in 8 bounded batches; force-exit/open-handle notices remain. |
+| Safe AI tests | Four QR/track/zone files in the repository `.venv` | **Passed:** 4 files, 35 tests; 9 dependency deprecation warnings. |
+| Pi camera tests | `cd raspberry-pi && python -m pytest test_pi_camera_stream.py` | **Passed:** 1 file, 19 tests. |
+| Pi syntax | `python -m py_compile pi_camera_steam.py` | **Passed:** exit 0. |
 
-Baseline mismatches resolved:
-
-- Recognition retains the accuracy-driven 512 px / JPEG 0.74 defaults. One shared resolver accepts only bounded deployment overrides (512-640 px and 0.74-0.85), and tests cover valid and rejected configuration.
-- The visible accessible current-user marker is `YOU`; the stale class-name assertion now checks user-visible/accessibility behavior.
-- Camera analysis uses canonical `{ image, source?, camera_id?, zone_id? }` payloads. Missing tokens suppress CameraFeed analysis instead of sending `Bearer null`.
-- The SecurePi owner-near fixture now places the centres inside the configured 40 px threshold and separately proves a far person does not reset the timer.
-- The rate-limit window-reset assertion uses the limiter's deterministic key reset rather than a 150 ms wall-clock sleep.
-
-Not run automatically: `ai-service/test/test_webcam.py`, `test_manpower.py`, and `test_insightface.py` require a physical camera and/or private images; `test_yolo.py` requires `test.jpg` and real model inference. The safe track/QR TestClient suites ran in the repository AI virtualenv.
-
-See [docs/Tan Xiu Li, Felicia/test-results-summary.md](docs/Tan%20Xiu%20Li,%20Felicia/test-results-summary.md) for the audit breakdown.
+Not run automatically: `ai-service/test/test_webcam.py`, `test_manpower.py`, and `test_insightface.py` require a physical camera and/or private images; `test_yolo.py` requires `test.jpg` and real model inference. See [deployment.md](deployment.md) for commands, warnings, public smoke checks, and the manual deployed-verification matrix.
 
 ## Deployment
 
-Repository deployment configuration targets Google Cloud in `asia-southeast1`: public Cloud Run client, public Cloud Run Node server, private/authenticated Cloud Run AI service, Cloud SQL PostgreSQL, Secret Manager, and Artifact Registry/Cloud Build workflow. The only public URL independently verified during this audit was:
+Repository configuration targets Google Cloud in `asia-southeast1`: public Cloud Run client and Node server, private/authenticated Cloud Run AI service, Cloud SQL PostgreSQL, Secret Manager, and an Artifact Registry/Cloud Build workflow.
 
-- Client: <https://flowguard-client-staging-590663319889.asia-southeast1.run.app> (HTTP 200 on 28 July 2026).
-
-The direct server URL, Cloud SQL instance/database names, and build-trigger identifiers are not present as verified values in the repository and are therefore not invented here. See [deployment.md](deployment.md).
+On 3 August 2026, the public client root, login refresh, Driver Pass refresh path, one hashed JavaScript asset, public Knowledge Base GET, and unknown-booking not-found response passed read-only smoke checks at <https://flowguard-client-staging-590663319889.asia-southeast1.run.app>. No authenticated or mutating cloud check was performed. The direct server URL, live IAM/Cloud SQL state, revision/build IDs, and role-specific staging workflows remain operator/manual checks; they are not inferred. See [deployment.md](deployment.md) and the [25-minute final-review run sheet](docs/final-review-run-sheet.md).
 
 ## Security, privacy, and performance boundaries
 
@@ -255,4 +259,4 @@ The direct server URL, Cloud SQL instance/database names, and build-trigger iden
 
 ## Future roadmap
 
-Advanced pest analytics, temporal pick-up/set-down/push-in recognition, suspicious-item/threat classification, schedule-based after-hours motion rules, animal/rat detection, rat re-identification, pest hotspot analytics, and continuous cross-camera person re-identification are post-PoC work. See [design/client-feedback-traceability.md](design/client-feedback-traceability.md).
+Physical pest/model validation, temporal pick-up/set-down/push-in recognition, suspicious-item/threat classification, schedule-based after-hours motion rules, animal/rat re-identification, pest hotspot analytics, and continuous cross-camera person re-identification are post-PoC work. See [design/client-feedback-traceability.md](design/client-feedback-traceability.md).

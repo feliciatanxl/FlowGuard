@@ -113,6 +113,15 @@ const publicLookupLimiter = makeLimiter({
   keyGenerator: ipKey,
 });
 
+// Public AI Helpdesk chat (POST /api/support/chat) — unauthenticated AND, since
+// each non-escalating turn can call the billed Gemini API, a real cost driver
+// on top of the usual abuse surface. Tighter than publicLookupLimiter; per IP.
+const chatLimiter = makeLimiter({
+  windowMs: num(process.env.RATE_LIMIT_CHAT_WINDOW_MS, 1 * MIN),
+  max: num(process.env.RATE_LIMIT_CHAT_MAX, 20),
+  keyGenerator: ipKey,
+});
+
 // Public liveness/readiness probes. Cloud Run and external monitors ordinarily
 // issue only a handful per minute, so 120/min/IP leaves substantial probe and
 // rollout headroom while bounding abusive database-backed readiness traffic.
@@ -184,6 +193,7 @@ module.exports = {
   authLimiter,
   passwordResetLimiter,
   publicLookupLimiter,
+  chatLimiter,
   healthLimiter,
   readLimiter,
   writeLimiter,

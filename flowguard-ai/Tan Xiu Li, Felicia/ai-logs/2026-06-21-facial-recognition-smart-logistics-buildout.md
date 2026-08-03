@@ -222,7 +222,7 @@
 >
 > **Is the feature on track?** Yes. It's now a clean full-stack feature with complete CRUD, a genuine automatic-vs-manual split, real route/role security, PDPA-aware deletion, accurate docs, and passing tests. It maps cleanly onto every rubric line (see section E of the report). This is interim/demo-ready.
 >
-> **What to test manually in the browser** (run all 3 services + `node seed.js` for the FM login `admin@harrison.com` / `Admin123!`):
+> **What to test manually in the browser** (run all 3 services + `node seed.js` for the FM login `admin@harrison.com` / `<REDACTED-SEED-CREDENTIAL>`):
 > - Log in as FM → enrol a face via **camera** and via **upload**; confirm a non-image upload is rejected.
 > - Open **V-Patrol** → verify a known face logs "Gantry Access" and an unknown face logs an "Intrusion Alert".
 > - Open **Security Review** → filter "Pending Review", change a status, add notes, Save → confirm it persists and `reviewedBy` shows.
