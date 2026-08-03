@@ -1,50 +1,110 @@
-const { User } = require('./models'); // Adjust path if your models folder is elsewhere
 const bcrypt = require('bcrypt');
 
-/**
- * SEED SCRIPT: Creates the initial Facilities Manager (FM)
- * Run this command in your terminal: node seed.js
- */
-const seedFirstAdmin = async () => {
-    try {
-        console.log("--- Starting FlowGuard System Bootstrap ---");
+const FM_EMAIL = 'admin@harrison.com';
+const FM_ROLE = 'FM';
+const SEED_PASSWORD_ENV = 'FLOWGUARD_SEED_FM_PASSWORD';
+const MIN_PASSWORD_LENGTH = 8;
 
-        // 1. Define the Master Admin Credentials
-        const adminEmail = 'admin@harrison.com';
-        const adminPassword = 'Admin123!'; // Your team can change this after logging in
-        const hashedPassword = await bcrypt.hash(adminPassword, 10);
-
-        // 2. Use findOrCreate to prevent duplicates
-        const [user, created] = await User.findOrCreate({
-            where: { email: adminEmail },
-            defaults: {
-                name: 'System Root Admin',
-                email: adminEmail,
-                password: hashedPassword,
-                role: 'FM',
-                isActive: true,
-                companyCode: 'ROOT-ACCESS-001' // Optional internal identifier
-            }
-        });
-
-        if (created) {
-            console.log("\n✅ SUCCESS: Initial FM created.");
-            console.log("------------------------------------------");
-            console.log(`Email:    ${adminEmail}`);
-            console.log(`Password: ${adminPassword}`);
-            console.log("------------------------------------------");
-            console.log("You can now log in at the /login page.");
-        } else {
-            console.log("\nℹ️  INFO: Admin account already exists in the database.");
-        }
-
-        process.exit(0); // Exit successfully
-    } catch (err) {
-        console.error("\n❌ ERROR: Failed to seed admin user.");
-        console.error(err.message);
-        process.exit(1); // Exit with error
+const validateSeedPassword = (env = process.env) => {
+    const configured = env?.[SEED_PASSWORD_ENV];
+    if (typeof configured !== 'string' || configured.trim() === '') {
+        return {
+            ok: false,
+            error: `${SEED_PASSWORD_ENV} is required only when explicitly running the initial FM seed command.`
+        };
     }
+
+    // A seed-only credential has no existing account value to preserve, so
+    // trimming accidental shell/.env whitespace is safe before hashing it.
+    const password = configured.trim();
+    if (password.length < MIN_PASSWORD_LENGTH) {
+        return {
+            ok: false,
+            error: `${SEED_PASSWORD_ENV} must meet the FlowGuard password policy of at least ${MIN_PASSWORD_LENGTH} characters.`
+        };
+    }
+
+    return { ok: true, password };
 };
 
-// Execute the function
-seedFirstAdmin();
+const seedFirstAdmin = async ({ User, password, hashPassword = bcrypt.hash }) => {
+    const hashedPassword = await hashPassword(password, 10);
+
+    // findOrCreate is deliberately preserved: when the FM already exists, the
+    // defaults (including the newly supplied hash) are ignored and no password,
+    // role, status, or other account field is reset.
+    const [, created] = await User.findOrCreate({
+        where: { email: FM_EMAIL },
+        defaults: {
+            name: 'System Root Admin',
+            email: FM_EMAIL,
+            password: hashedPassword,
+            role: FM_ROLE,
+            isActive: true,
+            companyCode: 'ROOT-ACCESS-001'
+        }
+    });
+
+    return { created };
+};
+
+const runSeedCommand = async ({
+    env = process.env,
+    logger = console,
+    loadModels = () => require('./models'),
+    hashPassword = bcrypt.hash
+} = {}) => {
+    logger.log('FlowGuard FM seed started.');
+
+    const validation = validateSeedPassword(env);
+    if (!validation.ok) {
+        logger.error(validation.error);
+        return 1;
+    }
+
+    let db;
+    let exitCode = 0;
+    try {
+        db = loadModels();
+        const { created } = await seedFirstAdmin({
+            User: db.User,
+            password: validation.password,
+            hashPassword
+        });
+        logger.log(created
+            ? 'Initial FM account created.'
+            : 'Initial FM account already exists; no account fields were changed.');
+        logger.log('FlowGuard FM seed completed.');
+    } catch {
+        // Deliberately do not echo database errors or credential material.
+        logger.error('FlowGuard FM seed failed.');
+        exitCode = 1;
+    } finally {
+        if (db?.sequelize?.close) {
+            try {
+                await db.sequelize.close();
+            } catch {
+                logger.error('FlowGuard FM seed cleanup failed.');
+                exitCode = 1;
+            }
+        }
+    }
+
+    return exitCode;
+};
+
+if (require.main === module) {
+    void runSeedCommand().then((exitCode) => {
+        process.exitCode = exitCode;
+    });
+}
+
+module.exports = {
+    FM_EMAIL,
+    FM_ROLE,
+    SEED_PASSWORD_ENV,
+    MIN_PASSWORD_LENGTH,
+    validateSeedPassword,
+    seedFirstAdmin,
+    runSeedCommand
+};

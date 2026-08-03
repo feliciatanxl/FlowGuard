@@ -119,6 +119,10 @@ cd ai-service && uvicorn main:app --host 0.0.0.0 --port 8501
 
 For local development, Node reaches FastAPI through `FACE_AI_URL=http://127.0.0.1:8501`. Production uses the private Cloud Run AI URL and Google identity-token authentication in addition to `X-AI-Service-Key`.
 
+## Edge AI — SecurePi
+
+SecurePi is FlowGuard's separate Raspberry Pi and Sony IMX500 edge-AI subsystem for local person/object tracking, unattended-object decisions, local evidence, and authenticated alert submission. Its source stays in dedicated hardware repositories while FlowGuard provides the edge API, browser, alert, incident, and notification integration. See the [SecurePi Edge AI integration guide](docs/securepi-flowguard-edge-ai.md); the recommended canonical reference from the current repository review is [feliciatanxl/SecurePi_FlowGuard](https://github.com/feliciatanxl/SecurePi_FlowGuard).
+
 ## Gate camera source (Raspberry Pi Camera Module 3)
 
 The deployed FlowGuard JavaScript in the laptop browser connects directly to the Pi
@@ -241,7 +245,7 @@ Repository deployment configuration targets Google Cloud in `asia-southeast1`: p
 
 - Client: <https://flowguard-client-staging-590663319889.asia-southeast1.run.app> (HTTP 200 on 28 July 2026).
 
-The direct server URL, Cloud SQL instance/database names, and build-trigger identifiers are not present as verified values in the repository and are therefore not invented here. See [deployment.md](deployment.md).
+The direct server URL, Cloud SQL instance/database names, and build-trigger identifiers are not present as verified values in the repository and are therefore not invented here. See [deployment.md](deployment.md) for deployment and test-account preparation, and [docs/final-review-run-sheet.md](docs/final-review-run-sheet.md) for the 25-minute Week 17 demonstration sequence.
 
 ## Security, privacy, and performance boundaries
 
