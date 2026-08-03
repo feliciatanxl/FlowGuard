@@ -78,6 +78,8 @@ const GateScanner = () => {
   const webcamStartPromiseRef = useRef(null);
   const webcamStartSessionRef = useRef(null);
   const piFailSinceRef = useRef(0);
+  const piRequestControllersRef = useRef(new Set());
+  const piPreviewRef = useRef(null);
   // Bumped on camera-source switch and unmount; responses from an older
   // session are stale and must be ignored.
   const scanSessionRef = useRef(0);
@@ -115,7 +117,20 @@ const GateScanner = () => {
     if (message) setDisplayMessage(message);
   };
 
+  const abortActivePiRequests = () => {
+    piRequestControllersRef.current.forEach((controller) => controller.abort());
+    piRequestControllersRef.current.clear();
+  };
+
+  const clearPiPreview = () => {
+    try { piPreviewRef.current?.removeAttribute('src'); } catch { /* ignore */ }
+  };
+
   const applyCameraSource = (source, statusMsg) => {
+    if (source !== CAMERA_SOURCES.PI) {
+      abortActivePiRequests();
+      clearPiPreview();
+    }
     cameraSourceRef.current = source;
     setCameraSource(source);
     setCameraStatusMsg(statusMsg);
@@ -131,11 +146,21 @@ const GateScanner = () => {
     setFaceBox(null);
   };
 
+  const probePiReachable = async () => {
+    const controller = new AbortController();
+    piRequestControllersRef.current.add(controller);
+    try {
+      return await isPiCameraReachableCached(Date.now(), { signal: controller.signal });
+    } finally {
+      piRequestControllersRef.current.delete(controller);
+    }
+  };
+
   // Primary source: Raspberry Pi Gate Camera. Probe the snapshot endpoint on
   // load; if unreachable, automatically fall back to the laptop webcam.
   const initCameraSource = async () => {
     const scanSession = scanSessionRef.current;
-    const piReachable = await isPiCameraReachableCached();
+    const piReachable = await probePiReachable();
     if (scanSession !== scanSessionRef.current) return;
     if (piReachable) {
       stopGateCamera();
@@ -151,10 +176,14 @@ const GateScanner = () => {
   const selectCameraSource = async (source) => {
     if (source === cameraSourceRef.current) return;
     scanSessionRef.current += 1; // invalidate responses captured from the old source
+    abortActivePiRequests();
+    clearPiPreview();
     resetTurnstileKiosk();
     clearTrackingState();
+    const scanSession = scanSessionRef.current;
     if (source === CAMERA_SOURCES.PI) {
-      const piReachable = await isPiCameraReachableCached();
+      const piReachable = await probePiReachable();
+      if (scanSession !== scanSessionRef.current) return;
       if (piReachable) {
         stopGateCamera();
         applyCameraSource(CAMERA_SOURCES.PI, CAMERA_STATUS_MESSAGES.PI_CONNECTED);
@@ -305,10 +334,14 @@ const GateScanner = () => {
 
     if (cameraSourceRef.current === CAMERA_SOURCES.PI) {
       let bitmap;
+      const scanSession = scanSessionRef.current;
+      const controller = new AbortController();
+      piRequestControllersRef.current.add(controller);
       try {
-        bitmap = await fetchPiSnapshotBitmap();
+        bitmap = await fetchPiSnapshotBitmap({ signal: controller.signal });
         piFailSinceRef.current = 0;
-      } catch {
+      } catch (error) {
+        if (error?.code === 'aborted' || scanSession !== scanSessionRef.current) return null;
         // Pi snapshot failed mid-session - once failures persist past the
         // fallback window, switch to the webcam and cache the failure so the
         // Pi isn't re-probed on every cycle.
@@ -320,6 +353,12 @@ const GateScanner = () => {
           applyCameraSource(CAMERA_SOURCES.WEBCAM, CAMERA_STATUS_MESSAGES.PI_UNAVAILABLE);
           await startGateCamera();
         }
+        return null;
+      } finally {
+        piRequestControllersRef.current.delete(controller);
+      }
+      if (scanSession !== scanSessionRef.current || cameraSourceRef.current !== CAMERA_SOURCES.PI) {
+        try { bitmap?.close?.(); } catch { /* ignore */ }
         return null;
       }
       drawBitmapToCanvasAndClose(bitmap, canvas, { maxWidth });
@@ -701,6 +740,8 @@ const GateScanner = () => {
       if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
       if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
       if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+      abortActivePiRequests();
+      clearPiPreview();
       releaseCamera();
     };
   }, []);
@@ -764,8 +805,9 @@ const GateScanner = () => {
         <div className="vpatrol-grid gate-grid">
           <div className="vpatrol-card monitor-section">
             <div ref={containerRef} className={`cctv-container state-theme-${scanStatus.toLowerCase()}`} style={{ width: '100%', height: '100%' }}>
-              {cameraSource === CAMERA_SOURCES.PI && (
+              {cameraSource === CAMERA_SOURCES.PI && PI_CAMERA_STREAM_URL && (
                 <img
+                  ref={piPreviewRef}
                   src={PI_CAMERA_STREAM_URL}
                   alt="Raspberry Pi gate camera live preview"
                   className="video-feed"

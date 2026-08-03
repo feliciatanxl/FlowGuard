@@ -31,7 +31,12 @@ vi.mock("../../src/utils/gateCamera", async (importOriginal) => {
 });
 vi.mock("../../src/utils/cameraSource", async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, fetchPiSnapshotBitmap: h.fetchPiSnapshotBitmap, isPiConfigured: () => true };
+  return {
+    ...actual,
+    PI_CAMERA_STREAM_URL: "http://pi.test:8081/video_feed",
+    fetchPiSnapshotBitmap: h.fetchPiSnapshotBitmap,
+    isPiConfigured: () => true,
+  };
 });
 
 import GateVerification from "../../src/pages/GateVerification";
@@ -212,6 +217,20 @@ describe("Raspberry Pi Camera Module 3 snapshot path", () => {
     expect(screen.getByText(/Raspberry Pi Camera Module 3 is unreachable/i)).toBeTruthy();
   });
 
+  test("distinguishes local-network permission from an unreachable Pi", async () => {
+    h.fetchPiSnapshotBitmap.mockRejectedValue(
+      Object.assign(new Error("browser blocked private network access"), { code: "permission-required" })
+    );
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: SOURCE_LABELS.pi }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Capture QR from Raspberry Pi Camera Module 3/i }));
+    });
+
+    expect(screen.getAllByText(/Local-network permission/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/browser blocked private network access/i)).toBeNull();
+  });
+
   test("a stale Pi decode result cannot update the selected source or booking", async () => {
     const close = vi.fn();
     const decode = deferred();
@@ -237,7 +256,8 @@ describe("Raspberry Pi Camera Module 3 snapshot path", () => {
     });
     expect(close).toHaveBeenCalledTimes(1);
     expect(screen.getByLabelText("Booking reference").value).toBe("");
-    expect(screen.getByRole("button", { name: /Start QR Scanner/i })).toBeTruthy();
+    expect(h.startQrScan).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: /Stop Scanner/i })).toBeTruthy();
   });
 
   test("a stale pending Pi snapshot is closed without starting decode", async () => {
@@ -254,7 +274,10 @@ describe("Raspberry Pi Camera Module 3 snapshot path", () => {
 
     fireEvent.click(screen.getByRole("button", { name: SOURCE_LABELS.pi }));
     fireEvent.click(screen.getByRole("button", { name: /Capture QR from Raspberry Pi Camera Module 3/i }));
+    const snapshotSignal = h.fetchPiSnapshotBitmap.mock.calls[0][0].signal;
+    expect(snapshotSignal.aborted).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: SOURCE_LABELS.webcam }));
+    expect(snapshotSignal.aborted).toBe(true);
 
     await act(async () => {
       snapshot.resolve({ width: 200, height: 150, close });
@@ -263,6 +286,35 @@ describe("Raspberry Pi Camera Module 3 snapshot path", () => {
     expect(close).toHaveBeenCalledTimes(1);
     expect(h.post).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Booking reference").value).toBe("");
+  });
+
+  test("unmount aborts an active Pi snapshot and removes the MJPEG preview", async () => {
+    const snapshot = deferred();
+    h.fetchPiSnapshotBitmap.mockReturnValueOnce(snapshot.promise);
+    const { unmount } = renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: SOURCE_LABELS.pi }));
+    expect(screen.getByAltText(/Raspberry Pi Camera Module 3 live preview/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Capture QR from Raspberry Pi Camera Module 3/i }));
+    const snapshotSignal = h.fetchPiSnapshotBitmap.mock.calls[0][0].signal;
+    unmount();
+
+    expect(snapshotSignal.aborted).toBe(true);
+    expect(screen.queryByAltText(/Raspberry Pi Camera Module 3 live preview/i)).toBeNull();
+
+    await act(async () => {
+      snapshot.resolve({ width: 200, height: 150, close: vi.fn() });
+      await snapshot.promise;
+    });
+  });
+
+  test("switching from Pi removes the MJPEG preview source", () => {
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: SOURCE_LABELS.pi }));
+    expect(screen.getByAltText(/Raspberry Pi Camera Module 3 live preview/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: SOURCE_LABELS.webcam }));
+    expect(screen.queryByAltText(/Raspberry Pi Camera Module 3 live preview/i)).toBeNull();
   });
 
   test("Pi plate bitmap closes even when OCR throws", async () => {

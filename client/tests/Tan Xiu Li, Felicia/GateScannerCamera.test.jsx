@@ -8,13 +8,18 @@ vi.mock("../../src/components/Sidebar", () => ({ default: () => <div data-testid
 vi.mock("axios", () => ({ default: { post: vi.fn(), get: vi.fn() } }));
 
 import GateScanner from "../../src/pages/GateScanner";
-import { PI_CAMERA_STREAM_URL, resetPiAvailabilityCache } from "../../src/constants/piCamera";
+import {
+  PI_CAMERA_STREAM_URL,
+  resetPiAvailabilityCache,
+  saveRuntimePiCameraBaseUrl,
+} from "../../src/constants/piCamera";
 
 const mockGetUserMedia = vi.fn();
 
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  saveRuntimePiCameraBaseUrl("http://pi.test:8081");
   resetPiAvailabilityCache(); // Pi-unavailable cooldown must not leak between tests
   Object.defineProperty(global.navigator, "mediaDevices", {
     configurable: true,
@@ -29,7 +34,10 @@ afterEach(() => {
 
 describe("GateScanner camera source", () => {
   test("Pi Gate Camera is the default source when reachable", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "ok", camera: "Pi Camera Module 3" }),
+    }));
     render(<GateScanner />);
 
     await waitFor(() => {
@@ -55,7 +63,10 @@ describe("GateScanner camera source", () => {
   });
 
   test("manual camera source switch is available", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "ok", camera: "Pi Camera Module 3" }),
+    }));
     render(<GateScanner />);
 
     expect(screen.getByRole("button", { name: "Raspberry Pi Camera Module 3" })).toBeTruthy();
@@ -64,7 +75,10 @@ describe("GateScanner camera source", () => {
   }, 15000); // generous budget: this file renders live-scan loops and can be slow on a loaded CI machine
 
   test("the large recognition-result card is removed; camera and gate status remain", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "ok", camera: "Pi Camera Module 3" }),
+    }));
     render(<GateScanner />);
     await waitFor(() => expect(screen.getByText("Pi Gate Camera connected")).toBeTruthy());
     // No big decision card (idle text, detail rows or record button).
@@ -78,7 +92,10 @@ describe("GateScanner camera source", () => {
   });
 
   test("page never renders raw biometric vector data", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "ok", camera: "Pi Camera Module 3" }),
+    }));
     const { container } = render(<GateScanner />);
     await waitFor(() => expect(screen.getByText("Pi Gate Camera connected")).toBeTruthy());
     expect(container.textContent).not.toMatch(/faceVector|embedding|\[\s*-?0\.\d+\s*,/);
@@ -87,7 +104,10 @@ describe("GateScanner camera source", () => {
 
 describe("GateScanner operational-only interface", () => {
   const renderScanner = () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "ok", camera: "Pi Camera Module 3" }),
+    }));
     return render(<GateScanner />);
   };
 

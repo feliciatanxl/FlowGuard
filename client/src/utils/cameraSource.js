@@ -12,22 +12,35 @@
 //
 // Nothing here writes a captured frame to disk, localStorage or network
 // storage — every capture is in-memory and released by the returned stop().
-// A deployed browser can never reach a private Raspberry Pi LAN address, so the
-// Pi is only ever *preferred* when a URL is explicitly configured (see
-// isPiConfigured); otherwise callers go straight to the laptop webcam without
-// waiting on a Pi timeout.
+// The deployed JavaScript may reach a private Pi directly from a hotspot-connected
+// browser after local-network permission is granted. The Pi is only preferred when
+// a URL is explicitly configured (see isPiConfigured); otherwise callers go straight
+// to the laptop webcam without waiting on a Pi timeout.
 
 import {
   PI_CAMERA_STREAM_URL,
   PI_CAMERA_SNAPSHOT_URL,
+  PI_CAMERA_HEALTH_URL,
+  PI_CONNECTION_STATUS,
+  PI_CONFIG_SOURCE,
   CAMERA_SOURCES,
   CAMERA_STATUS_MESSAGES,
+  getResolvedPiCameraConfig,
+  probePiCamera,
+  testPiCameraConnection,
   isPiCameraReachable,
   isPiCameraReachableCached,
+  getLastPiProbeResult,
   isPiInCooldown,
   markPiUnavailable,
   resetPiAvailabilityCache,
   fetchPiSnapshotBitmap,
+  validatePiCameraBaseUrl,
+  normalizePiCameraBaseUrl,
+  derivePiCameraUrls,
+  readRuntimePiCameraBaseUrl,
+  saveRuntimePiCameraBaseUrl,
+  clearRuntimePiCameraBaseUrl,
 } from '../constants/piCamera';
 
 // Re-export the existing Pi helpers so pages can import everything
@@ -36,14 +49,27 @@ import {
 export {
   PI_CAMERA_STREAM_URL,
   PI_CAMERA_SNAPSHOT_URL,
+  PI_CAMERA_HEALTH_URL,
+  PI_CONNECTION_STATUS,
+  PI_CONFIG_SOURCE,
   CAMERA_SOURCES,
   CAMERA_STATUS_MESSAGES,
+  getResolvedPiCameraConfig,
+  probePiCamera,
+  testPiCameraConnection,
   isPiCameraReachable,
   isPiCameraReachableCached,
+  getLastPiProbeResult,
   isPiInCooldown,
   markPiUnavailable,
   resetPiAvailabilityCache,
   fetchPiSnapshotBitmap,
+  validatePiCameraBaseUrl,
+  normalizePiCameraBaseUrl,
+  derivePiCameraUrls,
+  readRuntimePiCameraBaseUrl,
+  saveRuntimePiCameraBaseUrl,
+  clearRuntimePiCameraBaseUrl,
 };
 
 // The four kinds of frame source a workflow can draw from. `pi` and `webcam`
@@ -88,6 +114,7 @@ export function sourceLabel(source) {
 export const FALLBACK_REASON = Object.freeze({
   PI_NOT_CONFIGURED: 'pi-not-configured',
   PI_UNREACHABLE: 'pi-unreachable',
+  LOCAL_NETWORK_PERMISSION_REQUIRED: 'local-network-permission-required',
   PERMISSION_DENIED: 'permission-denied',
   QR_TIMEOUT: 'qr-timeout',
   CLOUD_UNAVAILABLE: 'cloud-unavailable',
@@ -98,6 +125,7 @@ export const FALLBACK_REASON = Object.freeze({
 export const FALLBACK_MESSAGES = Object.freeze({
   'pi-not-configured': 'Raspberry Pi Camera Module 3 is not configured — using the laptop webcam.',
   'pi-unreachable': 'Raspberry Pi Camera Module 3 is unreachable — using the laptop webcam.',
+  'local-network-permission-required': 'Local-network permission is required to reach the Raspberry Pi Camera Module 3 — using the laptop webcam.',
   'permission-denied': 'Browser camera permission was denied. Allow the camera or use manual entry.',
   'qr-timeout': 'Local QR detection is taking longer than expected — trying a cloud-assisted scan.',
   'cloud-unavailable': 'The cloud decoder is warming up or unavailable — local scanning continues. Manual entry is available.',
@@ -115,46 +143,48 @@ export function fallbackMessage(reason) {
 export const CAMERA_STATUS = Object.freeze({
   CHECKING_PI: 'Checking Raspberry Pi Camera Module 3...',
   PI_CONNECTED: 'Pi Camera connected',
-  PI_FALLBACK: 'Pi Camera unavailable — Laptop Webcam fallback active',
+  PI_FALLBACK: 'Pi unreachable — Laptop Webcam fallback selected',
+  PI_PERMISSION_REQUIRED: 'Local-network permission required — Laptop Webcam fallback selected',
+  WEBCAM_SELECTED: 'Laptop Webcam selected — camera is off',
   WEBCAM_ACTIVE: 'Laptop Webcam active',
 });
-
-// A Vite env flag that lets a deployment turn the Pi source off entirely, even
-// if a URL leaked into the build. Explicit "false" disables it; anything else
-// leaves the URL to decide.
-const PI_EXPLICITLY_DISABLED =
-  String(import.meta.env?.VITE_ENABLE_PI_CAMERA ?? '').toLowerCase() === 'false';
 
 /**
  * True only when a Raspberry Pi Camera Module 3 is actually configured for this
  * build (a snapshot or stream URL is present and the source isn't disabled).
  * When false, callers must go straight to the laptop webcam WITHOUT probing or
- * awaiting a Pi timeout — a deployed browser cannot reach a private LAN Pi.
+ * awaiting a Pi timeout. Cloud Run is never part of this browser-to-Pi path.
  */
 export function isPiConfigured() {
-  if (PI_EXPLICITLY_DISABLED) return false;
-  return Boolean(PI_CAMERA_SNAPSHOT_URL || PI_CAMERA_STREAM_URL);
+  return getResolvedPiCameraConfig().configured;
 }
 
 /**
  * Decide the PREFERRED camera source at page start.
  *
- * Source priority is Pi → webcam → upload/manual. A deployed browser can NEVER reach a
- * private-LAN Pi, so when the Pi is not configured this returns 'webcam' IMMEDIATELY
- * with NO network probe (no Pi timeout wait) — a cloud build always goes straight to
- * the laptop webcam. When the Pi IS configured, the cooldown-aware reachability probe
+ * Source priority is Pi → webcam → upload/manual. When the Pi is not configured this
+ * returns 'webcam' IMMEDIATELY with NO network probe (no Pi timeout wait). When the Pi
+ * IS configured, the hotspot-connected browser's cooldown-aware reachability probe
  * decides: a recent failure short-circuits to 'webcam' without re-probing. Never throws.
  *
  * @returns {Promise<{source:'pi'|'webcam', reason:(string|null), probed:boolean}>}
  */
-export async function resolvePreferredCameraSource(now = Date.now()) {
+export async function resolvePreferredCameraSource(now = Date.now(), options = {}) {
   if (!isPiConfigured()) {
     return { source: CAMERA_SOURCE.WEBCAM, reason: FALLBACK_REASON.PI_NOT_CONFIGURED, probed: false };
   }
-  const reachable = await isPiCameraReachableCached(now);
+  const reachable = await isPiCameraReachableCached(now, options);
+  const probeResult = getLastPiProbeResult();
   return reachable
     ? { source: CAMERA_SOURCE.PI, reason: null, probed: true }
-    : { source: CAMERA_SOURCE.WEBCAM, reason: FALLBACK_REASON.PI_UNREACHABLE, probed: true };
+    : {
+        source: CAMERA_SOURCE.WEBCAM,
+        reason: PI_CONNECTION_STATUS.PERMISSION_REQUIRED
+          && probeResult?.status === PI_CONNECTION_STATUS.PERMISSION_REQUIRED
+          ? FALLBACK_REASON.LOCAL_NETWORK_PERMISSION_REQUIRED
+          : FALLBACK_REASON.PI_UNREACHABLE,
+        probed: true,
+      };
 }
 
 /**
@@ -166,8 +196,8 @@ export async function resolvePreferredCameraSource(now = Date.now()) {
  *
  * @returns {Promise<HTMLCanvasElement>}
  */
-export async function capturePiSnapshotCanvas() {
-  const bitmap = await fetchPiSnapshotBitmap();
+export async function capturePiSnapshotCanvas(options) {
+  const bitmap = await fetchPiSnapshotBitmap(options);
   return drawBitmapToCanvasAndClose(bitmap, document.createElement('canvas'));
 }
 
@@ -233,6 +263,7 @@ const CAMERA_ERROR_MESSAGES = Object.freeze({
   unsupported: 'This browser does not support camera access. Please use a modern browser or manual entry.',
   permission: 'Camera permission was denied. Allow camera access or switch to manual entry.',
   'no-camera': 'No camera was found on this device. Please use manual entry.',
+  'in-use': 'Camera is already in use. Close other apps or tabs using it, then try again.',
   unknown: 'The camera could not be started. Please try again or use manual entry.',
 });
 
@@ -253,6 +284,9 @@ export function mapGetUserMediaError(e) {
   }
   if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'OverconstrainedError') {
     return makeCameraError('no-camera');
+  }
+  if (name === 'NotReadableError' || name === 'TrackStartError') {
+    return makeCameraError('in-use');
   }
   return makeCameraError('unknown');
 }
@@ -294,7 +328,7 @@ export function logTrackSettings(stream, label = 'webcam') {
  * attach it to the given <video>, and return handles to it.
  *
  * Throws a coded Error (code: insecure | unsupported | permission | no-camera |
- * unknown) so the caller can show friendly copy and keep manual entry open.
+ * in-use | unknown) so the caller can show friendly copy and keep manual entry open.
  *
  * @returns {Promise<{ stream: MediaStream, stop: () => void, settings: object }>}
  */
@@ -324,7 +358,10 @@ export async function startWebcamStream(videoElement, constraints = QR_WEBCAM_CO
     throw cancelled();
   }
 
+  let stopped = false;
   const stop = () => {
+    if (stopped) return;
+    stopped = true;
     signal?.removeEventListener?.('abort', stop);
     stopStream(videoElement, stream);
   };
