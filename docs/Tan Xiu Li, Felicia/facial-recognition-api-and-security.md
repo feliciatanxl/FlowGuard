@@ -176,6 +176,6 @@ New nullable audit columns on `security_logs`: `matchedUserId`, `confidence`,
 |---|---|---|
 | Frontend | Vite dev server + proxy | Cloud Run React/Nginx, same-origin proxy → Node |
 | Recognition path | Browser → Node → FastAPI (all local) | Cloud Run client → Node → private authenticated FastAPI |
-| Pi camera | LAN MJPEG preview + `/snapshot` capture | Edge node posts frames via `x-edge-token` |
+| Pi camera | LAN MJPEG preview + `/snapshot` capture | Deployed JavaScript connects browser-to-Pi on the shared hotspot; Cloud Run does not connect to the private IP |
 | Webcam | Automatic fallback for demo reliability | Same (kiosk fallback) |
 | Secrets | Dev placeholder keys via `.env` | Real keys in platform env vars only |

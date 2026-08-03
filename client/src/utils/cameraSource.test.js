@@ -4,20 +4,34 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const h = vi.hoisted(() => ({
   piState: { url: '', reachable: false },
   isPiCameraReachableCached: vi.fn(),
+  getLastPiProbeResult: vi.fn(),
   fetchPiSnapshotBitmap: vi.fn(),
 }));
 
 vi.mock('../constants/piCamera', () => ({
   get PI_CAMERA_STREAM_URL() { return ''; },
   get PI_CAMERA_SNAPSHOT_URL() { return h.piState.url; },
+  get PI_CAMERA_HEALTH_URL() { return h.piState.url ? 'http://pi.local:8081/health' : ''; },
+  PI_CONNECTION_STATUS: { SUCCESS: 'success', PERMISSION_REQUIRED: 'permission-required' },
+  PI_CONFIG_SOURCE: { NONE: 'none' },
   CAMERA_SOURCES: { PI: 'pi', WEBCAM: 'webcam' },
   CAMERA_STATUS_MESSAGES: {},
+  getResolvedPiCameraConfig: () => ({ configured: Boolean(h.piState.url) }),
+  probePiCamera: vi.fn(),
+  testPiCameraConnection: vi.fn(),
   isPiCameraReachable: vi.fn(),
   isPiCameraReachableCached: h.isPiCameraReachableCached,
+  getLastPiProbeResult: h.getLastPiProbeResult,
   isPiInCooldown: () => false,
   markPiUnavailable: vi.fn(),
   resetPiAvailabilityCache: vi.fn(),
   fetchPiSnapshotBitmap: h.fetchPiSnapshotBitmap,
+  validatePiCameraBaseUrl: vi.fn(),
+  normalizePiCameraBaseUrl: vi.fn(),
+  derivePiCameraUrls: vi.fn(),
+  readRuntimePiCameraBaseUrl: vi.fn(),
+  saveRuntimePiCameraBaseUrl: vi.fn(),
+  clearRuntimePiCameraBaseUrl: vi.fn(),
 }));
 
 import {
@@ -33,6 +47,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.piState.url = '';
   h.piState.reachable = false;
+  h.getLastPiProbeResult.mockReturnValue(null);
 });
 
 describe('resolvePreferredCameraSource (source priority: Pi → webcam)', () => {
@@ -51,6 +66,18 @@ describe('resolvePreferredCameraSource (source priority: Pi → webcam)', () => 
     expect(result.source).toBe(CAMERA_SOURCE.WEBCAM);
     expect(result.reason).toBe(FALLBACK_REASON.PI_UNREACHABLE);
     expect(result.probed).toBe(true);
+  });
+
+  it('distinguishes local-network permission from an unreachable Pi', async () => {
+    h.piState.url = 'http://pi.local:8081/snapshot';
+    h.isPiCameraReachableCached.mockResolvedValue(false);
+    h.getLastPiProbeResult.mockReturnValue({ status: 'permission-required' });
+    const result = await resolvePreferredCameraSource();
+    expect(result).toEqual({
+      source: CAMERA_SOURCE.WEBCAM,
+      reason: FALLBACK_REASON.LOCAL_NETWORK_PERMISSION_REQUIRED,
+      probed: true,
+    });
   });
 
   it('cloud build with NO Pi URL performs no Pi probe and uses the webcam immediately', async () => {
