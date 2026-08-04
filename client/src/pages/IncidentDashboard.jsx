@@ -127,9 +127,11 @@ const IncidentDashboard = () => {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteSaving, setDeleteSaving] = useState(false);
 
-  // --- Escalate to Ticket confirm modal (Support Tickets integration is on the
-  // teammate's end — this only opens a pre-filled confirmation; no submission yet) ---
+  // --- Escalate to Ticket confirm modal — creates a real Support Ticket via
+  // POST /api/support/tickets (Module 3), with no linked chat transcript since
+  // this escalation didn't originate from a tenant chat session. ---
   const [escalateTarget, setEscalateTarget] = useState(null);
+  const [escalateSaving, setEscalateSaving] = useState(false);
 
   // --- Toast stack (array, each has its own 3s timer) ---
   const [toasts, setToasts]     = useState([]);
@@ -332,12 +334,36 @@ const IncidentDashboard = () => {
 
   const handleEscalate = (incident) => setEscalateTarget(incident);
 
-  // Mocked — no ticket is actually created. The real submission (POST to the
-  // Support Tickets endpoint) is being wired up separately by the teammate who
-  // owns that feature; this just confirms the button/modal work on this end.
-  const confirmEscalate = () => {
-    showToast(`Incident #${escalateTarget.id} prepared for escalation — ticket submission integration pending.`, 'success');
-    setEscalateTarget(null);
+  // Incident severity has a Critical tier that Support Tickets don't; Critical
+  // and High both map to ticket priority High so nothing urgent is downgraded.
+  const severityToPriority = (severity) => {
+    if (severity === 'Critical' || severity === 'High') return 'High';
+    if (severity === 'Medium') return 'Medium';
+    return 'Low';
+  };
+
+  const confirmEscalate = async () => {
+    setEscalateSaving(true);
+    try {
+      const description = escalateTarget.notes?.trim()
+        ? `Escalated from Incident #${escalateTarget.id} (${escalateTarget.camera_location}).\n\n${escalateTarget.notes}`
+        : `Escalated from Incident #${escalateTarget.id} (${escalateTarget.camera_location}). No further description was provided.`;
+
+      const { data } = await axios.post('/api/support/tickets', {
+        issueTitle: `Incident #${escalateTarget.id} escalated: ${escalateTarget.camera_location}`,
+        issueDescription: description,
+        category: 'Security',
+        priority: severityToPriority(escalateTarget.severity),
+        tenantName: escalateTarget.person_name || undefined
+      }, { headers: { Authorization: `Bearer ${getToken()}` } });
+
+      showToast(`Incident #${escalateTarget.id} escalated — Ticket #${data.ticket.id.slice(0, 8).toUpperCase()} created.`, 'success');
+      setEscalateTarget(null);
+    } catch {
+      showToast('Could not create the support ticket. Please try again.', 'error');
+    } finally {
+      setEscalateSaving(false);
+    }
   };
 
   const handleCreate = async (e) => {
@@ -996,7 +1022,7 @@ const IncidentDashboard = () => {
           </div>
         )}
 
-        {/* ---- Escalate to Ticket Confirm Modal (mocked — no submission yet) ---- */}
+        {/* ---- Escalate to Ticket Confirm Modal ---- */}
         {escalateTarget && (
           <div className="modal-overlay" onClick={() => setEscalateTarget(null)}>
             <div className="inc-detail-modal" onClick={(e) => e.stopPropagation()}>
@@ -1036,16 +1062,12 @@ const IncidentDashboard = () => {
                 </p>
               </div>
 
-              <p style={{ color: '#64748b', fontSize: '0.78rem', margin: '4px 0 20px' }}>
-                Submission to Support Tickets is not yet connected — confirming here does not create a ticket.
-              </p>
-
               <div className="modal-actions">
-                <button className="cancel-btn" onClick={() => setEscalateTarget(null)}>
+                <button className="cancel-btn" onClick={() => setEscalateTarget(null)} disabled={escalateSaving}>
                   Cancel
                 </button>
-                <button className="confirm-escalate-btn" onClick={confirmEscalate}>
-                  Confirm Escalation
+                <button className="confirm-escalate-btn" onClick={confirmEscalate} disabled={escalateSaving}>
+                  {escalateSaving ? 'Escalating...' : 'Confirm Escalation'}
                 </button>
               </div>
             </div>

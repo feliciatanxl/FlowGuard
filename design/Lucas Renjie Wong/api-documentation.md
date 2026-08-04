@@ -1,0 +1,43 @@
+# Lucas API documentation
+
+Base URL: all endpoints are relative to the Node service (or the Cloud Run client/Nginx same origin in production). The browser never calls Gemini or any other external AI service directly — the Node server is the only caller. Examples omit unneeded response fields for readability but use current field names.
+
+## Common contract
+
+- User authentication: `Authorization: Bearer <JWT>` on every FM-only route. Missing token → 401; invalid/expired token → 403; wrong current role → 403.
+- `POST /api/support/chat` and `GET /api/support/chat/:sessionId` require **no** authentication — a Bearer token is optional on `POST /chat` specifically: if present and valid, the server overrides the client-supplied `tenantName`/`userId` with the authenticated account's real values (closing a spoofing gap that would otherwise exist on a fully public endpoint).
+- Every `:id` path parameter (ticket ID, knowledge-base entry ID) and `sessionId` is validated as a well-formed UUID before touching the database — malformed input returns 400, not a raw 500.
+- Rate limiting: the whole `/api/support/*` prefix carries the shared authenticated-read policy (300 req/min/user, or per-IP before auth); `POST /api/support/chat` additionally carries its own tighter, IP-keyed limiter (20 req/min/IP by default, env-tunable) because each non-escalating turn can call the billed Gemini API. Exceeding a limit returns 429 `{"message":"Too many requests. Please try again later."}`.
+- Unexpected database/upstream failures return a sanitised 500 with a generic message; the real error is logged server-side only, never returned to the client.
+
+## AI Helpdesk chat endpoints
+
+| Method and path | Purpose; auth | Parameters and example request | Success example and side effects | Expected errors |
+|---|---|---|---|---|
+| `POST /api/support/chat` | Tenant sends a chat message; gets an AI reply; may trigger auto-escalation. Public; optional Bearer token overrides identity. | Body `sessionId` (UUID), `message` (≤2000 chars), optional `userId`, `tenantName`, `unitNumber`. `{"sessionId":"11111111-1111-1111-1111-111111111111","message":"My face scan keeps failing"}` | 200 `{"response":"...","escalated":false,"ticketId":null}`, or on escalation `{"response":"...","escalated":true,"ticketId":"A1B2C3D4"}`. Appends both turns to `ChatTranscript.messages`; may create a `SupportTicket`. | 400 missing/malformed `sessionId`, empty/over-length `message`. 429 rate limited. 500 chat service unavailable (Gemini failure still returns 200 with the deterministic fallback — a 500 here means the database write itself failed). |
+| `GET /api/support/chat/:sessionId` | Rehydrate an existing session's history after a page refresh. Public. | Path UUID `sessionId`. | 200 `{"messages":[{"role":"user","text":"...","timestamp":"..."}, ...],"escalated":true,"ticketId":"A1B2C3D4"}`. For an unknown/brand-new session, 200 `{"messages":[],"escalated":false,"ticketId":null}` — never 404, since a first-time visitor is the normal case. | 400 malformed `sessionId`. 500 on a genuine database failure. |
+
+## Support Ticket endpoints (FM only unless noted)
+
+| Method and path | Purpose; auth | Parameters and example request | Success example and side effects | Expected errors |
+|---|---|---|---|---|
+| `GET /api/support/tickets` | Paginated, searchable, filterable ticket queue. FM JWT. | Query `status` (Pending/Investigating/Resolved/Closed), `category`, `q` (matches issue title/description/tenant/unit), `archived` (`true` for the archive view, default active-only), `page`, `limit` (capped 100). `GET /api/support/tickets?status=Pending&q=scan&page=1&limit=20` | 200 `{"tickets":[{...,"transcript":{...}}],"pagination":{"page":1,"limit":20,"total":3,"totalPages":1}}`; sorted High-priority-first then newest; read only. | 401, 403 non-FM. 500. |
+| `POST /api/support/tickets` | Manually create a ticket without a chat transcript (e.g. escalating an incident from Module 4). FM JWT. | Body `issueTitle`, `issueDescription` (required), optional `category` (default `General`), `priority` (Low/Medium/High, default `Medium`), `tenantName`, `unitNumber`. `{"issueTitle":"Incident #1 escalated: Gate A","issueDescription":"Escalated from Incident #1.","category":"Security","priority":"High"}` | 201 `{"message":"Ticket created.","ticket":{...,"status":"Pending","transcriptId":null}}`. | 400 missing title/description, or invalid `priority`. 401, 403. 500. |
+| `GET /api/support/tickets/stats` | Summary counts for the dashboard cards. FM JWT. Registered before `/tickets/:id` so Express never treats `"stats"` as an id. | No parameters. | 200 `{"total":10,"highPriority":4,"investigating":3,"resolved":2}`; scoped to the active (non-archived) queue; four indexed `COUNT` queries. | 401, 403. 500. |
+| `GET /api/support/tickets/:id` | Single ticket with its full linked transcript. FM JWT. | Path UUID `id`. | 200 the ticket object including `transcript.messages`. | 400 malformed id. 401, 403. 404 not found. 500. |
+| `PATCH /api/support/tickets/:id/status` | Update status, and optionally category/resolution notes, in one call. FM JWT. | Path UUID `id`; body `status` (required, one of Pending/Investigating/Resolved/Closed), optional `resolutionNotes`, `category`. `{"status":"Resolved","resolutionNotes":"Re-enrolled the tenant's face."}` | 200 `{"message":"Ticket marked \"Resolved\".","ticket":{...}}`; marking `Resolved` stamps `resolvedBy`/`resolvedAt`; any other status clears both (so a reopened ticket never shows a stale "Resolved by" caption). | 400 malformed id, missing/invalid `status`. 401, 403. 404. 500. |
+| `PATCH /api/support/tickets/:id/archive` | Reversible archive/restore, distinct from hard delete. FM JWT. | Path UUID `id`; body `{"archived": true}` (boolean required). | 200 `{"message":"Ticket archived.","ticket":{...,"isArchived":true}}` (or "restored from archive" when `false`). | 400 malformed id, non-boolean `archived`. 401, 403. 404. 500. |
+| `DELETE /api/support/tickets/:id` | Hard-delete a spam/closed ticket and its linked transcript together. FM JWT. | Path UUID `id`. | 200 `{"message":"Ticket and linked transcript deleted."}`; both rows removed inside one transaction — a mid-operation failure cannot leave one deleted and the other orphaned. | 400 malformed id. 401, 403. 404. 500. |
+
+## Knowledge Base endpoints
+
+| Method and path | Purpose; auth | Parameters and example request | Success example and side effects | Expected errors |
+|---|---|---|---|---|
+| `GET /api/support/knowledge` | List FAQs, used by both the chat engine and the FM dashboard. Public (no auth). | Optional query `category` (exact match), `q` (matches question/answer). `GET /api/support/knowledge?category=Loading%20Bay` | 200 array of entries, sorted by category then newest; read only. | 500. |
+| `POST /api/support/knowledge` | Add a new FAQ. FM JWT. | Body `question`, `answer` (required), optional `category` (default `General`), `keywords` (array of strings). `{"category":"Access Control","question":"Why does my face scan fail?","answer":"Re-enrol in good lighting via the Enrollment page.","keywords":["face","scan"]}` | 201 `{"message":"Knowledge base entry added.","entry":{...,"createdBy":"fm@example.com"}}`. | 400 missing question/answer. 401, 403. 500. |
+| `PUT /api/support/knowledge/:id` | Update an existing FAQ; unspecified fields are left unchanged. FM JWT. | Path UUID `id`; any of `category`, `question`, `answer`, `keywords`. | 200 `{"message":"Knowledge base entry updated.","entry":{...,"updatedBy":"fm@example.com"}}`. | 400 malformed id. 401, 403. 404. 500. |
+| `DELETE /api/support/knowledge/:id` | Remove an outdated FAQ. FM JWT. | Path UUID `id`. | 200 `{"message":"Knowledge base entry deleted."}`. | 400 malformed id. 401, 403. 404. 500. |
+
+## Gemini integration notes (not a client-facing endpoint)
+
+`server/services/geminiService.js` calls Google's Gemini REST API server-side only (`GEMINI_API_KEY` never leaves the server, never shipped to the browser). It generates the reply text for non-escalating chat turns and the wording of the two status messages (escalation confirmed / already tracked) — never the underlying decision. On any failure (missing key, timeout, HTTP error, no usable text in the response), the caller falls back to the deterministic keyword-matched answer or a fixed template string, so a Gemini outage never surfaces as a broken chat response to the tenant. Transient failures (429, 5xx, bare network errors) are retried once with a short backoff; timeouts and definitive 4xx errors (bad/invalid key) fail fast instead, so a struggling API never doubles a tenant's wait time.
