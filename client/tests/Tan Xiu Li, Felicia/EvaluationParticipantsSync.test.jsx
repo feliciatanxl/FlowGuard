@@ -92,6 +92,7 @@ describe("Evaluation Participants sync card", () => {
     openConfirm();
     const cancel = within(getDialog()).getByRole("button", { name: "Cancel" });
     expect(cancel).toHaveFocus();
+    expect(cancel).toHaveClass('eval-secondary-btn');
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Sync Participants" })).toBeNull();
     expect(mockAxios.post).not.toHaveBeenCalled();

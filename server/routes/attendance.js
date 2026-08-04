@@ -33,6 +33,21 @@ const recordDto = (summary) => ({
   punctuality: summary.punctuality
 });
 
+// FM emergency-accountability view: facility-wide daily summaries without
+// personal punctuality/lateness analytics or raw movement history.
+const fmRecordDto = (summary) => ({
+  user: summary.user ? {
+    id: summary.user.id,
+    name: summary.user.name,
+    role: summary.user.role
+  } : null,
+  userId: summary.userId,
+  date: summary.date,
+  firstCheckIn: summary.firstCheckIn,
+  latestCheckOut: summary.latestCheckOut,
+  currentStatus: summary.currentStatus
+});
+
 router.get('/logs', verifyToken, async (req, res) => {
   try {
     const { id: loggedInUserId, role: userRole } = req.user;
@@ -86,7 +101,8 @@ router.get('/logs', verifyToken, async (req, res) => {
           checkedOutToday: today.checkedOut,
           activityCount: dailySummaries.length
         },
-        currentOccupancy
+        currentOccupancy,
+        records: dailySummaries.map(fmRecordDto)
       });
     }
 

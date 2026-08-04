@@ -16,6 +16,15 @@ function genRef() {
     return `FG-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 }
 
+async function safeBookingWhatsapp(eventName, sender, booking) {
+    try {
+        return await sender(booking);
+    } catch (error) {
+        console.error(`WhatsApp ${eventName} notify failed (non-fatal):`, error.message);
+        return whatsapp.bookingNotificationFailure(booking);
+    }
+}
+
 // Resolve which tenant/unit a booking belongs to, based on who is creating it:
 //   Tenant → their own id; Staff → their managerId (the tenant they work for); FM → optional body.tenantId.
 // Returns null if it cannot be determined (FM with no tenantId, or Staff with no manager).
@@ -96,12 +105,7 @@ router.post('/create', verifyToken, requireRole('FM', 'Tenant', 'Staff'), async 
         });
 
         // Confirmation to the driver — non-fatal (must never fail the booking).
-        let whatsappResult = null;
-        try {
-            whatsappResult = await whatsapp.sendBookingCreated(booking);
-        } catch (waErr) {
-            console.error('WhatsApp notify failed (non-fatal):', waErr.message);
-        }
+        const whatsappResult = await safeBookingWhatsapp('booking-created', whatsapp.sendBookingCreated, booking);
 
         res.status(201).json({ message: 'Booking created.', booking, whatsapp: whatsappResult });
     } catch (err) {
@@ -161,32 +165,29 @@ router.patch('/:id/status', verifyToken, requireRole('FM'), async (req, res) => 
 
         let whatsappResult = null;
         let nextInLine = null;
+        let nextInLineWhatsapp = null;
 
         // All WhatsApp sends are non-fatal — a failure must never fail the status update.
-        try {
-            if (status === 'Confirmed') {
-                whatsappResult = await whatsapp.sendBookingConfirmed(booking);
-            } else if (status === 'Arrived') {
-                whatsappResult = await whatsapp.sendBookingArrived(booking);
-            } else if (status === 'Cancelled') {
-                whatsappResult = await whatsapp.sendBookingCancelled(booking);
-            } else if (status === 'Completed') {
-                // Notify the leaving driver, then alert the next waiting booking for the same bay.
-                whatsappResult = await whatsapp.sendBookingCompleted(booking);
-                const next = await Booking.findOne({
-                    where: { loading_bay: booking.loading_bay, status: { [Op.in]: ['Pending', 'Confirmed'] } },
-                    order: [['slot_start', 'ASC'], ['createdAt', 'ASC']]
-                });
-                if (next) {
-                    await whatsapp.sendNextInLine(next);
-                    nextInLine = next.booking_ref;
-                }
+        if (status === 'Confirmed') {
+            whatsappResult = await safeBookingWhatsapp('booking-confirmed', whatsapp.sendBookingConfirmed, booking);
+        } else if (status === 'Arrived') {
+            whatsappResult = await safeBookingWhatsapp('booking-arrived', whatsapp.sendBookingArrived, booking);
+        } else if (status === 'Cancelled') {
+            whatsappResult = await safeBookingWhatsapp('booking-cancelled', whatsapp.sendBookingCancelled, booking);
+        } else if (status === 'Completed') {
+            // Notify the leaving driver, then alert the next waiting booking for the same bay.
+            whatsappResult = await safeBookingWhatsapp('booking-completed', whatsapp.sendBookingCompleted, booking);
+            const next = await Booking.findOne({
+                where: { loading_bay: booking.loading_bay, status: { [Op.in]: ['Pending', 'Confirmed'] } },
+                order: [['slot_start', 'ASC'], ['createdAt', 'ASC']]
+            });
+            if (next) {
+                nextInLineWhatsapp = await safeBookingWhatsapp('next-in-line', whatsapp.sendNextInLine, next);
+                nextInLine = next.booking_ref;
             }
-        } catch (waErr) {
-            console.error('WhatsApp notify failed (non-fatal):', waErr.message);
         }
 
-        res.status(200).json({ message: `Booking ${status}.`, booking, whatsapp: whatsappResult, nextInLine });
+        res.status(200).json({ message: `Booking ${status}.`, booking, whatsapp: whatsappResult, nextInLine, nextInLineWhatsapp });
     } catch (err) {
         console.error('Booking status error:', err);
         res.status(500).json({ error: 'Could not update booking status.' });
@@ -319,12 +320,7 @@ router.patch('/:id/cancel', verifyToken, async (req, res) => {
         await booking.update({ status: 'Cancelled' });
 
         // WhatsApp is non-fatal — a notify failure must never fail the cancel.
-        let whatsappResult = null;
-        try {
-            whatsappResult = await whatsapp.sendBookingCancelled(booking);
-        } catch (waErr) {
-            console.error('WhatsApp notify failed (non-fatal):', waErr.message);
-        }
+        const whatsappResult = await safeBookingWhatsapp('booking-cancelled', whatsapp.sendBookingCancelled, booking);
 
         res.status(200).json({ message: 'Booking cancelled.', booking, whatsapp: whatsappResult });
     } catch (err) {
@@ -359,17 +355,14 @@ router.patch('/:ref/gate-scan', verifyToken, requireRole('FM'), async (req, res)
 
         let whatsappStatus = null;
         let nextInLine = null;
+        let nextInLineWhatsapp = null;
 
         if (action === 'entry') {
             if (booking.status === 'Cancelled' || booking.status === 'Completed') {
                 return res.status(409).json({ error: `Cannot mark arrival: booking is ${booking.status}.`, booking, plateMatched });
             }
             await booking.update({ status: 'Arrived', arrived_at: new Date() });
-            try {
-                whatsappStatus = await whatsapp.sendBookingArrived(booking);
-            } catch (waErr) {
-                console.error('WhatsApp notify failed (non-fatal):', waErr.message);
-            }
+            whatsappStatus = await safeBookingWhatsapp('booking-arrived', whatsapp.sendBookingArrived, booking);
         } else { // exit
             if (booking.status === 'Cancelled') {
                 return res.status(409).json({ error: 'Cannot mark exit: booking is Cancelled.', booking, plateMatched });
@@ -382,23 +375,19 @@ router.patch('/:ref/gate-scan', verifyToken, requireRole('FM'), async (req, res)
                 });
             }
             await booking.update({ status: 'Completed', completed_at: new Date() });
-            try {
-                whatsappStatus = await whatsapp.sendBookingCompleted(booking);
-                const next = await Booking.findOne({
-                    where: { loading_bay: booking.loading_bay, status: { [Op.in]: ['Pending', 'Confirmed'] } },
-                    order: [['slot_start', 'ASC'], ['createdAt', 'ASC']]
-                });
-                if (next) {
-                    await whatsapp.sendNextInLine(next);
-                    nextInLine = next.booking_ref;
-                }
-            } catch (waErr) {
-                console.error('WhatsApp notify failed (non-fatal):', waErr.message);
+            whatsappStatus = await safeBookingWhatsapp('booking-completed', whatsapp.sendBookingCompleted, booking);
+            const next = await Booking.findOne({
+                where: { loading_bay: booking.loading_bay, status: { [Op.in]: ['Pending', 'Confirmed'] } },
+                order: [['slot_start', 'ASC'], ['createdAt', 'ASC']]
+            });
+            if (next) {
+                nextInLineWhatsapp = await safeBookingWhatsapp('next-in-line', whatsapp.sendNextInLine, next);
+                nextInLine = next.booking_ref;
             }
         }
 
         return res.status(200).json({
-            message: `Gate ${action} recorded.`, booking, action, plateMatched, whatsappStatus, nextInLine
+            message: `Gate ${action} recorded.`, booking, action, plateMatched, whatsappStatus, nextInLine, nextInLineWhatsapp
         });
     } catch (err) {
         console.error('Gate scan error:', err);

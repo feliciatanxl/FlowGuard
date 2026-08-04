@@ -1,7 +1,7 @@
 // Frontend tests — Attendance toolbar still exposes the date filter, Refresh and
-// (FM-only) Launch Gate Terminal. FMs see the current on-site roster without
-// historical attendance or punctuality details.
-import { render, waitFor } from '@testing-library/react';
+// (FM-only) Launch Gate Terminal. FMs see the current roster plus scoped daily
+// attendance activity without punctuality analytics.
+import { render, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { vi, describe, test, expect, beforeEach } from 'vitest';
 
@@ -23,7 +23,14 @@ const FM_DATA = {
       lastAccessEventTime: '2026-07-15T03:00:00Z',
     },
   ],
-  records: [],
+  records: [{
+    userId: 7,
+    user: { name: 'On-Site FM', role: 'FM' },
+    date: '2026-07-15',
+    firstCheckIn: '2026-07-15T01:00:00Z',
+    latestCheckOut: null,
+    currentStatus: 'IN',
+  }],
 };
 
 const TENANT_DATA = {
@@ -69,7 +76,7 @@ describe('Attendance toolbar (FM)', () => {
     expect(buttons).toContain('Launch Gate Terminal');
   });
 
-  test('FM sees the current roster without historical punctuality details', async () => {
+  test('FM sees current occupancy and attendance activity without punctuality details', async () => {
     renderAttendance();
     await waitFor(() => expect(document.body.textContent).toContain('Currently On Site'));
 
@@ -81,11 +88,23 @@ describe('Attendance toolbar (FM)', () => {
     expect(roster.textContent).toContain('CHECK-IN');
     expect(roster.textContent).toContain('LAST ACCESS');
 
-    // Historical per-person attendance and punctuality remain hidden from FM.
-    expect(document.querySelectorAll('.management-table')).toHaveLength(1);
-    expect(document.querySelector('.management-table')).toBe(roster);
+    const activity = document.querySelector('.attendance-activity-table');
+    expect(activity).toBeTruthy();
+    expect(document.querySelectorAll('.management-table')).toHaveLength(2);
     expect(document.body.textContent).not.toContain('PUNCTUALITY');
-    expect(document.body.textContent).not.toContain('LATE');
+    expect(activity.querySelector('.status-badge')).toBeNull();
+  });
+
+  test('Custom Date keeps all revealed controls in the same responsive toolbar', async () => {
+    renderAttendance();
+    await waitFor(() => expect(document.querySelector('.attendance-actions')).toBeTruthy());
+
+    const actions = document.querySelector('.attendance-actions');
+    fireEvent.change(actions.querySelector('select'), { target: { value: 'custom' } });
+    const dateInput = actions.querySelector('input[type="date"]');
+    expect(dateInput).toBeTruthy();
+    expect(dateInput.parentElement).toBe(actions);
+    expect(Array.from(actions.querySelectorAll('button')).map((button) => button.textContent.trim())).toEqual(['Refresh', 'Launch Gate Terminal']);
   });
 });
 

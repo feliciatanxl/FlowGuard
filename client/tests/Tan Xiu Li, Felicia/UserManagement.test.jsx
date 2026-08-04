@@ -120,6 +120,22 @@ describe("User Management — table layout", () => {
     expect(table.querySelectorAll(".time-cell").length).toBe(2);
   });
 
+  test("Not Enrolled and Joined remain in independent desktop cells", async () => {
+    const { container } = renderUsers();
+    await screen.findAllByText("Jane Tan");
+    const table = container.querySelector(".users-table");
+    const row = within(table).getByText("Jane Tan").closest("tr");
+    const faceCell = row.querySelector(".user-face-id-cell");
+    const joinedCell = row.querySelector(".user-joined-cell");
+
+    expect(faceCell).toBeTruthy();
+    expect(joinedCell).toBeTruthy();
+    expect(faceCell).not.toBe(joinedCell);
+    expect(faceCell.textContent).toContain("Not Enrolled");
+    expect(joinedCell.textContent).toContain("10/02/2026");
+    expect(within(row).getByLabelText("Actions for Jane Tan").querySelectorAll("button")).toHaveLength(3);
+  });
+
   test("table no longer forces a 1280px min-width (desktop fits without horizontal scroll)", () => {
     const css = fs.readFileSync(path.resolve(__dirname, "../../src/css/Users.css"), "utf8");
     expect(css).not.toMatch(/min-width:\s*1280px/);
