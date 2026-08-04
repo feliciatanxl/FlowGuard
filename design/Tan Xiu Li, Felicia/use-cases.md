@@ -50,10 +50,10 @@ Scope: Facial Recognition & Access Management, with Smart Logistics and loading-
 
 - **Actor/role:** FM.
 - **Preconditions:** Valid FM JWT and available camera/AI path.
-- **Main success flow:** Uses the same tracking -> recognition -> head-turn -> final same-ID policy as Gate Scanner, then calls `POST /api/facial-recognition/access-event` to write a deduplicated safe `SecurityLog`.
+- **Main success flow:** Uses the same tracking -> recognition -> head-turn -> final same-ID policy as Gate Scanner. The operator selects one of three modes before scanning: **Patrol only** (default) calls `POST /api/facial-recognition/access-event` to write a deduplicated safe `SecurityLog` and no Attendance; **Check In** and **Check Out** additionally call `POST /api/attendance/action` to write an explicit `Attendance` IN/OUT, only after the successful final same-person confirmation.
 - **Alternate flows:** Pi -> webcam fallback and manual Scan Now/Retry are available.
 - **Edge/error flows:** Unknown, suspended, multiple-face, liveness-timeout, and final mismatch fail closed. `/denied-event` accepts only the defined reason fields/codes and the server owns audit descriptions/severity. Service outage creates no false grant.
-- **Postconditions:** Security timeline changes; Attendance is unchanged.
+- **Postconditions:** Patrol only changes the security timeline with Attendance unchanged. Check In / Check Out write one explicit `Attendance` IN/OUT after a confirmed cycle; denied or failed scans write no Attendance. Duplicate-cycle protection is a bounded per-process guard (there is no `Attendance.cycleId` column, so it is not durable across restarts).
 - **Security/privacy:** FM review updates status/notes separately. V-Patrol is a checkpoint monitor, not continuous cross-camera person re-identification.
 
 ## UC-F4: Evaluate, review, suspend, and off-board

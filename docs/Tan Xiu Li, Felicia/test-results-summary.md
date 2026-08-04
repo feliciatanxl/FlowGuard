@@ -19,7 +19,7 @@ Final remediation run: 28 July 2026. No physical camera, private face image, pri
 | Rate-limit repeat | Entire `rate-limit.test.js` file | Passed three consecutive runs: 16/16 assertions each run (1.94 s, 1.54 s, 1.60 s). |
 | Python dependency integrity | Global and AI-venv `python -m pip check` | Passed: no broken requirements. |
 | Safe AI/edge repeat set | Zone resolution, track, QR, and SecurePi bridge tests | Three consecutive passes: 29/29 per run (2.22 s, 2.20 s, 2.21 s); 9 dependency deprecation warnings per run. |
-| Pi cache server | Global Python `raspberry-pi/test_pi_camera_stream.py` | Baseline pass: 9/9. The AI virtualenv does not include Flask. |
+| Pi cache server | Global Python `raspberry-pi4/test_pi_camera_stream.py` | Baseline pass: 9/9. The AI virtualenv does not include Flask. |
 
 ## Security, build, and container validation
 

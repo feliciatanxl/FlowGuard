@@ -1,8 +1,15 @@
 # SecurePi → FlowGuard → WhatsApp security-alert integration
 
-How the Raspberry Pi edge monitor (SecurePi_FlowGuard repo) delivers detection
-events to the FlowGuard backend, which persists them and notifies FM/security
-staff over the existing WhatsApp Cloud API integration.
+How the Raspberry Pi edge monitor delivers detection events to the FlowGuard
+backend, which persists them and notifies FM/security staff over the existing
+WhatsApp Cloud API integration.
+
+> **Canonical external SecurePi runtime:** https://github.com/charlisaa/updated_securePi_FlowGuard —
+> the Raspberry Pi 5 + Sony IMX500 build physically used with this FlowGuard integration. It is
+> owned and maintained separately and is neither copied nor deployed from FlowGuard. The
+> `edge/…`, `securePi.py`, `sensor_bridge.py`, and `deploy/…` paths shown below illustrate the
+> edge-runtime design; the canonical repository is authoritative for the actual runtime layout.
+> See the group [SecurePi edge-AI reference](securepi-flowguard-edge-ai.md).
 
 ## Architecture
 

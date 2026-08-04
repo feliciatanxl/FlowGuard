@@ -72,7 +72,7 @@ Off-boarding clears `personnelName`/`matchedUserId` and neutralises descriptions
 | `timestamp` | DATE | default now; `allowNull` not explicitly set |
 | timestamps | DATE | enabled |
 
-Gate Scanner writes Attendance after final same-person/liveness confirmation. V-Patrol never writes Attendance.
+Gate Scanner writes Attendance after final same-person/liveness confirmation via `POST /api/attendance/scan` (auto-toggle IN/OUT). V-Patrol's default **Patrol only** mode is audit-only and writes no Attendance (it uses `POST /api/facial-recognition/access-event`, a deduplicated `SecurityLog`). V-Patrol's explicit **Check In** / **Check Out** controls write an `Attendance` IN/OUT row via `POST /api/attendance/action`, and only after successful recognition, liveness, and final same-person confirmation; denied or failed scans write no Attendance. Duplicate-cycle protection is a bounded per-process guard keyed on a request `cycleId` plus same-day business-state checks in Asia/Singapore time — there is no `cycleId` column on this model, so it is not a durable cross-restart database guarantee.
 
 ## `bookings` / Booking
 

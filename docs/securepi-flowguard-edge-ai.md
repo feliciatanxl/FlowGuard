@@ -8,6 +8,19 @@ Removing copied SecurePi folders from this repository did not remove the feature
 
 This review reflects the four repositories' current default branches on 3 August 2026. Repository content, tests, README claims, and latest commit metadata were compared; similarly named repositories were not assumed to be identical.
 
+## Canonical external SecurePi implementation
+
+**Canonical external SecurePi implementation: https://github.com/charlisaa/updated_securePi_FlowGuard**
+
+This repository is the canonical external SecurePi runtime for FlowGuard. It is owned and maintained separately from the FlowGuard application repository. It supplies the working Raspberry Pi 5 + Sony IMX500 SecurePi runtime that has been physically used with the FlowGuard browser integration.
+
+Boundary of responsibility:
+
+- FlowGuard **stores and configures** the SecurePi stream URL (through Camera Inventory), probes SecurePi health, renders the MJPEG stream in the browser, handles source selection and the laptop-webcam fallback, and ingests authenticated edge alerts. FlowGuard does **not** copy, vendor, or deploy the SecurePi runtime.
+- The external repository **owns** the Pi 5 runtime, IMX500 camera integration, on-device inference, annotated MJPEG generation, the local SecurePi HTTP service, and edge-side alert generation/submission. Physical detection behaviour remains the responsibility of that Pi runtime.
+
+The following has been physically verified for the current integration: FlowGuard connected successfully to the Pi 5 SecurePi service from `charlisaa/updated_securePi_FlowGuard`; the SecurePi health endpoint responded; the SecurePi MJPEG stream opened; and FlowGuard displayed the Pi 5 stream as its active source. This does **not** establish model accuracy, long-term reliability, production security, or any hardware-performance claim, which still require the physical validation listed under *Current Validation Status*.
+
 ## Repository References
 
 | Repository | Purpose | Relationship/status |
@@ -17,7 +30,7 @@ This review reflects the four repositories' current default branches on 3 August
 | [feliciatanxl/SecurePi2](https://github.com/feliciatanxl/SecurePi2) | Desktop/training pipeline for dataset preparation, dataset verification, YOLO training, ONNX export, IMX500 compilation, and a GUI. | Fork of `keatkean/SecurePi2`; historical training precursor whose main functions are incorporated into the combined repository. Latest reviewed commit: 27 July 2026. No tests are present. |
 | [feliciatanxl/SecurePi_FlowGuard](https://github.com/feliciatanxl/SecurePi_FlowGuard) | Combined edge runtime, six-class training pipeline, Camera Module 3 development path, FlowGuard disk outbox/API client, sensor bridge, deployment examples, models documentation, and off-device tests. | Standalone combined repository and the **recommended canonical reference** based on the reviewed scope and latest commit history. Latest reviewed commit: 1 August 2026. It has eight Python test files. Its IMX500 runtime does not currently contain the MJPEG/health server from `charlisaa/SecurePi`. |
 
-The recommended canonical reference is `feliciatanxl/SecurePi_FlowGuard` because it is the newest and most comprehensive reviewed repository. `charlisaa/SecurePi` remains the authoritative source for the current one-process IMX500 MJPEG implementation. The hardware owner should confirm this ownership decision and either port the stream feature into the canonical repository or explicitly maintain the stream variant as a supported branch of the architecture.
+The table above records the earlier four-repository review. The **current canonical external SecurePi implementation is [`charlisaa/updated_securePi_FlowGuard`](https://github.com/charlisaa/updated_securePi_FlowGuard)** (see the callout above): it is the Pi 5 + IMX500 runtime that has been physically used with this FlowGuard build, providing both the local health/MJPEG service the browser reads and the authenticated edge-alert submission. The precursor repositories (`feliciatanxl/SecurePi_FlowGuard` for the combined runtime/training pipeline, and `charlisaa/SecurePi` for the earlier one-process IMX500 MJPEG variant) remain historical references; the hardware owner maintains the canonical repository going forward. FlowGuard neither owns nor deploys any of these repositories.
 
 ## Hardware Architecture
 
@@ -113,7 +126,7 @@ The MJPEG branch in this diagram is implemented by `charlisaa/SecurePi`, using t
 | Crash-safe outbox | The combined repository atomically writes JSON under its runtime outbox, retries retryable failures at startup/intervals, retains auth/config failures, and dead-letters permanent/corrupt events. |
 | MJPEG stream | `charlisaa/SecurePi --stream` publishes the latest annotated frame at `/video_feed` (default port `8001`, default stream rate `8` FPS and JPEG quality `70`). Slow clients receive the latest frame rather than growing a queue. |
 | Health endpoint | The same stream variant exposes `/health` with IMX500/stream state. |
-| Snapshot HTTP endpoint | The stream-enabled IMX500 runtime does **not** expose `/snapshot`. FlowGuard's `/snapshot` integration belongs to the separate `raspberry-pi/pi_camera_steam.py` Camera Module 3 service. |
+| Snapshot HTTP endpoint | The stream-enabled IMX500 runtime does **not** expose `/snapshot`. FlowGuard's `/snapshot` integration belongs to the separate `raspberry-pi4/pi_camera_steam.py` Camera Module 3 service. |
 | Simple alert queue | `charlisaa/SecurePi` uses a bounded in-memory queue and a five-second HTTP timeout. A failed request is dropped, not persisted or retried. |
 
 The combined client contains a best-effort call to `POST /api/edge/snapshots`, but the current FlowGuard backend has no such route. FlowGuard instead accepts a JPEG named `snapshot` in the same multipart request as `POST /api/edge/detection-alerts`; the combined client sends a separate field named `file` and then JSON. Therefore current cross-repository snapshot upload is **not interoperable and must not be claimed as working**. Metadata alerts, local snapshots, and the disk event outbox remain independent of that mismatch.
@@ -154,7 +167,7 @@ Current FlowGuard code confirms:
 FlowGuard has two distinct local-camera integrations:
 
 1. The Object Detection page resolves an absolute SecurePi stream from the selected Camera Inventory record's `stream_url`, then from `VITE_SECUREPI_STREAM_URL`. It reads `/video_feed` directly in an image element and probes `/health` directly from the user's browser on the same local network. Cloud Run does not fetch that private stream. The page also derives `/people-count`, but neither reviewed IMX500 runtime currently provides that endpoint; the page therefore cannot show a live SecurePi count without an additional compatible endpoint.
-2. Gate Scanner, V-Patrol, Facial Evaluation, Face Enrolment, and Settings use a runtime base URL stored as `flowguard.piCameraBaseUrl` or the `VITE_PI_CAMERA_*` build values. They probe `/health`, show `/video_feed`, and capture `/snapshot` from `raspberry-pi/pi_camera_steam.py`. That service identifies itself as **Pi Camera Module 3**, not IMX500. Those pages fall back to the laptop webcam where implemented.
+2. Gate Scanner, V-Patrol, Facial Evaluation, Face Enrolment, and Settings use a runtime base URL stored as `flowguard.piCameraBaseUrl` or the `VITE_PI_CAMERA_*` build values. They probe `/health`, show `/video_feed`, and capture `/snapshot` from `raspberry-pi4/pi_camera_steam.py`. That service identifies itself as **Pi Camera Module 3**, not IMX500. Those pages fall back to the laptop webcam where implemented.
 
 The browser-to-Pi path is local plain HTTP. A deployed HTTPS browser may require local-network permission and may be affected by private-network or mixed-content policy. No real token belongs in a `VITE_` variable or browser storage.
 
