@@ -626,11 +626,17 @@
 
 /* IncidentAnalytics has an adjacent-panel spacing rule for its vertical flow.
    Neutralise that inherited margin inside the Dashboard grid so both direct
-   children share the exact same grid-row rectangle. */
+   children share the exact same grid-row rectangle. height:100% + flex-column
+   are scoped to this grid context only — .analytics-panel is also used in plain
+   block flow (IncidentAnalytics.jsx), where it must size to its own content
+   instead of stretching to fill the scroll container's full height. */
 .dashboard-analytics-grid > .analytics-panel,
 .dashboard-analytics-grid > .analytics-panel + .analytics-panel {
   margin: 0;
   align-self: stretch;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .analytics-panel {
@@ -640,9 +646,6 @@
   padding: 20px;
   min-width: 0; /* let the panel shrink inside the grid instead of forcing overflow */
   min-height: 260px;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
 }
 
 .analytics-panel-head {

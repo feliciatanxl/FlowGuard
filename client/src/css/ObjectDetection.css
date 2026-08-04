@@ -350,6 +350,63 @@
     color: #e5edf8;
 }
 
+.od-source-status,
+.od-securepi-override,
+.od-securepi-details {
+    border-bottom: 1px solid #202c44;
+    background: rgba(8, 13, 24, 0.62);
+    color: #9fb0cc;
+    font-size: 0.78rem;
+}
+
+.od-source-status {
+    display: grid;
+    gap: 7px;
+    padding: 10px 20px;
+}
+
+.od-source-status > strong { color: #e5edf8; }
+.od-source-status .od-btn-primary { width: fit-content; }
+
+.od-securepi-override {
+    padding: 9px 20px;
+}
+
+.od-securepi-override summary {
+    color: #bae6fd;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.od-securepi-override p { margin: 9px 0; }
+
+.od-securepi-override > div {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.od-securepi-override input {
+    flex: 1 1 280px;
+    min-width: 0;
+}
+
+.od-securepi-override > span {
+    display: block;
+    margin-top: 8px;
+    color: #7dd3fc;
+}
+
+.od-securepi-details {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    padding: 10px 20px;
+}
+
+.od-securepi-details strong { color: #e5edf8; }
+
 .od-limitation-note {
     margin: 8px 0 0;
     color: #f59e0b;

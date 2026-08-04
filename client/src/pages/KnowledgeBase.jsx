@@ -7,10 +7,17 @@ import '../css/SupportDashboard.css';
 
 const TOKEN = () => localStorage.getItem('accessToken');
 
+// Suggested categories — free text server-side, but a fixed list keeps the
+// filter dropdown stable regardless of which categories currently have entries.
+// Mirrors SupportDashboard.jsx's TICKET_CATEGORIES.
+const KB_CATEGORIES = ['General', 'Access Control', 'Loading Bay', 'Visitor Parking', 'Security'];
+
 // Split out of SupportDashboard.jsx's former "Knowledge Base" tab into its own
 // sidebar-linked page — the tabber is gone, this is the whole page now.
 const KnowledgeBase = () => {
   const [kbEntries, setKbEntries] = useState([]);
+  const [kbCategoryFilter, setKbCategoryFilter] = useState('All');
+  const [kbSearch, setKbSearch] = useState('');
   const [kbLoading, setKbLoading] = useState(true);
   const [kbForm, setKbForm] = useState({ category: 'General', question: '', answer: '', keywords: '' });
   const [kbEditId, setKbEditId] = useState(null);
@@ -26,7 +33,11 @@ const KnowledgeBase = () => {
   const fetchKB = useCallback(async () => {
     setKbLoading(true);
     try {
-      const { data } = await axios.get('/api/support/knowledge', {
+      const params = new URLSearchParams();
+      if (kbCategoryFilter !== 'All') params.set('category', kbCategoryFilter);
+      if (kbSearch.trim()) params.set('q', kbSearch.trim());
+
+      const { data } = await axios.get(`/api/support/knowledge?${params.toString()}`, {
         headers: { Authorization: `Bearer ${TOKEN()}` }
       });
       setKbEntries(Array.isArray(data) ? data : []);
@@ -35,7 +46,7 @@ const KnowledgeBase = () => {
     } finally {
       setKbLoading(false);
     }
-  }, []);
+  }, [kbCategoryFilter, kbSearch]);
 
   useEffect(() => { (async () => { await fetchKB(); })(); }, [fetchKB]);
 
@@ -174,8 +185,27 @@ const KnowledgeBase = () => {
           </form>
         </div>
 
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', margin: '1.5rem 0 0', flexWrap: 'wrap' }}>
+          <input
+            type="text"
+            placeholder="Search questions or answers..."
+            value={kbSearch}
+            onChange={e => setKbSearch(e.target.value)}
+            style={{ padding: '8px 12px', borderRadius: '6px', background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155', minWidth: '220px', flex: '1 1 220px' }}
+          />
+          <label style={{ color: '#94a3b8' }}>Category:</label>
+          <select
+            value={kbCategoryFilter}
+            onChange={e => setKbCategoryFilter(e.target.value)}
+            style={{ padding: '8px', borderRadius: '6px', background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155' }}
+          >
+            <option value="All">All</option>
+            {KB_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+
         {/* KB List */}
-        <div className="table-container" style={{ marginTop: '1.5rem' }}>
+        <div className="table-container" style={{ marginTop: '1rem' }}>
           <table className="management-table">
             <thead>
               <tr>
@@ -191,7 +221,9 @@ const KnowledgeBase = () => {
                 <tr><td colSpan="5" style={{ textAlign: 'center', padding: '40px' }}>Loading knowledge base...</td></tr>
               ) : kbEntries.length === 0 ? (
                 <tr><td colSpan="5" style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>
-                  No FAQ entries yet. Add the first one above.
+                  {kbCategoryFilter === 'All' && !kbSearch.trim()
+                    ? 'No FAQ entries yet. Add the first one above.'
+                    : 'No FAQ entries match your search/filter.'}
                 </td></tr>
               ) : kbEntries.map(entry => (
                 <tr key={entry.id}>

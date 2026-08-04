@@ -13,6 +13,7 @@ function severityFromDuration(seconds) {
   return 'Critical';
 }
 const { Op } = require('sequelize');
+const { createDetectionAlertRetentionTask } = require('../services/detectionAlertRetention');
 const { verifyToken, requireRole, verifyServiceOrRole } = require('../middlewares/auth');
 const {
     GENERATED_SNAPSHOT_RE,
@@ -332,19 +333,8 @@ router.delete('/:id', verifyToken, requireRole('FM'), async (req, res) => {
 });
 
 // Purge detection alerts older than 30 days — runs once daily
-function purgeStaleLogs() {
-    if (typeof DetectionAlert.destroy !== 'function') return;
-    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    DetectionAlert.destroy({
-        where: { createdAt: { [Op.lt]: cutoff } },
-        force: true
-    })
-    .then(n => { if (n > 0) console.log(`[Purge] Removed ${n} stale detection alerts.`); })
-    .catch(e => console.error('[Purge] Error:', e));
-}
-
-setInterval(purgeStaleLogs, 24 * 60 * 60 * 1000);
-// Delay the first run by 20s to let Sequelize finish syncing tables on startup
-setTimeout(purgeStaleLogs, 20000);
+// Constructing the route must not start process handles. index.js starts this
+// task only after database initialization succeeds and graceful shutdown stops it.
+router.retentionTask = createDetectionAlertRetentionTask({ DetectionAlert, Op });
 
 module.exports = router;

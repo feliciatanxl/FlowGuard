@@ -122,6 +122,10 @@ async function startServer({ exitOnFailure = require.main === module } = {}) {
         const modelNames = await initializeDatabase(db, { alter: alterSchema });
         console.log(`Database and ${modelNames.length} model schemas validated in ${Math.round((Date.now() - syncStart) / 1000)}s.`);
 
+        // Route import is handle-free. Begin detection-alert retention only now,
+        // after the database has authenticated and every model has validated.
+        detectionAlertsRoute.retentionTask.start();
+
         // Start PDPA 90-day transcript cleanup cron
         cleanupTask = startCleanupCron(db);
 
@@ -138,7 +142,7 @@ async function startServer({ exitOnFailure = require.main === module } = {}) {
         shutdown = createGracefulShutdown({
             getServer: () => httpServer,
             sequelize: db.sequelize,
-            cleanupTasks: [cleanupTask],
+            cleanupTasks: [cleanupTask, detectionAlertsRoute.retentionTask],
         });
         const handleSignal = (signal) => {
             readiness.markNotReady();
@@ -149,6 +153,7 @@ async function startServer({ exitOnFailure = require.main === module } = {}) {
         return httpServer;
     } catch (err) {
         readiness.markNotReady();
+        detectionAlertsRoute.retentionTask.stop();
         console.error('Critical database/schema initialization failed; HTTP server was not started:', err);
         try { await db.sequelize.close(); } catch (closeError) {
             console.error('Failed to close Sequelize after startup failure:', closeError);
