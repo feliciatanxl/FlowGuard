@@ -128,7 +128,106 @@ describe('browser-local SecurePi override', () => {
 });
 
 describe('testSecurePiConnection', () => {
-  const jsonResponse = (body, ok = true) => ({ ok, json: vi.fn().mockResolvedValue(body) });
+  const jsonResponse = (body, ok = true, status = ok ? 200 : 500) => ({
+    ok,
+    status,
+    json: vi.fn().mockResolvedValue(body),
+  });
+
+  test('accepts status online and latest_frame_age_seconds from the current SecurePi health contract', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({
+        status: 'online',
+        camera: 'IMX500',
+        streaming: true,
+        latest_frame_age_seconds: 1.4,
+      }))
+      .mockResolvedValueOnce(jsonResponse({ count: 1, detection_active: true }));
+
+    await expect(testSecurePiConnection({ streamUrl: 'http://securepi.local:8123/video_feed' })).resolves.toMatchObject({
+      ok: true,
+      status: SECUREPI_CONNECTION_STATUS.CONNECTED,
+      health: { status: 'online', streaming: true, cameraDescription: 'IMX500' },
+      details: { visiblePeople: 1, frameAgeSeconds: 1.4, resolvedPort: '8123' },
+    });
+  });
+
+  test.each([404, 405, 501])('treats people-count HTTP %s as unsupported without rejecting health', async (status) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({
+        status: 'online',
+        camera: 'IMX500',
+        streaming: true,
+        latest_frame_age_seconds: 0.3,
+      }))
+      .mockResolvedValueOnce(jsonResponse(null, false, status));
+
+    await expect(testSecurePiConnection({ streamUrl: 'http://securepi.local:8123/video_feed' })).resolves.toMatchObject({
+      ok: true,
+      status: SECUREPI_CONNECTION_STATUS.CONNECTED,
+      people: null,
+      peopleCountSupported: false,
+      details: { visiblePeople: null, frameAgeSeconds: 0.3 },
+    });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'http://securepi.local:8123/health',
+      'http://securepi.local:8123/people-count',
+    ]);
+    expect(fetchMock.mock.calls.some(([url]) => url.endsWith('/snapshot'))).toBe(false);
+  });
+
+  test('keeps valid health connected when the optional people-count fetch throws a CORS TypeError', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({
+        status: 'online',
+        camera: 'IMX500',
+        streaming: true,
+        latest_frame_age_seconds: 0.2,
+      }))
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    await expect(testSecurePiConnection({ streamUrl: 'http://securepi.local:8123/video_feed' })).resolves.toMatchObject({
+      ok: true,
+      status: SECUREPI_CONNECTION_STATUS.CONNECTED,
+      people: null,
+      peopleCountSupported: false,
+      details: {
+        cameraDescription: 'IMX500',
+        streaming: true,
+        visiblePeople: null,
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  test('still reports unreachable when the authoritative health fetch throws TypeError', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    await expect(testSecurePiConnection({ streamUrl: 'http://securepi.local:8123/video_feed' })).resolves.toMatchObject({
+      ok: false,
+      status: SECUREPI_CONNECTION_STATUS.UNREACHABLE,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('treats streaming false as degraded and rejects a non-boolean streaming field', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ status: 'online', streaming: false }))
+      .mockResolvedValueOnce(jsonResponse(null, false, 404))
+      .mockResolvedValueOnce(jsonResponse({ status: 'online', streaming: 'yes' }));
+
+    await expect(testSecurePiConnection({ streamUrl: 'http://securepi.local:8123/video_feed' })).resolves.toMatchObject({
+      ok: true,
+      status: SECUREPI_CONNECTION_STATUS.STALE,
+      details: { streaming: false },
+    });
+    await expect(testSecurePiConnection({ streamUrl: 'http://securepi.local:8123/video_feed' })).resolves.toMatchObject({
+      ok: false,
+      status: SECUREPI_CONNECTION_STATUS.INVALID_RESPONSE,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 
   test('checks health before people-count and sends no JWT, edge token, or credentials', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')

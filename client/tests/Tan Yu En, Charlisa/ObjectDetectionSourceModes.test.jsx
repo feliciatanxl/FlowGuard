@@ -77,7 +77,11 @@ const loadObjectDetection = async () => {
   ({ default: ObjectDetection } = await import('../../src/pages/ObjectDetection'));
 };
 
-const jsonResponse = (body, ok = true) => ({ ok, json: vi.fn().mockResolvedValue(body) });
+const jsonResponse = (body, ok = true, status = ok ? 200 : 500) => ({
+  ok,
+  status,
+  json: vi.fn().mockResolvedValue(body),
+});
 
 const mockBackend = (cameras, options = {}) => {
   const {
@@ -131,6 +135,63 @@ afterEach(() => {
 });
 
 describe('SecurePi Hardware mode', () => {
+  test('activates only after the current SecurePi health contract and an MJPEG load, without requiring count or snapshot', async () => {
+    mockBackend([SECUREPI_CAMERA]);
+    securePiFetch.mockImplementation((url) => {
+      if (url.endsWith('/health')) {
+        return Promise.resolve(jsonResponse({
+          status: 'online',
+          camera: 'IMX500',
+          streaming: true,
+          latest_frame_age_seconds: 0.2,
+        }));
+      }
+      if (url.endsWith('/people-count')) return Promise.reject(new TypeError('Failed to fetch'));
+      return Promise.reject(new Error(`unexpected local fetch ${url}`));
+    });
+    renderPage();
+
+    await screen.findByRole('option', { name: /CAM-SECUREPI-01/ });
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'SecurePi Hardware' }));
+
+    const img = await screen.findByAltText('SecurePi live hardware camera');
+    expect(screen.queryByText('Active source: Raspberry Pi 5 — Sony IMX500 SecurePi')).toBeNull();
+    expect(screen.getByText('Connecting source: Raspberry Pi 5 — Sony IMX500 SecurePi')).toBeInTheDocument();
+    expect(screen.getByText('Not provided by this SecurePi service')).toBeInTheDocument();
+    expect(securePiPeopleCountCalls()).toHaveLength(1);
+    expect(securePiFetch.mock.calls.some(([url]) => url.endsWith('/snapshot'))).toBe(false);
+
+    fireEvent.load(img);
+    expect(await screen.findByText('Active source: Raspberry Pi 5 — Sony IMX500 SecurePi')).toBeInTheDocument();
+    expect(axios.post).not.toHaveBeenCalledWith('/api/yolo/analyze-frame', expect.anything(), expect.anything());
+    await waitFor(() => expect(trackStop).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Browser Camera' }));
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole('button', { name: 'SecurePi Hardware' }));
+    await waitFor(() => expect(healthCalls()).toHaveLength(2));
+    expect(securePiPeopleCountCalls()).toHaveLength(1);
+  });
+
+  test('an MJPEG error activates exactly one laptop fallback camera', async () => {
+    mockBackend([SECUREPI_CAMERA]);
+    renderPage();
+
+    await screen.findByRole('option', { name: /CAM-SECUREPI-01/ });
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'SecurePi Hardware' }));
+    const img = await screen.findByAltText('SecurePi live hardware camera');
+
+    fireEvent.error(img);
+
+    expect(await screen.findByText('SecurePi IMX500 unavailable — using laptop camera fallback')).toBeInTheDocument();
+    expect(screen.getByText('Active source: Laptop Webcam')).toBeInTheDocument();
+    await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
+    expect(screen.queryByAltText('SecurePi live hardware camera')).toBeNull();
+    expect(trackStop).toHaveBeenCalledTimes(1);
+  });
+
   test('uses the selected inventory HTTP stream in an <img> and never calls getUserMedia', async () => {
     mockBackend([SECUREPI_CAMERA]);
     renderPage();
@@ -217,6 +278,7 @@ describe('SecurePi Hardware mode', () => {
 
     const reconnected = await screen.findByAltText('SecurePi live hardware camera');
     expect(reconnected).toHaveAttribute('src', 'http://172.20.10.2:8001/video_feed');
+    fireEvent.load(reconnected);
     expect(screen.getByText('Active source: Raspberry Pi 5 — Sony IMX500 SecurePi')).toBeTruthy();
     await waitFor(() => expect(trackStop).toHaveBeenCalledTimes(1));
   });

@@ -5,6 +5,7 @@ import Sidebar from '../components/Sidebar';
 import {
   SECUREPI_CONNECTION_STATUS,
   clearSecurePiStreamOverride,
+  getHardwarePeopleCountUrl,
   getHardwareStreamUrl,
   readSecurePiStreamOverride,
   saveSecurePiStreamOverride,
@@ -28,6 +29,7 @@ const ANALYZE_FRAME_URL = '/api/yolo/analyze-frame';
 const OPEN_ALERT_STATUSES = ['Active', 'Acknowledged', 'Investigating', 'Escalated', 'Dispatched'];
 const SECUREPI_STREAM_URL = import.meta.env.VITE_SECUREPI_STREAM_URL || '';
 const SECUREPI_POLL_MS = 5000;
+const SECUREPI_FIRST_FRAME_TIMEOUT_MS = 8000;
 
 const emptySecurePiConnection = () => ({ status: 'idle', message: '', details: null, fallback: false });
 
@@ -143,6 +145,7 @@ const ObjectDetection = () => {
   const securePiProbeControllerRef = useRef(null);
   const securePiPollControllerRef = useRef(null);
   const securePiPollInFlightRef = useRef(false);
+  const unsupportedPeopleCountUrlsRef = useRef(new Set());
 
   useEffect(() => {
     mountedRef.current = true;
@@ -259,6 +262,10 @@ const ObjectDetection = () => {
     ),
     [monitoredCamera, securePiOverrideUrl]
   );
+  const hardwarePeopleCountUrl = useMemo(
+    () => getHardwarePeopleCountUrl(hardwareStreamUrl),
+    [hardwareStreamUrl]
+  );
 
   useEffect(() => {
     const storedOverride = readSecurePiStreamOverride(monitoredCamera?.id);
@@ -296,6 +303,9 @@ const ObjectDetection = () => {
 
   const applySecurePiResult = useCallback((result) => {
     const degraded = result.status === SECUREPI_CONNECTION_STATUS.STALE;
+    if (result.peopleCountSupported === false && result.endpoints?.peopleCountUrl) {
+      unsupportedPeopleCountUrlsRef.current.add(result.endpoints.peopleCountUrl);
+    }
     setPeopleCount(result.details.visiblePeople);
     setDetectionActive(Boolean(result.details.detectionActive));
     setCameraStatus(degraded ? 'securepi_degraded' : 'securepi_connected');
@@ -318,6 +328,7 @@ const ObjectDetection = () => {
       streamUrl: hardwareStreamUrl,
       timeoutMs: 3500,
       signal: controller.signal,
+      probePeopleCount: !unsupportedPeopleCountUrlsRef.current.has(hardwarePeopleCountUrl),
     });
     if (!mountedRef.current || controller.signal.aborted) return;
     securePiProbeControllerRef.current = null;
@@ -331,7 +342,7 @@ const ObjectDetection = () => {
     setCameraReady(false);
     applySecurePiResult(result);
     setSourceMode('hardware');
-  }, [abortSecurePiRequests, activateLaptopFallback, applySecurePiResult, hardwareStreamUrl]);
+  }, [abortSecurePiRequests, activateLaptopFallback, applySecurePiResult, hardwarePeopleCountUrl, hardwareStreamUrl]);
 
   const handleCameraSelectionChange = (event) => {
     abortSecurePiRequests();
@@ -555,6 +566,7 @@ const ObjectDetection = () => {
         streamUrl: hardwareStreamUrl,
         timeoutMs: 3500,
         signal: controller.signal,
+        probePeopleCount: !unsupportedPeopleCountUrlsRef.current.has(hardwarePeopleCountUrl),
       });
       securePiPollInFlightRef.current = false;
       if (securePiPollControllerRef.current === controller) securePiPollControllerRef.current = null;
@@ -571,9 +583,21 @@ const ObjectDetection = () => {
       securePiPollControllerRef.current = null;
       securePiPollInFlightRef.current = false;
     };
-  }, [activateLaptopFallback, applySecurePiResult, hardwareStreamUrl, sourceMode]);
+  }, [activateLaptopFallback, applySecurePiResult, hardwarePeopleCountUrl, hardwareStreamUrl, sourceMode]);
 
   useEffect(() => () => abortSecurePiRequests(), [abortSecurePiRequests]);
+
+  useEffect(() => {
+    if (sourceMode !== 'hardware' || cameraReady) return undefined;
+    const firstFrameTimer = setTimeout(() => {
+      if (!mountedRef.current) return;
+      activateLaptopFallback(
+        SECUREPI_CONNECTION_STATUS.TIMEOUT,
+        'SecurePi MJPEG first frame timed out'
+      );
+    }, SECUREPI_FIRST_FRAME_TIMEOUT_MS);
+    return () => clearTimeout(firstFrameTimer);
+  }, [activateLaptopFallback, cameraReady, hardwareStreamUrl, sourceMode]);
 
   const handleUpdateAlertStatus = async (id, status) => {
     setAlertActionBusy(true);
@@ -702,7 +726,9 @@ const ObjectDetection = () => {
     ? 'Validated local service connection and annotated MJPEG stream'
     : 'YOLO frame analysis';
   const activeSourceLabel = sourceMode === 'hardware'
-    ? 'Active source: Raspberry Pi 5 — Sony IMX500 SecurePi'
+    ? cameraReady
+      ? 'Active source: Raspberry Pi 5 — Sony IMX500 SecurePi'
+      : 'Connecting source: Raspberry Pi 5 — Sony IMX500 SecurePi'
     : sourceMode === 'file'
       ? 'Active source: Uploaded Video'
       : 'Active source: Laptop Webcam';
@@ -723,7 +749,9 @@ const ObjectDetection = () => {
             </div>
             <div className="od-people-badge">
               <Icon name="person" />
-              {peopleCount} {peopleCount === 1 ? 'Person' : 'People'} Detected
+              {sourceMode === 'hardware' && peopleCount === null
+                ? 'People count not provided'
+                : `${peopleCount} ${peopleCount === 1 ? 'Person' : 'People'} Detected`}
             </div>
           </div>
         </header>
@@ -742,7 +770,7 @@ const ObjectDetection = () => {
         <section className="od-command-strip">
           <div className="od-command-card cyan">
             <span>Detections Today</span>
-            <strong>{peopleCount + alerts.length}</strong>
+            <strong>{(peopleCount ?? 0) + alerts.length}</strong>
             <small>Live frame plus alert log</small>
           </div>
           <div className="od-command-card red">
@@ -854,7 +882,7 @@ const ObjectDetection = () => {
                       setSecurePiOverrideInput(event.target.value);
                       setSecurePiOverrideMessage('');
                     }}
-                    placeholder="http://securepi.local:5001/video_feed"
+                    placeholder="http://securepi.local:8001/video_feed"
                   />
                   <button type="button" className="od-btn-primary" onClick={saveLocalSecurePiOverride}>Save local override</button>
                   <button type="button" className="od-btn-cancel" onClick={clearLocalSecurePiOverride}>Clear override</button>
@@ -868,7 +896,7 @@ const ObjectDetection = () => {
               <div className="od-securepi-details" aria-label="SecurePi connection details">
                 <span>Connection <strong>{securePiConnection.status === SECUREPI_CONNECTION_STATUS.STALE ? 'Degraded' : 'Connected'}</strong></span>
                 <span>Detection <strong>{securePiConnection.details.detectionActive ? 'Active' : 'Standby'}</strong></span>
-                <span>Visible people <strong>{securePiConnection.details.visiblePeople}</strong></span>
+                <span>Visible people <strong>{securePiConnection.details.visiblePeople === null ? 'Not provided by this SecurePi service' : securePiConnection.details.visiblePeople}</strong></span>
                 {securePiConnection.details.deviceId && <span>Device ID <strong>{securePiConnection.details.deviceId}</strong></span>}
                 {securePiConnection.details.zone && <span>Zone <strong>{securePiConnection.details.zone}</strong></span>}
                 {securePiConnection.details.frameAgeSeconds !== null && <span>Frame age <strong>{securePiConnection.details.frameAgeSeconds}s</strong></span>}

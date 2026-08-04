@@ -18,7 +18,8 @@ export const SECUREPI_CONNECTION_STATUS = Object.freeze({
 });
 
 const SECRET_QUERY_KEY = /(?:^|[_-])(?:access[_-]?token|api[_-]?key|auth|authorization|bearer|credential|jwt|password|secret|signature|token)(?:$|[_-])/i;
-const SAFE_STATUS_VALUES = new Set(['ok', 'healthy', 'connected', 'degraded', 'stale']);
+const SAFE_STATUS_VALUES = new Set(['ok', 'online', 'healthy', 'connected', 'degraded', 'stale']);
+const OPTIONAL_ENDPOINT_UNSUPPORTED_STATUSES = new Set([404, 405, 501]);
 
 const browserStorage = () => {
   try {
@@ -229,14 +230,18 @@ function normalizeHealth(body) {
   const status = safeText(body.status, 24).toLowerCase();
   if (!SAFE_STATUS_VALUES.has(status)) return null;
   if (body.detection_active !== undefined && typeof body.detection_active !== 'boolean') return null;
+  if (body.streaming !== undefined && typeof body.streaming !== 'boolean') return null;
   return {
     status,
-    stale: status === 'stale' || status === 'degraded' || body.stale === true,
+    stale: status === 'stale' || status === 'degraded' || body.stale === true || body.streaming === false,
+    streaming: typeof body.streaming === 'boolean' ? body.streaming : null,
     detectionActive: typeof body.detection_active === 'boolean' ? body.detection_active : null,
     deviceId: safeText(body.device_id),
     zone: safeText(body.zone || body.zone_name),
     cameraDescription: safeText(body.camera_description || body.camera || body.description),
-    frameAgeSeconds: finiteNonNegative(body.frame_age_seconds ?? body.age_seconds),
+    frameAgeSeconds: finiteNonNegative(
+      body.latest_frame_age_seconds ?? body.frame_age_seconds ?? body.age_seconds
+    ),
   };
 }
 
@@ -250,11 +255,18 @@ function normalizePeopleCount(body) {
     detectionActive: typeof body.detection_active === 'boolean' ? body.detection_active : false,
     deviceId: safeText(body.device_id),
     zone: safeText(body.zone || body.zone_name),
-    frameAgeSeconds: finiteNonNegative(body.frame_age_seconds ?? body.age_seconds),
+    frameAgeSeconds: finiteNonNegative(
+      body.latest_frame_age_seconds ?? body.frame_age_seconds ?? body.age_seconds
+    ),
   };
 }
 
-export async function testSecurePiConnection({ streamUrl, timeoutMs = 3500, signal } = {}) {
+export async function testSecurePiConnection({
+  streamUrl,
+  timeoutMs = 3500,
+  signal,
+  probePeopleCount = true,
+} = {}) {
   const endpoints = deriveSecurePiEndpoints(streamUrl);
   if (!endpoints.valid) {
     return makeResult(SECUREPI_CONNECTION_STATUS.INVALID_URL, { error: endpoints.error });
@@ -274,14 +286,28 @@ export async function testSecurePiConnection({ streamUrl, timeoutMs = 3500, sign
       return makeResult(SECUREPI_CONNECTION_STATUS.INVALID_RESPONSE, { endpoints });
     }
 
-    // Deliberately sequential: never ask for people-count until health succeeds.
-    const countResponse = await fetch(endpoints.peopleCountUrl, fetchOptions);
-    const people = normalizePeopleCount(await readJson(countResponse));
-    if (!people) {
-      return makeResult(SECUREPI_CONNECTION_STATUS.INVALID_RESPONSE, { endpoints, health });
+    let people = null;
+    let peopleCountSupported = false;
+    if (probePeopleCount) {
+      // Deliberately sequential: never ask for people-count until health succeeds.
+      // Browsers expose a CORS-blocked generic 404 as a fetch TypeError rather
+      // than a Response. Health is already authoritative at this point, so that
+      // fetch-level failure means only that this optional capability is absent.
+      try {
+        const countResponse = await fetch(endpoints.peopleCountUrl, fetchOptions);
+        if (!OPTIONAL_ENDPOINT_UNSUPPORTED_STATUSES.has(countResponse.status)) {
+          people = normalizePeopleCount(await readJson(countResponse));
+          if (!people) {
+            return makeResult(SECUREPI_CONNECTION_STATUS.INVALID_RESPONSE, { endpoints, health });
+          }
+          peopleCountSupported = true;
+        }
+      } catch (error) {
+        if (error?.name !== 'TypeError') throw error;
+      }
     }
 
-    const frameAgeSeconds = people.frameAgeSeconds ?? health.frameAgeSeconds;
+    const frameAgeSeconds = people?.frameAgeSeconds ?? health.frameAgeSeconds;
     const stale = health.stale
       || (frameAgeSeconds !== null && frameAgeSeconds > SECUREPI_STALE_FRAME_SECONDS);
     return makeResult(
@@ -290,13 +316,15 @@ export async function testSecurePiConnection({ streamUrl, timeoutMs = 3500, sign
         endpoints,
         health,
         people,
+        peopleCountSupported,
         details: {
           cameraDescription: health.cameraDescription,
-          deviceId: people.deviceId || health.deviceId,
-          zone: people.zone || health.zone,
-          detectionActive: people.detectionActive ?? health.detectionActive ?? false,
-          visiblePeople: people.count,
+          deviceId: people?.deviceId || health.deviceId,
+          zone: people?.zone || health.zone,
+          detectionActive: people?.detectionActive ?? health.detectionActive ?? false,
+          visiblePeople: people?.count ?? null,
           frameAgeSeconds,
+          streaming: health.streaming,
           resolvedPort: endpoints.port,
         },
       }

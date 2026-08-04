@@ -393,7 +393,7 @@ export default function CameraInventory() {
                 <label>Video Source<select value={form.stream_source} onChange={(event) => { resetSecurePiTest(); setForm((prev) => ({ ...prev, stream_source: event.target.value })); }}>{VIDEO_SOURCES.map((source) => <option key={source.value} value={source.value}>{source.label}</option>)}<option value={CUSTOM_SOURCE}>Custom hardware/MJPEG URL</option></select></label>
                 {form.stream_source === CUSTOM_SOURCE && (
                   <div className="camera-securepi-test wide">
-                    <label>Stream URL<input value={form.custom_stream_url} onChange={(event) => { resetSecurePiTest(); setForm((prev) => ({ ...prev, custom_stream_url: event.target.value })); }} placeholder="http://securepi.local:5001/video_feed" /></label>
+                    <label>Stream URL<input value={form.custom_stream_url} onChange={(event) => { resetSecurePiTest(); setForm((prev) => ({ ...prev, custom_stream_url: event.target.value })); }} placeholder="http://securepi.local:8001/video_feed" /></label>
                     <button
                       type="button"
                       className="camera-secondary-btn"
@@ -413,11 +413,12 @@ export default function CameraInventory() {
                         )}
                         {securePiTest.details && (
                           <div className="camera-securepi-detail-grid">
-                            {securePiTest.details.cameraDescription && <span>Camera <strong>{securePiTest.details.cameraDescription}</strong></span>}
+                            {securePiTest.details.cameraDescription && <span>Camera: <strong>{securePiTest.details.cameraDescription}</strong></span>}
                             {securePiTest.details.deviceId && <span>Device ID <strong>{securePiTest.details.deviceId}</strong></span>}
                             {securePiTest.details.zone && <span>Zone <strong>{securePiTest.details.zone}</strong></span>}
+                            <span>Streaming: <strong>{securePiTest.details.streaming === true ? 'Active' : securePiTest.details.streaming === false ? 'Unavailable' : 'Not reported'}</strong></span>
                             <span>Detection <strong>{securePiTest.details.detectionActive ? 'Active' : 'Standby'}</strong></span>
-                            <span>Visible people <strong>{securePiTest.details.visiblePeople}</strong></span>
+                            <span>People count: <strong>{securePiTest.details.visiblePeople === null ? 'Not provided by this SecurePi service' : securePiTest.details.visiblePeople}</strong></span>
                             {securePiTest.details.frameAgeSeconds !== null && <span>Frame age <strong>{securePiTest.details.frameAgeSeconds}s</strong></span>}
                             <span>Resolved port <strong>{securePiTest.details.resolvedPort}</strong></span>
                           </div>

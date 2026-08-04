@@ -9,7 +9,11 @@ vi.mock('axios');
 vi.mock('../../src/components/Sidebar', () => ({ default: () => null }));
 
 const securePiFetch = vi.fn();
-const jsonResponse = (body, ok = true) => ({ ok, json: vi.fn().mockResolvedValue(body) });
+const jsonResponse = (body, ok = true, status = ok ? 200 : 500) => ({
+  ok,
+  status,
+  json: vi.fn().mockResolvedValue(body),
+});
 
 const renderPage = () => render(<MemoryRouter><CameraInventory /></MemoryRouter>);
 
@@ -34,6 +38,39 @@ afterEach(() => {
 });
 
 describe('Camera Inventory SecurePi connection test', () => {
+  test('connects with the current health contract when people count is not provided and does not save', async () => {
+    securePiFetch
+      .mockResolvedValueOnce(jsonResponse({
+        status: 'online',
+        camera: 'IMX500',
+        streaming: true,
+        latest_frame_age_seconds: 0.4,
+      }))
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    renderPage();
+    await screen.findByText(/No cameras in inventory yet/);
+    selectCustomSource();
+
+    const streamInput = screen.getByLabelText('Stream URL');
+    expect(streamInput).toHaveAttribute('placeholder', 'http://securepi.local:8001/video_feed');
+    fireEvent.change(streamInput, { target: { value: 'http://securepi.local:8123/video_feed' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Test SecurePi Connection' }));
+
+    expect(await screen.findByText('SecurePi connected')).toBeInTheDocument();
+    expect(screen.getByText('Not provided by this SecurePi service')).toBeInTheDocument();
+    expect(screen.getByText(/Frame age/).parentElement).toHaveTextContent('0.4s');
+    const result = screen.getByText('SecurePi connected').parentElement;
+    expect(result).toHaveTextContent('Camera: IMX500');
+    expect(result).toHaveTextContent('Streaming: Active');
+    expect(result).toHaveTextContent('People count: Not provided by this SecurePi service');
+    expect(securePiFetch.mock.calls.map(([url]) => url)).toEqual([
+      'http://securepi.local:8123/health',
+      'http://securepi.local:8123/people-count',
+    ]);
+    expect(axios.post).not.toHaveBeenCalled();
+    expect(axios.put).not.toHaveBeenCalled();
+  });
+
   test('validates health before people-count without saving or sending cloud authentication', async () => {
     securePiFetch
       .mockResolvedValueOnce(jsonResponse({ status: 'ok', camera: 'Sony IMX500', device_id: 'securepi-01', zone: 'Loading Bay' }))
