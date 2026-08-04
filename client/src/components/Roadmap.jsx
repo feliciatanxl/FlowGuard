@@ -3,12 +3,12 @@ const Roadmap = () => {
     "Facial access and attendance",
     "Object and unattended-item monitoring for supported classes",
     "Smart Logistics and gate verification",
-    "Incident and support workflows",
-    "Google Cloud deployment"
+    "AI Helpdesk, Knowledge Base, support tickets and Incident Analytics",
+    "Cloud Run and Cloud SQL deployment"
   ];
   const futureCapabilities = [
     "After-hours motion schedules",
-    "Pest and animal detection",
+    "Production pest and rodent detection requires a validated IMX500 model and physical deployment testing",
     "Pick-up, set-down and push-in action recognition",
     "Multi-camera person re-identification",
     "Production hardware and physical-barrier integration"

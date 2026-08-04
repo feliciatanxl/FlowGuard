@@ -127,9 +127,9 @@ const IncidentDashboard = () => {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteSaving, setDeleteSaving] = useState(false);
 
-  // --- Escalate to Ticket confirm modal (Support Tickets integration is on the
-  // teammate's end — this only opens a pre-filled confirmation; no submission yet) ---
+  // --- Persisted Incident-to-Support Ticket escalation modal ---
   const [escalateTarget, setEscalateTarget] = useState(null);
+  const [escalateSaving, setEscalateSaving] = useState(false);
 
   // --- Toast stack (array, each has its own 3s timer) ---
   const [toasts, setToasts]     = useState([]);
@@ -332,12 +332,22 @@ const IncidentDashboard = () => {
 
   const handleEscalate = (incident) => setEscalateTarget(incident);
 
-  // Mocked — no ticket is actually created. The real submission (POST to the
-  // Support Tickets endpoint) is being wired up separately by the teammate who
-  // owns that feature; this just confirms the button/modal work on this end.
-  const confirmEscalate = () => {
-    showToast(`Incident #${escalateTarget.id} prepared for escalation — ticket submission integration pending.`, 'success');
-    setEscalateTarget(null);
+  const confirmEscalate = async () => {
+    if (!escalateTarget || escalateSaving) return;
+    setEscalateSaving(true);
+    try {
+      const res = await axios.post('/api/support/tickets', {
+        sourceIncidentId: escalateTarget.id
+      }, { headers: { Authorization: `Bearer ${getToken()}` } });
+      showToast(res.data?.duplicate
+        ? `Incident #${escalateTarget.id} is already tracked in Support Tickets.`
+        : `Incident #${escalateTarget.id} escalated to Support Tickets.`, 'success');
+      setEscalateTarget(null);
+    } catch (err) {
+      showToast(err.response?.data?.error || 'Failed to escalate incident to Support Tickets.', 'error');
+    } finally {
+      setEscalateSaving(false);
+    }
   };
 
   const handleCreate = async (e) => {
@@ -996,9 +1006,9 @@ const IncidentDashboard = () => {
           </div>
         )}
 
-        {/* ---- Escalate to Ticket Confirm Modal (mocked — no submission yet) ---- */}
+        {/* ---- Escalate to Ticket Confirm Modal ---- */}
         {escalateTarget && (
-          <div className="modal-overlay" onClick={() => setEscalateTarget(null)}>
+          <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Escalate incident to Support Tickets" onClick={() => { if (!escalateSaving) setEscalateTarget(null); }}>
             <div className="inc-detail-modal" onClick={(e) => e.stopPropagation()}>
               <div className="inc-modal-header">
                 <div>
@@ -1007,7 +1017,7 @@ const IncidentDashboard = () => {
                     Review the details below before escalating this incident to Support.
                   </p>
                 </div>
-                <button className="edit-btn" onClick={() => setEscalateTarget(null)}>✕ Close</button>
+                <button className="edit-btn" onClick={() => setEscalateTarget(null)} disabled={escalateSaving}>✕ Close</button>
               </div>
 
               <div className="inc-detail-grid">
@@ -1036,16 +1046,16 @@ const IncidentDashboard = () => {
                 </p>
               </div>
 
-              <p style={{ color: '#64748b', fontSize: '0.78rem', margin: '4px 0 20px' }}>
-                Submission to Support Tickets is not yet connected — confirming here does not create a ticket.
+              <p style={{ color: '#94a3b8', fontSize: '0.78rem', margin: '4px 0 20px' }}>
+                Confirming creates one persisted Support Ticket. Repeated confirmation of this incident reuses the existing ticket.
               </p>
 
               <div className="modal-actions">
-                <button className="cancel-btn" onClick={() => setEscalateTarget(null)}>
+                <button className="cancel-btn" onClick={() => setEscalateTarget(null)} disabled={escalateSaving}>
                   Cancel
                 </button>
-                <button className="confirm-escalate-btn" onClick={confirmEscalate}>
-                  Confirm Escalation
+                <button className="confirm-escalate-btn" onClick={confirmEscalate} disabled={escalateSaving}>
+                  {escalateSaving ? 'Creating Ticket…' : 'Confirm Escalation'}
                 </button>
               </div>
             </div>

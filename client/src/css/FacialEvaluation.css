@@ -1,6 +1,6 @@
 /* Facial Evaluation Lab - FM-only simulation & metrics page */
 
-.eval-main { color: #e2e8f0; }
+.eval-main { color: #e2e8f0; min-width: 0; overflow-x: clip; }
 
 .eval-banner {
   background: rgba(245, 158, 11, 0.12);
@@ -34,8 +34,10 @@
 }
 .eval-link-btn:hover { border-color: #3b82f6; }
 
-.eval-tabs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.eval-action-row { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; min-width: 0; }
+.eval-tabs { display: flex; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .eval-tab {
+  min-height: 38px;
   padding: 8px 16px;
   border-radius: 8px;
   border: 1px solid #334155;
@@ -45,6 +47,7 @@
   font-size: 0.88rem;
 }
 .eval-tab.active { background: #1d4ed8; border-color: #3b82f6; color: #fff; }
+.eval-clear-action { margin-left: auto; min-height: 38px; flex: 0 0 auto; }
 
 .eval-card {
   background: #0b0f1a;
@@ -98,11 +101,22 @@
 .eval-result-actions label { color: #94a3b8; font-size: 0.82rem; display: flex; gap: 6px; align-items: center; }
 
 .eval-primary-btn, .eval-secondary-btn, .eval-danger-btn {
-  padding: 6px 12px;
+  min-height: 36px;
+  padding: 7px 12px;
   border-radius: 8px;
   cursor: pointer;
   font-size: 0.8rem;
   border: 1px solid #334155;
+}
+.eval-primary-btn:focus-visible, .eval-secondary-btn:focus-visible,
+.eval-danger-btn:focus-visible, .eval-tab:focus-visible,
+.eval-scenario-btn:focus-visible, .eval-link-btn:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+.eval-primary-btn:disabled, .eval-secondary-btn:disabled, .eval-danger-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .eval-primary-btn { background: #1d4ed8; border-color: #3b82f6; color: #fff; }
 .eval-secondary-btn { background: #1e293b; color: #e2e8f0; }
@@ -114,20 +128,41 @@
 .eval-form-row label { display: flex; flex-direction: column; gap: 4px; color: #94a3b8; font-size: 0.75rem; }
 .eval-form-row input, .eval-form-row select,
 .eval-filter-bar input, .eval-filter-bar select,
-.eval-table input, .eval-table select {
+.eval-table input, .eval-table select,
+.eval-main input[type="file"] {
   background: #1e293b;
   border: 1px solid #334155;
   color: #e2e8f0;
   border-radius: 6px;
   padding: 5px 8px;
   font-size: 0.82rem;
+  min-height: 36px;
+  color-scheme: dark;
+}
+.eval-main input[type="file"] { width: 100%; max-width: 100%; padding: 7px 9px; }
+.eval-main input[type="file"]::file-selector-button {
+  border: 1px solid #475569;
+  border-radius: 6px;
+  background: #334155;
+  color: #f8fafc;
+  padding: 6px 10px;
+  margin-right: 10px;
+  cursor: pointer;
+}
+.eval-form-row input:focus, .eval-form-row select:focus,
+.eval-filter-bar input:focus, .eval-filter-bar select:focus,
+.eval-table input:focus, .eval-table select:focus,
+.eval-main input[type="file"]:focus-visible {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
 }
 .eval-notes-field { flex: 1; min-width: 140px; }
 
 .eval-filter-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin: 12px 0; }
 .eval-filter-bar label { display: flex; flex-direction: column; gap: 4px; color: #94a3b8; font-size: 0.75rem; }
 
-.eval-table-wrap { overflow-x: auto; }
+.eval-table-wrap { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
 .eval-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
 .eval-table th, .eval-table td { border: 1px solid #2d364f; padding: 6px 10px; text-align: left; }
 .eval-table thead th { background: #111827; color: #94a3b8; }
@@ -157,7 +192,8 @@
 
 .legacy-warning { display: none; }
 .eval-card.nested { background: #111827; margin-top: 12px; }
-.eval-live-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 14px 0; }
+.eval-live-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 14px 0; align-items: stretch; }
+.eval-live-grid > div { min-width: 0; display: flex; flex-direction: column; gap: 10px; padding: 16px; border: 1px solid #2d364f; border-radius: 10px; background: #111827; }
 .eval-camera-box { margin: 10px 0; min-height: 160px; border: 1px dashed #334155; border-radius: 10px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #020617; }
 .eval-camera-box video { width: 100%; max-height: 220px; object-fit: contain; }
 .eval-upload-preview { display: block; max-width: 220px; max-height: 160px; object-fit: contain; border: 1px solid #334155; border-radius: 8px; margin-top: 10px; }
@@ -212,6 +248,24 @@
 .eval-correct { color: #34d399; font-weight: 700; }
 .eval-incorrect { color: #fb7185; font-weight: 700; }
 @media (max-width: 900px) { .image-eval-grid { grid-template-columns: 1fr; } }
+
+@media (max-width: 900px) {
+  .eval-action-row { align-items: stretch; flex-direction: column; }
+  .eval-clear-action { margin-left: 0; align-self: flex-start; }
+  .eval-live-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 560px) {
+  .eval-card { padding: 14px; }
+  .eval-tabs { display: grid; grid-template-columns: 1fr 1fr; }
+  .eval-tab { width: 100%; white-space: normal; }
+  .eval-clear-action { width: 100%; }
+  .eval-filter-bar > label, .eval-form-row > label { flex: 1 1 100%; min-width: 0; }
+  .eval-filter-bar select, .eval-filter-bar input,
+  .eval-form-row select, .eval-form-row input { width: 100%; }
+  .eval-recorder-actions { flex-wrap: wrap; }
+  .eval-recorder-actions > button { flex: 1 1 130px; }
+}
 
 /* --- Overview dashboard (auto-calculated scores + matrix) --- */
 .eval-mode-note {

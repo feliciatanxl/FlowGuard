@@ -25,7 +25,10 @@ const { buildAlertAnalytics } = require('../services/dashboardAnalytics');
 const ACTIVE_ALERT_STATUSES = ['Active', 'Acknowledged', 'Investigating', 'Escalated', 'Dispatched'];
 const HIGH_SEVERITIES = ['High', 'Critical'];
 const OPEN_INCIDENT_STATUSES = ['Active', 'Pending Review', 'Escalated', 'Open'];
-const OPEN_TICKET_STATUSES = ['Pending', 'In Progress'];
+// SupportTicket's persisted workflow uses "Investigating" (not the legacy
+// display-only "In Progress" label). Keep the dashboard count aligned with the
+// support queue's actual enum values.
+const OPEN_TICKET_STATUSES = ['Pending', 'Investigating'];
 const ACTIVE_BOOKING_STATUSES = ['Confirmed', 'Arrived'];
 
 const safeCount = async (model, options = {}) => {

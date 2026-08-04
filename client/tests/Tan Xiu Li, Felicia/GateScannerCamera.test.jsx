@@ -74,6 +74,21 @@ describe("GateScanner camera source", () => {
     await waitFor(() => expect(screen.getByText("Pi Gate Camera connected")).toBeTruthy(), { timeout: 10000 });
   }, 15000); // generous budget: this file renders live-scan loops and can be slow on a loaded CI machine
 
+  test("source and scan actions share one row while camera status is separate", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "ok", camera: "Pi Camera Module 3" }),
+    }));
+    const { container } = render(<GateScanner />);
+    await waitFor(() => expect(screen.getByText("Pi Gate Camera connected")).toBeTruthy());
+    const row = container.querySelector(".camera-control-row");
+    for (const name of ["Raspberry Pi Camera Module 3", "Laptop Webcam", "Scan Now", "Reset"]) {
+      expect(row.contains(screen.getByRole("button", { name }))).toBe(true);
+    }
+    const status = container.querySelector(".camera-status-line");
+    expect(row.contains(status)).toBe(false);
+  });
+
   test("the large recognition-result card is removed; camera and gate status remain", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,

@@ -3,7 +3,7 @@
 // separately: clicking the button opens a confirmation modal pre-filled with the
 // incident's ID/location/source/severity/description, and confirming it does
 // nothing beyond a local toast — no API call, no ticket is actually created.
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { vi, describe, test, expect, beforeEach } from 'vitest';
 
@@ -43,10 +43,11 @@ const mount = (incidents) => {
 
 beforeEach(() => {
   mockGet.mockReset(); mockPost.mockReset(); mockPatch.mockReset(); mockDelete.mockReset();
+  mockPost.mockResolvedValue({ data: { duplicate: false, ticket: { id: 'ticket-1' } } });
   localStorage.clear();
 });
 
-describe('Incident Dashboard — Escalate to Ticket (mocked, pending teammate integration)', () => {
+describe('Incident Dashboard — Escalate to Support Ticket', () => {
   test('opens a confirmation modal pre-filled with ID, location, source, severity, and description', async () => {
     mount([incident()]);
     await screen.findByText('Cold Store B');
@@ -85,7 +86,7 @@ describe('Incident Dashboard — Escalate to Ticket (mocked, pending teammate in
     expect(mockPatch).not.toHaveBeenCalled();
   });
 
-  test('Confirm Escalation closes the modal, shows a toast, and makes no network call (mocked)', async () => {
+  test('Confirm Escalation persists a support ticket and closes on success', async () => {
     mount([incident()]);
     await screen.findByText('Cold Store B');
     fireEvent.click(screen.getByRole('button', { name: 'Escalate to Ticket' }));
@@ -93,10 +94,20 @@ describe('Incident Dashboard — Escalate to Ticket (mocked, pending teammate in
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Escalation' }));
 
-    expect(screen.queryByText('Escalate to Support Ticket?')).toBeNull();
-    expect(await screen.findByText(/prepared for escalation/i)).toBeTruthy();
-    expect(mockPost).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByText('Escalate to Support Ticket?')).toBeNull());
+    expect(await screen.findByText(/escalated to Support Tickets/i)).toBeTruthy();
+    expect(mockPost).toHaveBeenCalledWith('/api/support/tickets', { sourceIncidentId: 42 }, expect.objectContaining({ headers: { Authorization: 'Bearer t' } }));
     expect(mockPatch).not.toHaveBeenCalled();
     expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  test('a repeated escalation reports the existing persisted ticket', async () => {
+    mockPost.mockResolvedValueOnce({ data: { duplicate: true, ticket: { id: 'ticket-1' } } });
+    mount([incident()]);
+    await screen.findByText('Cold Store B');
+    fireEvent.click(screen.getByRole('button', { name: 'Escalate to Ticket' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm Escalation' }));
+    expect(await screen.findByText(/already tracked in Support Tickets/i)).toBeTruthy();
+    expect(mockPost).toHaveBeenCalledTimes(1);
   });
 });

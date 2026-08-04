@@ -23,9 +23,9 @@ const FeatureCards = () => {
     },
     {
       number: "04",
-      title: "Incident and Operational Support",
-      description: "Connect alerts to response records and provide teams with a clearer path to follow-up.",
-      items: ["Incident resolution", "Support tickets", "Knowledge assistance", "Command-centre visibility"]
+      title: "Operational Support",
+      description: "Connect alerts, incidents and support knowledge to authorised investigation and measurable follow-up.",
+      items: ["AI Helpdesk", "Knowledge Base", "Support-ticket lifecycle", "Incident Analytics"]
     }
   ];
 

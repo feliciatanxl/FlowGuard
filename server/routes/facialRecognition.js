@@ -146,7 +146,7 @@ router.post('/evaluate', verifyToken, requireRole('FM'), async (req, res) => {
 // Scanner's job via /api/attendance/scan. Deduplicated server-side.
 router.post('/access-event', allowFMOrEdgeService, async (req, res) => {
   try {
-    const { userId, cameraLocation } = req.body;
+    const { userId, cameraLocation, cycleId } = req.body;
     if (userId == null || !Number.isInteger(Number(userId))) {
       return res.status(400).json({ error: 'Missing required parameter: userId' });
     }
@@ -164,11 +164,20 @@ router.post('/access-event', allowFMOrEdgeService, async (req, res) => {
       return res.status(403).json({ error: 'Account suspended. Access event not recorded as granted.' });
     }
 
-    // Same dedup namespace as the attendance scan, so a person passing both the
-    // gantry and the turnstile within the cooldown yields ONE safe log, not two.
-    let logged = false;
-    if (shouldWriteLog(`granted:${user.id}:${location}`)) {
-      logged = await createSecurityLog({
+    // A stable cycle id makes retries from ONE completed liveness/recognition
+    // cycle idempotent without suppressing a later completed cycle for the same
+    // person. Legacy/edge callers without a cycle id retain the time cooldown,
+    // so detector-frame spam is still blocked.
+    const cycleIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (cycleId != null && !cycleIdPattern.test(String(cycleId))) {
+      return res.status(400).json({ error: 'cycleId must be a valid UUID.' });
+    }
+    const dedupKey = cycleId
+      ? `granted-cycle:${user.id}:${location}:${cycleId}`
+      : `granted:${user.id}:${location}`;
+    let record = null;
+    if (shouldWriteLog(dedupKey)) {
+      record = await createSecurityLogRecord({
         type: 'Gantry Access',
         desc: `Identity & liveness verified: ${user.name} (${user.role}) at ${location}.`,
         severity: 'safe',
@@ -180,10 +189,15 @@ router.post('/access-event', allowFMOrEdgeService, async (req, res) => {
       });
     }
 
+    const persistedLog = record
+      ? (typeof record.toJSON === 'function' ? record.toJSON() : record)
+      : null;
+
     // Safe fields only - never the biometric template.
     return res.status(200).json({
       status: 'SUCCESS',
-      logged,
+      logged: Boolean(record),
+      log: persistedLog,
       worker: user.name,
       role: user.role
     });
