@@ -98,6 +98,40 @@ describe("POST /api/facial-recognition/access-event", () => {
     expect(mockSecurityLog.create).toHaveBeenCalledTimes(1);
   });
 
+  test("two completed cycles for the same person persist as distinct events", async () => {
+    primeDb({ 25: activeUser });
+    mockSecurityLog.create.mockImplementation(async (values) => ({ ...values, createdAt: new Date().toISOString() }));
+    const cycleIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+    ];
+
+    const responses = [];
+    for (const cycleId of cycleIds) {
+      responses.push(await request(app)
+        .post("/api/facial-recognition/access-event")
+        .set("Authorization", `Bearer ${fmToken}`)
+        .send({ userId: 25, cameraLocation: "Biometric Gantry", cycleId }));
+    }
+
+    expect(mockSecurityLog.create).toHaveBeenCalledTimes(2);
+    const persistedIds = mockSecurityLog.create.mock.calls.map(([values]) => values.id);
+    expect(new Set(persistedIds).size).toBe(2);
+    expect(responses.every((res) => res.body.logged === true && res.body.log.id)).toBe(true);
+  });
+
+  test("retrying the same completed cycle is idempotent", async () => {
+    primeDb({ 25: activeUser });
+    const cycleId = "33333333-3333-4333-8333-333333333333";
+    for (let i = 0; i < 3; i += 1) {
+      await request(app)
+        .post("/api/facial-recognition/access-event")
+        .set("Authorization", `Bearer ${fmToken}`)
+        .send({ userId: 25, cameraLocation: "Biometric Gantry", cycleId });
+    }
+    expect(mockSecurityLog.create).toHaveBeenCalledTimes(1);
+  });
+
   test("suspended user → 403 and no safe log", async () => {
     primeDb({ 25: { ...activeUser, isActive: false } });
     const res = await request(app)

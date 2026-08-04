@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
@@ -8,7 +8,9 @@ import ImageBasedEvaluation from '../components/ImageBasedEvaluation';
 import useEvaluationParticipants from '../hooks/useEvaluationParticipants';
 import '../css/Dashboard.css';
 import '../css/FacialEvaluation.css';
+import '../css/EvaluationRecorderModal.css';
 import { API_BASE_URL } from '../constants/api';
+import { formatSingaporeDateTime } from '../constants/datetime';
 import { validateImageFile, createTemporaryObjectUrl, revokeTemporaryObjectUrl } from '../utils/mediaPreview';
 import { CAMERA_SOURCES, CAMERA_STATUS_MESSAGES, isPiCameraReachable, fetchPiSnapshotBitmap } from '../constants/piCamera';
 import { drawBitmapToCanvasAndClose } from '../utils/cameraSource';
@@ -40,6 +42,9 @@ import {
 const formatPct = (v) => `${(v * 100).toFixed(1)}%`;
 const nowIso = () => new Date().toISOString();
 const createSimParticipantId = () => `SIM-${Date.now().toString(36)}`;
+const formatEvaluationTime = (value) => formatSingaporeDateTime(value, 'Not recorded');
+const visibleEvaluationLabel = (record, field) =>
+  record.detectionOutcome === DETECTION_OUTCOMES.NO_FACE ? NO_FACE : record[field] || '-';
 
 const TABS = ['overview', 'live', 'records', 'sim'];
 const ORIENTATIONS = ['Front', 'Left Angle', 'Right Angle'];
@@ -148,6 +153,17 @@ const FacialEvaluation = () => {
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
   const [syncError, setSyncError] = useState('');
+  const syncCancelRef = useRef(null);
+
+  useEffect(() => {
+    if (!syncConfirmOpen) return undefined;
+    syncCancelRef.current?.focus();
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape' && !syncing) setSyncConfirmOpen(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [syncConfirmOpen, syncing]);
 
   const runParticipantSync = async () => {
     if (syncing) return;
@@ -548,9 +564,9 @@ const FacialEvaluation = () => {
     <div className="dashboard-layout">
       <Sidebar />
       <main className="dashboard-main eval-main">
-        <header className="dashboard-header"><div className="header-titles"><h1>Facial Recognition Evaluation</h1><p>Measure recognition accuracy using evaluator-confirmed ground-truth samples. FlowGuard proof-of-concept evaluation results — not certified biometric accuracy.</p></div><button className="eval-danger-btn" onClick={() => setClearDialogOpen(true)}>Clear Local Evaluation Records</button></header>
+        <header className="dashboard-header"><div className="header-titles"><h1>Facial Recognition Evaluation</h1><p>Measure recognition accuracy using evaluator-confirmed ground-truth samples. FlowGuard proof-of-concept evaluation results — not certified biometric accuracy.</p></div></header>
 
-        {syncConfirmOpen && <div className="eval-recorder-overlay" role="dialog" aria-modal="true" aria-label="Sync Participants"><div className="eval-recorder-modal"><h3>Sync Participants</h3><p>This assigns the next stable P-label to every database user that does not have one yet, regardless of role, enrolment or suspension. Existing labels are never changed or renumbered.</p><div className="eval-recorder-actions"><button onClick={() => setSyncConfirmOpen(false)} disabled={syncing}>Cancel</button><button className="eval-primary-btn" disabled={syncing} onClick={runParticipantSync}>{syncing ? 'Syncing…' : 'Confirm Sync'}</button></div></div></div>}
+        {syncConfirmOpen && <div className="eval-recorder-overlay" role="dialog" aria-modal="true" aria-label="Sync Participants" onClick={() => { if (!syncing) setSyncConfirmOpen(false); }}><div className="eval-recorder-modal" onClick={(event) => event.stopPropagation()}><h3>Sync Participants</h3><p>This assigns the next stable P-label to every database user that does not have one yet, regardless of role, enrolment or suspension. Existing labels are never changed or renumbered.</p><div className="eval-recorder-actions"><button ref={syncCancelRef} className="eval-secondary-btn" onClick={() => setSyncConfirmOpen(false)} disabled={syncing}>Cancel</button><button className="eval-primary-btn" disabled={syncing} onClick={runParticipantSync}>{syncing ? 'Syncing…' : 'Confirm Sync'}</button></div></div></div>}
 
         {clearDialogOpen && <div className="eval-recorder-overlay" role="dialog" aria-modal="true" aria-label="Clear Local Evaluation Records"><div className="eval-recorder-modal"><h3>Clear Local Evaluation Records</h3>
           <p>Identity evaluation records are stored locally in this browser only. Clearing this local evaluation metadata does not remove or modify:</p>
@@ -563,11 +579,16 @@ const FacialEvaluation = () => {
             <li>Bookings</li>
           </ul>
           <p>Access-decision records are cleared only when you separately select the option below. These records never contain uploaded images, base64 data or embeddings.</p>
-          <label><input type="checkbox" checked={clearAccessToo} onChange={(event) => setClearAccessToo(event.target.checked)} /> Also clear local access evaluation records</label><div className="eval-recorder-actions"><button onClick={() => setClearDialogOpen(false)}>Cancel</button><button className="eval-danger-btn" onClick={() => { saveRecords([]); setRecords([]); if (clearAccessToo) saveAccessEvaluationRecords([]); notifyEvaluationRecordsUpdated(); setClearDialogOpen(false); }}>Confirm Clear</button></div></div></div>}        <div className="eval-tabs" role="tablist">
+          <label><input type="checkbox" checked={clearAccessToo} onChange={(event) => setClearAccessToo(event.target.checked)} /> Also clear local access evaluation records</label><div className="eval-recorder-actions"><button className="eval-secondary-btn" onClick={() => setClearDialogOpen(false)}>Cancel</button><button className="eval-danger-btn" onClick={() => { saveRecords([]); setRecords([]); if (clearAccessToo) saveAccessEvaluationRecords([]); notifyEvaluationRecordsUpdated(); setClearDialogOpen(false); }}>Confirm Clear</button></div></div></div>}
+
+        <div className="eval-action-row">
+          <div className="eval-tabs" role="tablist">
           <button role="tab" aria-selected={activeTab === 'overview'} className={`eval-tab ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}>Overview</button>
           <button role="tab" aria-selected={activeTab === 'live'} className={`eval-tab ${activeTab === 'live' ? 'active' : ''}`} onClick={() => setActiveTab('live')}>Run Live Evaluation</button>
           <button role="tab" aria-selected={activeTab === 'records'} className={`eval-tab ${activeTab === 'records' ? 'active' : ''}`} onClick={() => setActiveTab('records')}>Evaluation Records</button>
           <button role="tab" aria-selected={activeTab === 'sim'} className={`eval-tab ${activeTab === 'sim' ? 'active' : ''}`} onClick={() => setActiveTab('sim')}>Simulated Workflow</button>
+          </div>
+          <button className="eval-danger-btn eval-clear-action" onClick={() => setClearDialogOpen(true)}>Clear Local Evaluation Records</button>
         </div>
 
         {activeTab === 'overview' && <>
@@ -698,7 +719,54 @@ const FacialEvaluation = () => {
 
         {activeTab === 'records' && <section className="eval-card"><h2>Evaluation Records</h2><p className="eval-mode-note">ANONYMISED RECORDS — Images and biometric templates are not stored.</p><form className="eval-live-form" onSubmit={addLiveRecord} aria-label="Record live result"><h3>Manual live result fallback</h3><div className="eval-form-row"><label>Actual<select value={liveForm.actualLabel} onChange={(e) => setLiveForm({ ...liveForm, actualLabel: e.target.value })}>{labelOptions.map((l) => <option key={l}>{l}</option>)}</select></label><label>Predicted<select value={liveForm.predictedLabel} onChange={(e) => setLiveForm({ ...liveForm, predictedLabel: e.target.value })}>{labelOptions.map((l) => <option key={l}>{l}</option>)}</select></label><label>Confidence<input type="number" step="0.01" min="0" max="1" value={liveForm.confidence} onChange={(e) => setLiveForm({ ...liveForm, confidence: e.target.value })} /></label><label>Condition<select value={liveForm.condition} onChange={(e) => setLiveForm({ ...liveForm, condition: e.target.value })}>{CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></label><label>Origin<select value={liveForm.origin} onChange={(e) => setLiveForm({ ...liveForm, origin: e.target.value })}>{ORIGINS.map((o) => <option key={o}>{o}</option>)}</select></label><label>Latency (ms)<input type="number" min="0" value={liveForm.latencyMs} onChange={(e) => setLiveForm({ ...liveForm, latencyMs: e.target.value })} /></label><label className="eval-notes-field">Notes<input value={liveForm.notes} onChange={(e) => setLiveForm({ ...liveForm, notes: e.target.value })} /></label><button type="submit" className="eval-primary-btn">Add Live Result</button></div></form>
           <div className="eval-filter-bar"><label>Source<select aria-label="Filter by source" value={filters.source} onChange={(e) => setFilters({ ...filters, source: e.target.value })}>{['All', ...SOURCES].map((s) => <option key={s}>{s}</option>)}</select></label><label>Condition<select aria-label="Filter by condition" value={filters.condition} onChange={(e) => setFilters({ ...filters, condition: e.target.value })}>{['All', ...CONDITIONS].map((c) => <option key={c}>{c}</option>)}</select></label><label>Origin<select aria-label="Filter by origin" value={filters.origin} onChange={(e) => setFilters({ ...filters, origin: e.target.value })}>{['All', ...ORIGINS].map((o) => <option key={o}>{o}</option>)}</select></label><label>Date<input type="date" aria-label="Filter by date" value={filters.date} onChange={(e) => setFilters({ ...filters, date: e.target.value })} /></label><button className="eval-secondary-btn" onClick={exportCsv}>Export CSV</button><button className="eval-danger-btn" onClick={clearSimulated}>Clear Simulated Results</button></div>
-          <div className="eval-table-wrap"><table className="eval-table"><thead><tr><th>Actual</th><th>Predicted</th><th>Confidence</th><th>Condition</th><th>Latency</th><th>Source</th><th>Origin</th><th>Notes</th><th>Outcome</th><th>Time</th><th>Actions</th></tr></thead><tbody>{filtered.length === 0 ? <tr><td colSpan={11} className="eval-muted">No evaluation records match the current filters.</td></tr> : filtered.map((r) => <tr key={r.id} data-testid={`eval-row-${r.id}`}>{editingId === r.id ? <><td><select aria-label="Edit actual label" value={editDraft.actualLabel} onChange={(e) => setEditDraft({ ...editDraft, actualLabel: e.target.value })}>{IDENTITY_LABELS.map((l) => <option key={l}>{l}</option>)}</select></td><td><select aria-label="Edit predicted label" value={editDraft.predictedLabel} onChange={(e) => setEditDraft({ ...editDraft, predictedLabel: e.target.value })}>{IDENTITY_LABELS.map((l) => <option key={l}>{l}</option>)}</select></td><td>{r.confidence ?? '-'}</td><td><select aria-label="Edit condition" value={editDraft.condition} onChange={(e) => setEditDraft({ ...editDraft, condition: e.target.value })}>{CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></td><td>{r.latencyMs ?? '-'}</td><td>{r.source}</td><td><select aria-label="Edit origin" value={editDraft.origin} onChange={(e) => setEditDraft({ ...editDraft, origin: e.target.value })}>{ORIGINS.map((o) => <option key={o}>{o}</option>)}</select></td><td><input aria-label="Edit notes" value={editDraft.notes} onChange={(e) => setEditDraft({ ...editDraft, notes: e.target.value })} /></td><td>{r.detectionOutcome || '-'}</td><td>{(r.timestamp || '').slice(0, 16).replace('T', ' ')}</td><td><button className="eval-primary-btn" onClick={() => saveEdit(r.id)}>Save</button><button className="eval-secondary-btn" onClick={() => setEditingId(null)}>Cancel</button></td></> : <><td>{r.actualLabel || '-'}</td><td>{r.predictedLabel || '-'}</td><td>{r.confidence == null ? '-' : Number(r.confidence).toFixed(2)}</td><td>{r.condition}</td><td>{r.latencyMs == null ? '-' : `${r.latencyMs} ms`}</td><td><span className={`eval-source-tag ${r.source.toLowerCase()}`}>{r.source}</span></td><td>{r.origin}</td><td className="eval-notes-cell">{r.notes}</td><td>{r.detectionOutcome || '-'}</td><td>{(r.timestamp || '').slice(0, 16).replace('T', ' ')}</td><td><button className="eval-secondary-btn" onClick={() => startEdit(r)}>Edit</button><button className="eval-danger-btn" onClick={() => deleteRecord(r.id)}>Delete</button></td></>}</tr>)}</tbody></table></div></section>}
+          <div className="eval-table-wrap">
+            <table className="eval-table eval-records-table">
+              <thead>
+                <tr><th>Actual</th><th>Predicted</th><th>Confidence</th><th>Condition</th><th>Latency</th><th>Source</th><th>Origin</th><th>Time</th><th>Actions</th></tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 ? (
+                  <tr><td colSpan={9} className="eval-muted">No evaluation records match the current filters.</td></tr>
+                ) : filtered.map((r) => (
+                  <Fragment key={r.id}>
+                    <tr data-testid={`eval-row-${r.id}`}>
+                      {editingId === r.id ? (
+                        <>
+                          <td><select aria-label="Edit actual label" value={editDraft.actualLabel} onChange={(e) => setEditDraft({ ...editDraft, actualLabel: e.target.value })}>{IDENTITY_LABELS.map((l) => <option key={l}>{l}</option>)}</select></td>
+                          <td><select aria-label="Edit predicted label" value={editDraft.predictedLabel} onChange={(e) => setEditDraft({ ...editDraft, predictedLabel: e.target.value })}>{IDENTITY_LABELS.map((l) => <option key={l}>{l}</option>)}</select></td>
+                          <td>{r.confidence ?? '-'}</td>
+                          <td><select aria-label="Edit condition" value={editDraft.condition} onChange={(e) => setEditDraft({ ...editDraft, condition: e.target.value })}>{CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></td>
+                          <td>{r.latencyMs ?? '-'}</td>
+                          <td>{r.source}</td>
+                          <td><select aria-label="Edit origin" value={editDraft.origin} onChange={(e) => setEditDraft({ ...editDraft, origin: e.target.value })}>{ORIGINS.map((o) => <option key={o}>{o}</option>)}</select></td>
+                          <td>{formatEvaluationTime(r.timestamp)}</td>
+                          <td className="eval-record-actions-cell"><div className="eval-record-action-stack"><button className="eval-primary-btn" onClick={() => saveEdit(r.id)}>Save</button><button className="eval-secondary-btn" onClick={() => setEditingId(null)}>Cancel</button></div></td>
+                        </>
+                      ) : (
+                        <>
+                          <td>{visibleEvaluationLabel(r, 'actualLabel')}</td>
+                          <td>{visibleEvaluationLabel(r, 'predictedLabel')}</td>
+                          <td>{r.confidence == null ? '-' : Number(r.confidence).toFixed(2)}</td>
+                          <td>{r.condition}</td>
+                          <td>{r.latencyMs == null ? '-' : `${r.latencyMs} ms`}</td>
+                          <td><span className={`eval-source-tag ${r.source.toLowerCase()}`}>{r.source}</span></td>
+                          <td>{r.origin}</td>
+                          <td>{formatEvaluationTime(r.timestamp)}</td>
+                          <td className="eval-record-actions-cell"><div className="eval-record-action-stack"><button className="eval-secondary-btn" onClick={() => startEdit(r)}>Edit</button><button className="eval-danger-btn" onClick={() => deleteRecord(r.id)}>Delete</button></div></td>
+                        </>
+                      )}
+                    </tr>
+                    {editingId === r.id && (
+                      <tr className="eval-record-edit-details">
+                        <td colSpan={9}><label>Notes<input aria-label="Edit notes" value={editDraft.notes} onChange={(e) => setEditDraft({ ...editDraft, notes: e.target.value })} /></label></td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>}
 
       </main>
     </div>

@@ -2,7 +2,9 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 .attendance-actions select,
@@ -13,7 +15,13 @@
   border-radius: 8px;
   padding: 10px 12px;
   font: inherit;
+  height: 42px;
+  min-height: 42px;
+  box-sizing: border-box;
 }
+
+.attendance-actions select { min-width: 150px; }
+.attendance-actions input[type="date"] { min-width: 154px; }
 
 .attendance-error,
 .attendance-aggregate-note {
@@ -40,24 +48,68 @@
   color: #94a3b8;
   line-height: 1.5;
 }
+
+.attendance-roster {
+  margin-top: 18px;
+  background: #1e2539;
+  border: 1px solid #2d364f;
+  border-radius: 12px;
+  padding: 20px;
+  min-width: 0;
+}
+
+.attendance-roster-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.attendance-roster-heading h2,
+.attendance-roster-heading p { margin: 0; }
+.attendance-roster-heading h2 { color: #f8fafc; font-size: 1.1rem; }
+.attendance-roster-heading p { color: #94a3b8; font-size: 0.84rem; margin-top: 5px; }
+
+.attendance-roster-count {
+  flex: 0 0 auto;
+  border: 1px solid rgba(59, 130, 246, 0.45);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(59, 130, 246, 0.12);
+  color: #bfdbfe;
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.attendance-roster-table-wrap { overflow-x: auto; }
+.attendance-roster-table { min-width: 760px; }
+.attendance-activity-table-wrap { overflow-x: auto; }
+.attendance-activity-table { min-width: 860px; }
 /* --- Layout Header & Actions --- */
 .attendance-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 24px;
 }
 
 .launch-terminal-btn {
+  height: 42px;
+  min-height: 42px;
   padding: 10px 16px;
   background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
   color: #ffffff;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
   transition: transform 0.15s ease, opacity 0.15s ease;
 }
+
+.attendance-refresh-btn { background: #334155; }
 
 .launch-terminal-btn:hover {
   opacity: 0.95;
@@ -132,7 +184,25 @@
   color: #94a3b8;
 }
 
+@media (max-width: 1200px) {
+  .attendance-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+
+  .attendance-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
+
 @media (max-width: 768px) {
+
+  .attendance-roster { padding: 16px; }
+  .attendance-roster-heading { flex-direction: column; }
+  .attendance-roster-table { min-width: 0; }
+  .attendance-activity-table { min-width: 0; }
 
   /* 1. Stack the title above the toolbar, but keep the toolbar itself on ONE
      row: date filter + Refresh + Launch Gate Terminal share a wrapping flex
@@ -155,6 +225,7 @@
   .attendance-actions select {
     flex: 1 1 120px;
     min-width: 120px;
+    height: 44px;
     min-height: 44px;
     box-sizing: border-box;
   }
@@ -162,12 +233,14 @@
   .attendance-actions input[type="date"] {
     flex: 1 1 150px;
     min-width: 150px;
+    height: 44px;
     min-height: 44px;
     box-sizing: border-box;
   }
 
   .launch-terminal-btn {
     flex: 1 1 auto;
+    height: 44px;
     min-height: 44px;
     padding: 10px 14px;
     text-align: center;

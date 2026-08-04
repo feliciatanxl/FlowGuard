@@ -185,7 +185,6 @@ describe("Evaluation records CRUD", () => {
     openRecordsTab();
     addLiveRecord();
 
-    expect(screen.getByText("low light rejection")).toBeInTheDocument();
     const stored = JSON.parse(localStorage.getItem(EVAL_STORAGE_KEY));
     expect(stored).toHaveLength(1);
     expect(stored[0]).toMatchObject({
@@ -198,11 +197,12 @@ describe("Evaluation records CRUD", () => {
     renderPage();
     openRecordsTab();
     addLiveRecord();
+    const [stored] = JSON.parse(localStorage.getItem(EVAL_STORAGE_KEY));
     cleanup();
 
     renderPage();
     openRecordsTab();
-    expect(screen.getByText("low light rejection")).toBeInTheDocument();
+    expect(screen.getByTestId(`eval-row-${stored.id}`)).toBeInTheDocument();
   });
 
   test("Update: actual/predicted/condition/notes are editable", () => {
@@ -217,9 +217,36 @@ describe("Evaluation records CRUD", () => {
     fireEvent.change(screen.getByLabelText("Edit notes"), { target: { value: "corrected label" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    expect(screen.getByText("corrected label")).toBeInTheDocument();
     const stored = JSON.parse(localStorage.getItem(EVAL_STORAGE_KEY));
-    expect(stored[0]).toMatchObject({ actualLabel: "P03", predictedLabel: "P03", condition: "Low Lighting" });
+    expect(stored[0]).toMatchObject({ actualLabel: "P03", predictedLabel: "P03", condition: "Low Lighting", notes: "corrected label" });
+  });
+
+  test("default table omits Notes and Outcome while retaining the compact action stack", () => {
+    renderPage();
+    openRecordsTab();
+    addLiveRecord();
+
+    const table = document.querySelector('.eval-records-table');
+    const headings = within(table).getAllByRole('columnheader').map((header) => header.textContent);
+    expect(headings).toEqual(['Actual', 'Predicted', 'Confidence', 'Condition', 'Latency', 'Source', 'Origin', 'Time', 'Actions']);
+    expect(headings).not.toContain('Notes');
+    expect(headings).not.toContain('Outcome');
+
+    const stack = within(table).getByRole('button', { name: 'Edit' }).closest('.eval-record-action-stack');
+    expect(within(stack).getAllByRole('button').map((button) => button.textContent)).toEqual(['Edit', 'Delete']);
+  });
+
+  test("renders stored UTC instants in explicit Singapore time", () => {
+    localStorage.setItem(EVAL_STORAGE_KEY, JSON.stringify([{
+      id: 'SG-TIME', actualLabel: 'P01', predictedLabel: 'P01', confidence: 0.9,
+      condition: 'Front', latencyMs: 100, source: 'Live', origin: 'Manual',
+      notes: 'retained in storage', timestamp: '2026-08-04T02:12:00.000Z',
+    }]));
+    renderPage();
+    openRecordsTab();
+
+    expect(screen.getByText('04 Aug 2026, 10:12 AM')).toBeInTheDocument();
+    expect(screen.queryByText('2026-08-04 02:12')).toBeNull();
   });
 
   test("Delete: removes one record", () => {
@@ -468,6 +495,15 @@ describe("Clear Local Evaluation Records dialog", () => {
     expect(dialog.getByText(/never contain uploaded images, base64 data or embeddings/)).toBeInTheDocument();
   });
 
+  test("destructive clear action shares the responsive navigation action row", () => {
+    renderPage();
+    const clearButton = screen.getByRole("button", { name: "Clear Local Evaluation Records" });
+    const actionRow = clearButton.closest(".eval-action-row");
+    expect(actionRow).toBeInTheDocument();
+    expect(within(actionRow).getAllByRole("tab")).toHaveLength(4);
+    expect(clearButton.closest("header")).toBeNull();
+  });
+
   test("confirming clears only browser-local records and calls no operational API", () => {
     localStorage.setItem(EVAL_STORAGE_KEY, JSON.stringify([
       { id: "C-1", actualLabel: "P01", predictedLabel: "P01", condition: "Front", source: "Live", origin: "Manual", timestamp: "2026-07-10T02:00:00.000Z" },
@@ -491,7 +527,9 @@ describe("Clear Local Evaluation Records dialog", () => {
     ]));
     renderPage();
     const dialog = openDialog();
-    fireEvent.click(dialog.getByRole("button", { name: "Cancel" }));
+    const cancel = dialog.getByRole("button", { name: "Cancel" });
+    expect(cancel).toHaveClass('eval-secondary-btn');
+    fireEvent.click(cancel);
     expect(JSON.parse(localStorage.getItem(EVAL_STORAGE_KEY))).toHaveLength(1);
   });
 });

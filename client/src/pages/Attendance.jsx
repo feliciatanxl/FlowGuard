@@ -6,6 +6,7 @@ import '../css/Dashboard.css';
 import '../css/Management.css';
 import '../css/Attendance.css';
 import { API_BASE_URL } from '../constants/api';
+import { formatSingaporeDate, formatSingaporeDateTime } from '../constants/datetime';
 
 const FILTERS = [
   { value: 'today', label: 'Today' },
@@ -14,9 +15,7 @@ const FILTERS = [
   { value: 'custom', label: 'Custom Date' }
 ];
 
-const formatDateTime = (value) => value
-  ? new Intl.DateTimeFormat('en-SG', { timeZone: 'Asia/Singapore', dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
-  : 'Not recorded';
+const formatDateTime = (value) => formatSingaporeDateTime(value, 'Not recorded');
 
 const formatStatus = (status) => {
   if (status === 'ON_TIME') return 'On Time';
@@ -41,7 +40,7 @@ const Attendance = () => {
   const pageTitle = isFM ? 'Workforce Attendance Management'
     : isTenant ? 'Unit Staff Attendance'
     : 'My Attendance';
-  const pageSubtitle = isFM ? 'Aggregate facility occupancy without individual lateness details'
+  const pageSubtitle = isFM ? 'Current occupancy and facility-wide attendance activity without lateness analytics'
     : isTenant ? 'Attendance summaries for your directly linked Staff'
     : 'View your own check-in status and attendance history';
 
@@ -99,6 +98,7 @@ const Attendance = () => {
   }, [attendance, isFM, isTenant]);
 
   const records = attendance?.records || [];
+  const currentOccupancy = attendance?.currentOccupancy || [];
 
   return (
     <div className="dashboard-layout">
@@ -117,9 +117,9 @@ const Attendance = () => {
             {filter === 'custom' && (
               <input type="date" value={customDate} onChange={(e) => setCustomDate(e.target.value)} aria-label="Custom attendance date" />
             )}
-            <button onClick={fetchAttendanceData} className="launch-terminal-btn" style={{ background: '#334155' }}>Refresh</button>
+            <button type="button" onClick={() => fetchAttendanceData()} className="launch-terminal-btn attendance-refresh-btn">Refresh</button>
             {userRole === 'FM' && (
-              <button onClick={() => navigate('/gate-scanner')} className="launch-terminal-btn">Launch Gate Terminal</button>
+              <button type="button" onClick={() => navigate('/gate-scanner')} className="launch-terminal-btn">Launch Gate Terminal</button>
             )}
           </div>
         </header>
@@ -136,10 +136,89 @@ const Attendance = () => {
         {error && <div className="attendance-error" role="alert">{error}</div>}
 
         {isFM ? (
-          <section className="attendance-aggregate-note">
-            <h3>Aggregate Operational View</h3>
-            <p>Facilities Managers receive occupancy totals only. Individual late-arrival performance and personal attendance history are excluded by the server.</p>
-          </section>
+          <>
+            <section className="attendance-aggregate-note">
+              <h3>Facility-wide operational view</h3>
+              <p>Current occupancy and selected-window daily summaries support emergency accountability. Individual lateness analytics and raw movement history remain excluded.</p>
+            </section>
+            <section className="attendance-roster" aria-labelledby="current-occupancy-heading">
+              <div className="attendance-roster-heading">
+                <div>
+                  <h2 id="current-occupancy-heading">Currently On Site</h2>
+                  <p>Facilities Manager, Tenant, and Staff occupants from authoritative attendance state.</p>
+                </div>
+                <span className="attendance-roster-count" aria-label={`${currentOccupancy.length} people currently on site`}>
+                  {currentOccupancy.length} On Site
+                </span>
+              </div>
+              <div className="table-container attendance-roster-table-wrap">
+                <table className="management-table attendance-roster-table">
+                  <thead>
+                    <tr>
+                      <th>PERSON</th>
+                      <th>ROLE</th>
+                      <th>CURRENT STATUS</th>
+                      <th>CHECK-IN TIME</th>
+                      <th>LAST ACCESS EVENT</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading ? (
+                      <tr><td colSpan={5} className="table-notice-state">Loading current occupancy...</td></tr>
+                    ) : currentOccupancy.length > 0 ? currentOccupancy.map((occupant) => (
+                      <tr key={occupant.userId}>
+                        <td data-label="Person" className="cell-worker-name">{occupant.person}</td>
+                        <td data-label="Role"><span className="cell-role-badge">{occupant.role}</span></td>
+                        <td data-label="Current Status"><span className="presence-tag on-site">On Site</span></td>
+                        <td data-label="Check-In Time">{formatDateTime(occupant.checkInTime)}</td>
+                        <td data-label="Last Access Event">{formatDateTime(occupant.lastAccessEventTime)}</td>
+                      </tr>
+                    )) : (
+                      <tr><td colSpan={5} className="table-notice-state">No one is currently checked in.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+            <section className="attendance-roster attendance-activity" aria-labelledby="attendance-activity-heading">
+              <div className="attendance-roster-heading">
+                <div>
+                  <h2 id="attendance-activity-heading">Attendance Activity</h2>
+                  <p>First check-in, latest check-out, and current daily status for the selected date range.</p>
+                </div>
+              </div>
+              <div className="table-container attendance-activity-table-wrap">
+                <table className="management-table attendance-activity-table">
+                  <thead>
+                    <tr>
+                      <th>PERSON</th>
+                      <th>ROLE</th>
+                      <th>DATE</th>
+                      <th>FIRST CHECK-IN</th>
+                      <th>LATEST CHECK-OUT</th>
+                      <th>CURRENT STATUS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading ? (
+                      <tr><td colSpan={6} className="table-notice-state">Loading facility attendance activity...</td></tr>
+                    ) : records.length > 0 ? records.map((record) => (
+                      <tr key={`${record.userId}-${record.date}`}>
+                        <td data-label="Person" className="cell-worker-name">{record.user?.name || 'Unknown User'}</td>
+                        <td data-label="Role"><span className="cell-role-badge">{record.user?.role || 'Unknown'}</span></td>
+                        <td data-label="Date">{formatSingaporeDate(record.date, 'Not recorded')}</td>
+                        <td data-label="First Check-In">{formatDateTime(record.firstCheckIn)}</td>
+                        <td data-label="Latest Check-Out">{formatDateTime(record.latestCheckOut)}</td>
+                        <td data-label="Current Status"><span className={`presence-tag ${record.currentStatus === 'IN' ? 'on-site' : 'off-site'}`}>{record.currentStatus === 'IN' ? 'On Site' : 'Off Site'}</span></td>
+                      </tr>
+                    )) : (
+                      <tr><td colSpan={6} className="table-notice-state">No facility attendance activity was recorded for the selected date range.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
         ) : (
           <div className="table-container">
             <table className="management-table">
@@ -159,7 +238,7 @@ const Attendance = () => {
                 ) : records.length > 0 ? records.map((record) => (
                   <tr key={`${record.userId}-${record.date}`}>
                     {!isStaff && <td className="cell-worker-name" data-label="Employee Name">{record.user?.name || 'Unknown Staff'}</td>}
-                    <td className="cell-timestamp" data-label="Date">{record.date}</td>
+                    <td className="cell-timestamp" data-label="Date">{formatSingaporeDate(record.date, 'Not recorded')}</td>
                     <td data-label="First Check-In">{formatDateTime(record.firstCheckIn)}</td>
                     <td data-label="Latest Check-Out">{formatDateTime(record.latestCheckOut)}</td>
                     <td data-label="Current Status"><span className={`presence-tag ${record.currentStatus === 'IN' ? 'on-site' : 'off-site'}`}>{record.currentStatus === 'IN' ? 'ON SITE' : 'OFF SITE'}</span></td>

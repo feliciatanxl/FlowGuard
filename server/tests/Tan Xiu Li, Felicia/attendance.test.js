@@ -15,6 +15,7 @@ app.use('/api/attendance', attendanceRouter);
 
 const tokenFor = (role, id) => jwt.sign({ id, role }, process.env.APP_SECRET);
 const staff = (id, managerId, name = `Staff ${id}`) => ({ id, name, role: 'Staff', managerId });
+const person = (id, role, name) => ({ id, name, role, managerId: null });
 const rec = (user, type, timestamp) => ({ userId: user.id, type, timestamp, User: user });
 
 describe('GET /api/attendance/logs - Phase 2 role-aware summaries', () => {
@@ -25,16 +26,82 @@ describe('GET /api/attendance/logs - Phase 2 role-aware summaries', () => {
     expect(res.status).toBe(401);
   });
 
-  test('FM receives aggregates without individual late details', async () => {
+  test('FM receives current occupancy and facility activity without lateness details', async () => {
     mockAttendance.findAll.mockResolvedValue([
-      rec(staff(1, 50, 'Late One'), 'IN', '2026-07-10T01:30:00.000Z')
+      rec(staff(1, 50, 'On Site One'), 'IN', '2026-07-10T01:30:00.000Z')
     ]);
     const res = await request(app).get('/api/attendance/logs?filter=today&now=2026-07-10T03:00:00.000Z').set('Authorization', `Bearer ${tokenFor('FM', 1)}`);
     expect(res.status).toBe(200);
     expect(res.body.role).toBe('FM');
     expect(res.body.summary).toMatchObject({ peopleOnSite: 1, checkedInToday: 1, checkedOutToday: 0 });
-    expect(res.body.records).toBeUndefined();
-    expect(JSON.stringify(res.body)).not.toMatch(/Late One|LATE|lateToday/i);
+    expect(res.body.records).toEqual([expect.objectContaining({
+      user: expect.objectContaining({ name: 'On Site One', role: 'Staff' }),
+      firstCheckIn: '2026-07-10T01:30:00.000Z',
+      latestCheckOut: null,
+      currentStatus: 'IN'
+    })]);
+    expect(res.body.currentOccupancy).toEqual([expect.objectContaining({ person: 'On Site One', role: 'Staff', currentStatus: 'IN' })]);
+    expect(JSON.stringify(res.body)).not.toMatch(/"punctuality"|"lateToday"|"LATE"/i);
+  });
+
+  test('FM roster includes all roles once, excludes checked-out users, and matches People On Site', async () => {
+    const fm = person(1, 'FM', 'Facilities Manager One');
+    const tenant = person(2, 'Tenant', 'Tenant One');
+    const linkedStaff = staff(3, 2, 'Staff One');
+    const checkedOut = staff(4, 2, 'Checked Out Staff');
+    mockAttendance.findAll.mockResolvedValue([
+      rec(fm, 'IN', '2026-07-10T00:10:00.000Z'),
+      rec(tenant, 'IN', '2026-07-10T00:20:00.000Z'),
+      rec(linkedStaff, 'IN', '2026-07-10T00:30:00.000Z'),
+      rec(linkedStaff, 'IN', '2026-07-10T00:31:00.000Z'),
+      rec(checkedOut, 'IN', '2026-07-10T00:40:00.000Z'),
+      rec(checkedOut, 'OUT', '2026-07-10T01:40:00.000Z')
+    ]);
+
+    const res = await request(app).get('/api/attendance/logs?filter=today&now=2026-07-10T03:00:00.000Z').set('Authorization', `Bearer ${tokenFor('FM', 1)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.currentOccupancy.map((row) => [row.person, row.role])).toEqual([
+      ['Facilities Manager One', 'FM'],
+      ['Staff One', 'Staff'],
+      ['Tenant One', 'Tenant']
+    ]);
+    expect(res.body.currentOccupancy).toHaveLength(3);
+    expect(res.body.summary.peopleOnSite).toBe(res.body.currentOccupancy.length);
+    expect(JSON.stringify(res.body.currentOccupancy)).not.toContain('Checked Out Staff');
+    expect(res.body.records).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        user: expect.objectContaining({ name: 'Checked Out Staff' }),
+        firstCheckIn: '2026-07-10T00:40:00.000Z',
+        latestCheckOut: '2026-07-10T01:40:00.000Z',
+        currentStatus: 'OUT'
+      })
+    ]));
+    expect(res.body.records.every((row) => row.punctuality === undefined)).toBe(true);
+  });
+
+  test('FM historical activity stays selected-window scoped while occupancy remains today scoped', async () => {
+    const historical = staff(20, 50, 'Historical Staff');
+    const current = person(21, 'Tenant', 'Current Tenant');
+    mockAttendance.findAll
+      .mockResolvedValueOnce([
+        rec(historical, 'IN', '2026-07-09T00:30:00.000Z'),
+        rec(historical, 'OUT', '2026-07-09T08:30:00.000Z')
+      ])
+      .mockResolvedValueOnce([
+        rec(current, 'IN', '2026-07-10T00:20:00.000Z')
+      ]);
+
+    const res = await request(app).get('/api/attendance/logs?filter=yesterday&now=2026-07-10T03:00:00.000Z').set('Authorization', `Bearer ${tokenFor('FM', 1)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.records).toEqual([expect.objectContaining({
+      user: expect.objectContaining({ name: 'Historical Staff' }),
+      latestCheckOut: '2026-07-09T08:30:00.000Z',
+      currentStatus: 'OUT'
+    })]);
+    expect(res.body.currentOccupancy).toEqual([expect.objectContaining({ person: 'Current Tenant' })]);
+    expect(mockAttendance.findAll).toHaveBeenCalledTimes(2);
   });
 
   test('Tenant receives only linked Staff and cards derive from same filtered summary set', async () => {
@@ -48,6 +115,7 @@ describe('GET /api/attendance/logs - Phase 2 role-aware summaries', () => {
     expect(res.status).toBe(200);
     expect(res.body.summary.lateToday).toBe(2);
     expect(res.body.records.filter((r) => r.punctuality === 'LATE')).toHaveLength(2);
+    expect(res.body.currentOccupancy).toBeUndefined();
     expect(mockAttendance.findAll.mock.calls[0][0].include[0].where).toMatchObject({ role: 'Staff', managerId: 50 });
   });
 
@@ -67,6 +135,7 @@ describe('GET /api/attendance/logs - Phase 2 role-aware summaries', () => {
     expect(res.status).toBe(200);
     expect(res.body.role).toBe('Staff');
     expect(res.body.records).toHaveLength(1);
+    expect(res.body.currentOccupancy).toBeUndefined();
     expect(mockAttendance.findAll.mock.calls[0][0].where).toMatchObject({ userId: 60 });
     expect(res.body.summary.punctuality).toBe('ON_TIME');
   });

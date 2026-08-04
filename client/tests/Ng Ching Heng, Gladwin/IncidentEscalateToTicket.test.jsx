@@ -1,9 +1,11 @@
 // Frontend test — "Escalate to Ticket" row action on the Incident Dashboard. Clicking
 // it opens a confirmation modal pre-filled with the incident's ID/location/source/
-// severity/description; confirming actually POSTs to /api/support/tickets (there is
-// no incidentId link on SupportTicket, so the incident's details are folded into the
-// ticket's title/description text instead — the same pattern the AI chat
-// auto-escalation flow uses for its session id).
+// severity/description. Confirming POSTs only { sourceIncidentId } to
+// /api/support/tickets — the server loads the incident itself and composes the
+// ticket's title/description (SupportTicket has no incidentId FK; it dedupes on a
+// stable title behind a Postgres advisory lock keyed on the incident id), so a
+// repeated escalation of the same incident reuses the existing ticket instead of
+// creating a second one.
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { vi, describe, test, expect, beforeEach } from 'vitest';
@@ -50,10 +52,11 @@ const openEscalateModal = async () => {
 
 beforeEach(() => {
   mockGet.mockReset(); mockPost.mockReset(); mockPatch.mockReset(); mockDelete.mockReset();
+  mockPost.mockResolvedValue({ data: { duplicate: false, ticket: { id: 'ticket-1' } } });
   localStorage.clear();
 });
 
-describe('Incident Dashboard — Escalate to Ticket modal', () => {
+describe('Incident Dashboard — Escalate to Support Ticket modal', () => {
   test('opens a confirmation modal pre-filled with ID, location, source, severity, and description', async () => {
     mount([incident()]);
     await openEscalateModal();
@@ -67,16 +70,24 @@ describe('Incident Dashboard — Escalate to Ticket modal', () => {
     expect(modal.textContent).toContain('Unrecognised individual near restricted freezer entrance.');
   });
 
+  test('is an accessible dialog', async () => {
+    mount([incident()]);
+    await openEscalateModal();
+    expect(screen.getByRole('dialog', { name: /Escalate incident to Support Tickets/i })).toBeTruthy();
+  });
+
   test('falls back to a placeholder when the incident has no notes', async () => {
     mount([incident({ notes: '' })]);
     await openEscalateModal();
     expect(screen.getByText('No description provided.')).toBeTruthy();
   });
 
-  test('no longer shows the "not yet connected" disclaimer now that submission is wired up', async () => {
+  test('no longer shows the old "not yet connected" disclaimer now that submission is wired up', async () => {
     mount([incident()]);
     await openEscalateModal();
     expect(screen.queryByText(/not yet connected/i)).toBeNull();
+    // Replaced with an accurate explanation of the real dedup behavior.
+    expect(screen.getByText(/reuses the existing ticket/i)).toBeTruthy();
   });
 
   test('Cancel closes the modal without any network call', async () => {
@@ -90,44 +101,38 @@ describe('Incident Dashboard — Escalate to Ticket modal', () => {
   });
 });
 
-describe('Incident Dashboard — Escalate to Ticket real submission', () => {
-  test('Confirm Escalation POSTs to /api/support/tickets with the incident folded into the ticket text', async () => {
-    mockPost.mockResolvedValue({ data: { message: 'Ticket created.', ticket: { id: 'abcdef12-3456-7890-abcd-ef1234567890' } } });
+describe('Incident Dashboard — Escalate to Support Ticket real submission', () => {
+  test('Confirm Escalation POSTs only sourceIncidentId — the server composes the ticket', async () => {
     mount([incident()]);
     await openEscalateModal();
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Escalation' }));
 
     await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
-    const [url, body, config] = mockPost.mock.calls[0];
-    expect(url).toBe('/api/support/tickets');
-    expect(body.issueTitle).toContain('42');
-    expect(body.issueTitle).toContain('Cold Store B');
-    expect(body.issueDescription).toContain('Cold Store B');
-    expect(body.issueDescription).toContain('Face ID');
-    expect(body.issueDescription).toContain('High');
-    expect(body.issueDescription).toContain('Unrecognised individual near restricted freezer entrance.');
-    expect(body.category).toBe('Security');
-    expect(body.priority).toBe('High'); // severity 'High' -> ticket priority 'High'
-    expect(config.headers).toEqual({ Authorization: 'Bearer t' });
+    expect(mockPost).toHaveBeenCalledWith(
+      '/api/support/tickets',
+      { sourceIncidentId: 42 },
+      expect.objectContaining({ headers: { Authorization: 'Bearer t' } })
+    );
+    expect(mockPatch).not.toHaveBeenCalled();
+    expect(mockDelete).not.toHaveBeenCalled();
 
-    // Modal closes and a success toast (naming the created ticket) appears.
     expect(screen.queryByText('Escalate to Support Ticket?')).toBeNull();
-    expect(await screen.findByText(/escalated to Support Ticket #ABCDEF12/i)).toBeTruthy();
+    expect(await screen.findByText(/Incident #42 escalated to Support Tickets/i)).toBeTruthy();
   });
 
-  test('Critical severity maps to High ticket priority (tickets have no Critical tier)', async () => {
-    mockPost.mockResolvedValue({ data: { message: 'Ticket created.', ticket: { id: 'x' } } });
-    mount([incident({ severity: 'Critical' })]);
+  test('a repeated escalation reports the existing ticket instead of creating a duplicate', async () => {
+    mockPost.mockResolvedValueOnce({ data: { duplicate: true, ticket: { id: 'ticket-1' } } });
+    mount([incident()]);
     await openEscalateModal();
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Escalation' }));
 
-    await waitFor(() => expect(mockPost).toHaveBeenCalledTimes(1));
-    expect(mockPost.mock.calls[0][1].priority).toBe('High');
+    expect(await screen.findByText(/already tracked in Support Tickets/i)).toBeTruthy();
+    expect(mockPost).toHaveBeenCalledTimes(1);
   });
 
-  test('disables Cancel/Confirm and shows "Escalating..." while the request is in flight', async () => {
+  test('disables Cancel/Confirm and shows "Creating Ticket…" while the request is in flight', async () => {
     let resolvePost;
     mockPost.mockReturnValue(new Promise((resolve) => { resolvePost = resolve; }));
     mount([incident()]);
@@ -135,24 +140,34 @@ describe('Incident Dashboard — Escalate to Ticket real submission', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Escalation' }));
 
-    expect(await screen.findByRole('button', { name: 'Escalating...' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Escalating...' }).disabled).toBe(true);
+    expect(await screen.findByRole('button', { name: 'Creating Ticket…' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Creating Ticket…' }).disabled).toBe(true);
     expect(screen.getByRole('button', { name: 'Cancel' }).disabled).toBe(true);
 
-    resolvePost({ data: { message: 'Ticket created.', ticket: { id: 'x' } } });
+    resolvePost({ data: { duplicate: false, ticket: { id: 'x' } } });
     await waitFor(() => expect(screen.queryByText('Escalate to Support Ticket?')).toBeNull());
   });
 
-  test('shows an error toast and keeps the modal open when the request fails', async () => {
+  test('shows the server-provided error message and keeps the modal open on failure', async () => {
+    mockPost.mockRejectedValue({ response: { data: { error: 'Incident not found.' } } });
+    mount([incident()]);
+    await openEscalateModal();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Escalation' }));
+
+    expect(await screen.findByText('Incident not found.')).toBeTruthy();
+    // Modal stays open so the FM can retry without re-selecting the incident.
+    expect(screen.getByText('Escalate to Support Ticket?')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Confirm Escalation' }).disabled).toBe(false);
+  });
+
+  test('falls back to a generic error message when the server gives no error detail', async () => {
     mockPost.mockRejectedValue(new Error('network down'));
     mount([incident()]);
     await openEscalateModal();
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Escalation' }));
 
-    expect(await screen.findByText(/Failed to escalate incident/i)).toBeTruthy();
-    // Modal stays open so the FM can retry without re-selecting the incident.
-    expect(screen.getByText('Escalate to Support Ticket?')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Confirm Escalation' }).disabled).toBe(false);
+    expect(await screen.findByText(/Failed to escalate incident to Support Tickets/i)).toBeTruthy();
   });
 });

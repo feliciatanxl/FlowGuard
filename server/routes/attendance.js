@@ -33,6 +33,21 @@ const recordDto = (summary) => ({
   punctuality: summary.punctuality
 });
 
+// FM emergency-accountability view: facility-wide daily summaries without
+// personal punctuality/lateness analytics or raw movement history.
+const fmRecordDto = (summary) => ({
+  user: summary.user ? {
+    id: summary.user.id,
+    name: summary.user.name,
+    role: summary.user.role
+  } : null,
+  userId: summary.userId,
+  date: summary.date,
+  firstCheckIn: summary.firstCheckIn,
+  latestCheckOut: summary.latestCheckOut,
+  currentStatus: summary.currentStatus
+});
+
 router.get('/logs', verifyToken, async (req, res) => {
   try {
     const { id: loggedInUserId, role: userRole } = req.user;
@@ -45,22 +60,49 @@ router.get('/logs', verifyToken, async (req, res) => {
     let attendanceRecords;
 
     if (userRole === 'FM') {
+      res.set('Cache-Control', 'no-store');
       attendanceRecords = await Attendance.findAll({
         where: buildAttendanceWhere(window),
         include: [attendanceInclude()],
         order: [['timestamp', 'ASC']]
       });
       const dailySummaries = deriveDailySummaries(attendanceRecords);
-      const today = summarizeForDate(dailySummaries, window.todayKey);
+      // Historical filters may change the reviewed activity window, but current
+      // occupancy must always be derived from today's authoritative SG state.
+      const todayWindow = getSingaporeWindow({
+        filter: 'today',
+        now: req.query.now ? new Date(req.query.now) : new Date()
+      });
+      const selectedWindowIsToday = window.startKey === todayWindow.startKey
+        && window.endExclusiveKey === todayWindow.endExclusiveKey;
+      const currentRecords = selectedWindowIsToday ? attendanceRecords : await Attendance.findAll({
+        where: buildAttendanceWhere(todayWindow),
+        include: [attendanceInclude()],
+        order: [['timestamp', 'ASC']]
+      });
+      const currentSummaries = deriveDailySummaries(currentRecords);
+      const today = summarizeForDate(currentSummaries, todayWindow.todayKey);
+      const currentOccupancy = today.summaries
+        .filter((summary) => summary.currentStatus === 'IN' && summary.user)
+        .map((summary) => ({
+          userId: summary.userId,
+          person: summary.user.name,
+          role: summary.user.role,
+          currentStatus: 'IN',
+          checkInTime: summary.firstCheckIn,
+          lastAccessEventTime: summary.lastAccessEventTime
+        }));
       return res.status(200).json({
         role: 'FM',
         filter: { type: window.filter, startDate: window.startKey, endDateExclusive: window.endExclusiveKey, timezone: 'Asia/Singapore' },
         summary: {
-          peopleOnSite: today.onSite,
+          peopleOnSite: currentOccupancy.length,
           checkedInToday: today.checkedIn,
           checkedOutToday: today.checkedOut,
           activityCount: dailySummaries.length
-        }
+        },
+        currentOccupancy,
+        records: dailySummaries.map(fmRecordDto)
       });
     }
 

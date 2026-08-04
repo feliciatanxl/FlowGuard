@@ -618,9 +618,19 @@
    ========================================= */
 .dashboard-analytics-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
+  align-items: stretch;
   margin-bottom: 30px;
+}
+
+/* IncidentAnalytics has an adjacent-panel spacing rule for its vertical flow.
+   Neutralise that inherited margin inside the Dashboard grid so both direct
+   children share the exact same grid-row rectangle. */
+.dashboard-analytics-grid > .analytics-panel,
+.dashboard-analytics-grid > .analytics-panel + .analytics-panel {
+  margin: 0;
+  align-self: stretch;
 }
 
 .analytics-panel {
@@ -629,6 +639,10 @@
   border-radius: 12px;
   padding: 20px;
   min-width: 0; /* let the panel shrink inside the grid instead of forcing overflow */
+  min-height: 260px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .analytics-panel-head {
@@ -673,10 +687,11 @@
 .legend-critical { background: #ef4444; }
 
 .analytics-empty {
-  margin: 8px 0 0;
+  margin: auto 0;
   color: #94a3b8;
   font-size: 0.85rem;
   line-height: 1.5;
+  text-align: center;
 }
 /* A temporary-outage state, visually distinct from a genuine "no data" week. */
 .analytics-unavailable { color: #fbbf24; }
@@ -1143,7 +1158,7 @@
      fixed chatbot FAB and reCAPTCHA badge in the lower-right never cover the
      last row's actions. */
   .dashboard-main {
-    padding: 90px 20px calc(96px + env(safe-area-inset-bottom));
+    padding: 90px 20px calc(144px + env(safe-area-inset-bottom));
   }
 
   .dashboard-header {

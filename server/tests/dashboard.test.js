@@ -146,6 +146,14 @@ describe('GET /api/dashboard/summary', () => {
     expect(urgentWhere.status[Op.in]).not.toContain('Cleared');
   });
 
+  test('open ticket count uses the persisted Pending/Investigating workflow values', async () => {
+    mockUser.findByPk.mockResolvedValue(authAccount(1, 'FM'));
+    await request(app).get('/api/dashboard/summary').set('Authorization', `Bearer ${tokenFor('FM', 1)}`);
+    const ticketWhere = mockSupportTicket.count.mock.calls[0][0].where;
+    expect(ticketWhere.status[Op.in]).toEqual(['Pending', 'Investigating']);
+    expect(ticketWhere.status[Op.in]).not.toContain('In Progress');
+  });
+
   test('when analytics fail, the summary still returns with analyticsAvailable:false (not a fake empty history)', async () => {
     mockUser.findByPk.mockResolvedValue(authAccount(1, 'FM'));
     // Recent-alerts query (limit 5) succeeds; only the analytics aggregation query fails,

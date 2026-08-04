@@ -60,6 +60,16 @@ const PI_FAIL_FALLBACK_MS = 2500;
 // an authorisation attempt was aborted because of it (~6 tracking samples).
 const MULTI_FACE_LOG_PERSIST_MS = 1500;
 
+const createAccessCycleId = () => {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  // RFC-4122-shaped fallback for older kiosk browsers. This is an idempotency
+  // token, not a credential or source of security-sensitive randomness.
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+    const value = Math.floor(Math.random() * 16);
+    return (char === 'x' ? value : ((value & 0x3) | 0x8)).toString(16);
+  });
+};
+
 const VPatrol = () => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);       // full-recognition capture canvas
@@ -332,38 +342,32 @@ const VPatrol = () => {
     setIdentifiedUser(subject.identityLabel);
     setScanProgress(100);
 
-    const currentTimestamp = nowMs();
-
-    if (lastLogRef.current.name !== verifiedUser.name || (currentTimestamp - lastLogRef.current.timestamp > 30000)) {
-      // Local timeline entry ONLY - the persisted safe access log is created by
-      // the SERVER during the access-event call below, so the browser never
-      // posts audit rows (no duplicate client+server logs).
-      const newLog = {
-        id: `ACC-${currentTimestamp}`,
-        // This is a NEW event happening right now - stamping it is correct.
-        occurredAt: new Date(currentTimestamp).toISOString(),
-        type: 'Gantry Access',
-        desc: `Identity & Liveness Verified: ${subject.identityLabel}`,
-        severity: 'safe',
-        icon: 'UNLOCK',
-        personnelName: verifiedUser.name,
-        role: verifiedUser.role,
-        confidence: verifiedUser.confidence,
-        cameraLocation: CAMERA_LOCATION,
-        cameraSource: SOURCE_LABELS[cameraSourceRef.current] || null
-      };
-
-      setIncidentLogs(prev => [newLog, ...prev.slice(0, 14)]);
-      lastLogRef.current = { name: verifiedUser.name, timestamp: currentTimestamp };
-
-      // Server-owned audit: records the deduplicated safe access log WITHOUT
-      // touching attendance (no clock-in/out from V-Patrol). Non-fatal for the UI.
-      axios.post(ACCESS_EVENT_URL, {
-        userId: verifiedUser.id,
-        cameraLocation: CAMERA_LOCATION
-      }, { headers: { Authorization: `Bearer ${token}` } })
-        .catch(e => console.log("Access-event sync failed", e));
-    }
+    // Exactly one POST is made from this completed authoritative cycle. The
+    // stable cycle id makes a retry idempotent, while a later completed cycle
+    // receives its own persisted SecurityLog id and remains visible even in the
+    // same displayed minute.
+    const cycleId = createAccessCycleId();
+    axios.post(ACCESS_EVENT_URL, {
+      userId: verifiedUser.id,
+      cameraLocation: CAMERA_LOCATION,
+      cycleId
+    }, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => {
+        const log = res.data?.logged ? res.data.log : null;
+        if (!log?.id) return;
+        const timelineLog = {
+          ...log,
+          role: verifiedUser.role,
+          cameraSource: SOURCE_LABELS[cameraSourceRef.current] || null
+        };
+        setIncidentLogs((prev) => prev.some((existing) => existing.id === log.id)
+          ? prev
+          : [timelineLog, ...prev.slice(0, 14)]);
+      })
+      .catch((error) => {
+        console.log('Access-event sync failed', error);
+        setServiceNotice('Access was verified, but the audit event could not be saved. Retry when the service is available.');
+      });
 
     scheduleScannerReset(3500);
   };
@@ -960,53 +964,45 @@ const VPatrol = () => {
           </div>
         </header>
 
-        <div className="camera-source-bar" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
-          <span style={{ color: '#94a3b8', fontSize: '0.85rem', fontWeight: 600 }}>Camera Source:</span>
+        <section className="camera-control-panel" aria-label="V-Patrol camera controls">
+          <div className="camera-control-row">
+          <span className="camera-control-label">Camera Source:</span>
           <button
+            type="button"
+            className={`camera-control-btn ${cameraSource === CAMERA_SOURCES.PI ? 'active' : ''}`}
             onClick={() => selectCameraSource(CAMERA_SOURCES.PI)}
-            style={{
-              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem',
-              border: cameraSource === CAMERA_SOURCES.PI ? '1px solid #3b82f6' : '1px solid #334155',
-              background: cameraSource === CAMERA_SOURCES.PI ? '#1d4ed8' : '#1e293b', color: '#e2e8f0'
-            }}
+            aria-pressed={cameraSource === CAMERA_SOURCES.PI}
           >
             Raspberry Pi Camera Module 3
           </button>
           <button
+            type="button"
+            className={`camera-control-btn ${cameraSource === CAMERA_SOURCES.WEBCAM ? 'active' : ''}`}
             onClick={() => selectCameraSource(CAMERA_SOURCES.WEBCAM)}
-            style={{
-              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem',
-              border: cameraSource === CAMERA_SOURCES.WEBCAM ? '1px solid #3b82f6' : '1px solid #334155',
-              background: cameraSource === CAMERA_SOURCES.WEBCAM ? '#1d4ed8' : '#1e293b', color: '#e2e8f0'
-            }}
+            aria-pressed={cameraSource === CAMERA_SOURCES.WEBCAM}
           >
             Laptop Webcam
           </button>
-          <span style={{ color: '#38bdf8', fontSize: '0.82rem' }}>{cameraStatusMsg}</span>
           <button
             type="button"
-            onClick={toggleMonitoring}
-            style={{
-              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.82rem',
-              border: '1px solid #334155', background: monitoringPaused ? '#166534' : '#1e293b', color: '#e2e8f0'
-            }}
-          >
-            {monitoringPaused ? 'Resume Monitoring' : 'Stop Monitoring'}
-          </button>
-          <button
-            type="button"
+            className="camera-control-btn"
             onClick={runSingleCheck}
-            style={{
-              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.82rem',
-              border: '1px solid #334155', background: '#1e293b', color: '#e2e8f0'
-            }}
           >
             Run Single Check
           </button>
+          <button
+            type="button"
+            className={`camera-control-btn ${monitoringPaused ? 'resume' : ''}`}
+            onClick={toggleMonitoring}
+          >
+            {monitoringPaused ? 'Resume Monitoring' : 'Stop Monitoring'}
+          </button>
+          </div>
+          <p className="camera-status-line" role="status">{cameraStatusMsg}</p>
           {serviceNotice && (
-            <span style={{ color: '#f59e0b', fontSize: '0.82rem', fontWeight: 600 }}>{serviceNotice}</span>
+            <p className="camera-status-line camera-service-notice" role="status">{serviceNotice}</p>
           )}
-        </div>
+        </section>
 
         <div className="vpatrol-grid">
           <div className="vpatrol-card monitor-section">

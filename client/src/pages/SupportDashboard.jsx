@@ -11,7 +11,12 @@ const TOKEN = () => localStorage.getItem('accessToken');
 const TICKET_STATUSES = ['Pending', 'Investigating', 'Resolved', 'Closed'];
 // Suggested categories — free text server-side, but a fixed list keeps the
 // filter dropdown stable regardless of which categories currently have tickets.
-const TICKET_CATEGORIES = ['General', 'Access Control', 'Loading Bay', 'Visitor Parking', 'Security'];
+// 'Security Incident' is what server/routes/support.js's incident-escalation path
+// actually assigns (POST /api/support/tickets with sourceIncidentId) — it must be
+// listed here or the category <select> silently falls back to its first option
+// ('General') for every escalated ticket, since the bound value won't match any
+// <option>.
+const TICKET_CATEGORIES = ['General', 'Access Control', 'Loading Bay', 'Visitor Parking', 'Security', 'Security Incident'];
 const TICKET_PAGE_SIZE = 10;
 
 // ─── SUPPORT DASHBOARD ────────────────────────────────────────────────────────

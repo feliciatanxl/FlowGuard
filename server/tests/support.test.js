@@ -3,14 +3,15 @@ const request = require('supertest');
 const jwt = require('jsonwebtoken');
 
 const mockChatTranscript = { findOrCreate: jest.fn(), findOne: jest.fn(), destroy: jest.fn() };
-const mockSupportTicket = { create: jest.fn(), findAndCountAll: jest.fn(), count: jest.fn(), findByPk: jest.fn() };
+const mockSupportTicket = { create: jest.fn(), findOne: jest.fn(), findAndCountAll: jest.fn(), count: jest.fn(), findByPk: jest.fn() };
 const mockKnowledgeBase = { findAll: jest.fn(), create: jest.fn(), findByPk: jest.fn() };
 const mockUser = { findByPk: jest.fn() };
+const mockIncidentLog = { findByPk: jest.fn() };
 // Pass-through transaction mock: just invokes the callback with a fake
 // transaction handle and returns whatever it resolves to, matching the real
 // sequelize.transaction(async (t) => {...}) contract closely enough for these
 // unit tests (the transaction boundary itself isn't what's under test here).
-const mockSequelize = { transaction: jest.fn((cb) => cb({})) };
+const mockSequelize = { transaction: jest.fn((cb) => cb({})), query: jest.fn() };
 
 // No User model in this mock — verifyToken's DB re-read is lazily required and
 // falls back to trusting the JWT payload's role when User is absent (see
@@ -22,6 +23,7 @@ jest.mock('../models', () => ({
   SupportTicket: mockSupportTicket,
   KnowledgeBase: mockKnowledgeBase,
   User: mockUser,
+  IncidentLog: mockIncidentLog,
   sequelize: mockSequelize
 }));
 
@@ -67,6 +69,8 @@ const makeTranscript = (overrides = {}) => ({
 beforeEach(() => {
   jest.clearAllMocks();
   mockKnowledgeBase.findAll.mockResolvedValue([]);
+  mockSupportTicket.findOne.mockResolvedValue(null);
+  mockSequelize.query.mockResolvedValue([]);
   mockSequelize.transaction.mockImplementation((cb) => cb({}));
   // Default: Gemini "unavailable" (mirrors real behavior with no API key
   // configured), so every existing non-escalating test keeps exercising the
@@ -418,6 +422,50 @@ describe('POST /api/support/tickets', () => {
     const created = mockSupportTicket.create.mock.calls[0][0];
     expect(created.category).toBe('General');
     expect(created.priority).toBe('Medium');
+  });
+
+  test('creates one authoritative support ticket from an incident', async () => {
+    mockIncidentLog.findByPk.mockResolvedValue({
+      id: 42,
+      camera_location: 'Cold Store B',
+      status: 'UNAUTHORIZED_ACCESS',
+      source: 'Facial Recognition',
+      severity: 'Critical',
+      notes: 'Unknown person at the restricted entrance.'
+    });
+    mockSupportTicket.create.mockResolvedValue({ id: TICKET_ID, status: 'Pending' });
+
+    const res = await request(app)
+      .post('/api/support/tickets')
+      .set(fmAuth)
+      .send({ sourceIncidentId: 42 });
+
+    expect(res.status).toBe(201);
+    expect(res.body.duplicate).toBe(false);
+    expect(mockIncidentLog.findByPk).toHaveBeenCalledWith(42);
+    expect(mockSequelize.query).toHaveBeenCalledWith(expect.stringContaining('pg_advisory_xact_lock'), expect.objectContaining({ transaction: expect.anything() }));
+    expect(mockSupportTicket.create).toHaveBeenCalledWith(expect.objectContaining({
+      issueTitle: 'Incident #42: Cold Store B',
+      category: 'Security Incident',
+      priority: 'High',
+      status: 'Pending'
+    }), expect.objectContaining({ transaction: expect.anything() }));
+    expect(mockSupportTicket.create.mock.calls[0][0].issueDescription).toContain('FlowGuard Incident #42');
+  });
+
+  test('reuses the existing ticket for a repeated incident escalation', async () => {
+    const existing = { id: TICKET_ID, issueTitle: 'Incident #42: Cold Store B' };
+    mockIncidentLog.findByPk.mockResolvedValue({ id: 42, camera_location: 'Cold Store B', severity: 'High', notes: '' });
+    mockSupportTicket.findOne.mockResolvedValue(existing);
+
+    const res = await request(app)
+      .post('/api/support/tickets')
+      .set(fmAuth)
+      .send({ sourceIncidentId: 42 });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ duplicate: true, ticket: existing });
+    expect(mockSupportTicket.create).not.toHaveBeenCalled();
   });
 });
 

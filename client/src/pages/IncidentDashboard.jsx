@@ -50,11 +50,6 @@ const sourceLabel = (s) => {
 const truncate = (str, n = 30) =>
   str && str.length > n ? str.slice(0, n) + '…' : str;
 
-// Incident severity (Low/Medium/High/Critical) -> Support Ticket priority
-// (Low/Medium/High) — Critical incidents escalate as High-priority tickets since
-// tickets have no Critical tier of their own.
-const SEVERITY_TO_TICKET_PRIORITY = { Critical: 'High', High: 'High', Medium: 'Medium', Low: 'Low' };
-
 // Break a location string into lines: max 2 words OR max 12 chars per line,
 // whichever limit is hit first. Total display capped at 30 chars (word boundary).
 const formatLocation = (str) => {
@@ -132,7 +127,7 @@ const IncidentDashboard = () => {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteSaving, setDeleteSaving] = useState(false);
 
-  // --- Escalate to Ticket confirm modal ---
+  // --- Escalate to Ticket confirm modal (persists a real Support Ticket) ---
   const [escalateTarget, setEscalateTarget] = useState(null);
   const [escalateSaving, setEscalateSaving] = useState(false);
 
@@ -337,37 +332,23 @@ const IncidentDashboard = () => {
 
   const handleEscalate = (incident) => setEscalateTarget(incident);
 
-  // Creates a real Support Ticket from the incident's details. There's no formal
-  // DB link between an incident and the resulting ticket (SupportTicket has no
-  // incidentId column) — the incident's identifying info is folded into the
-  // ticket's title/description instead, the same pattern the AI chat
-  // auto-escalation flow already uses for its session id.
+  // The server loads the incident itself and composes the ticket's title/
+  // description (SupportTicket has no incidentId FK — it dedupes on a stable
+  // title instead, serialized behind a Postgres advisory lock keyed on the
+  // incident id), so the client only ever needs to pass sourceIncidentId.
   const confirmEscalate = async () => {
-    const incident = escalateTarget;
+    if (!escalateTarget || escalateSaving) return;
     setEscalateSaving(true);
     try {
       const res = await axios.post('/api/support/tickets', {
-        issueTitle: `Escalated Incident #${incident.id} — ${incident.camera_location}`,
-        issueDescription:
-          `Escalated from the Incident Dashboard.\n\n` +
-          `Location: ${incident.camera_location}\n` +
-          `Source: ${sourceLabel(incident.source)}\n` +
-          `Severity: ${incident.severity}\n\n` +
-          `Description: ${incident.notes?.trim() || 'No description provided.'}`,
-        category: 'Security',
-        priority: SEVERITY_TO_TICKET_PRIORITY[incident.severity] || 'Medium',
-      }, {
-        headers: { Authorization: `Bearer ${getToken()}` },
-      });
-      const ticketId = res.data?.ticket?.id;
-      showToast(
-        `Incident #${incident.id} escalated to Support Ticket${ticketId ? ` #${ticketId.slice(0, 8).toUpperCase()}` : ''}.`,
-        'success'
-      );
+        sourceIncidentId: escalateTarget.id
+      }, { headers: { Authorization: `Bearer ${getToken()}` } });
+      showToast(res.data?.duplicate
+        ? `Incident #${escalateTarget.id} is already tracked in Support Tickets.`
+        : `Incident #${escalateTarget.id} escalated to Support Tickets.`, 'success');
       setEscalateTarget(null);
     } catch (err) {
-      console.error('Failed to escalate incident to a support ticket:', err);
-      showToast('Failed to escalate incident. Please try again.', 'error');
+      showToast(err.response?.data?.error || 'Failed to escalate incident to Support Tickets.', 'error');
     } finally {
       setEscalateSaving(false);
     }
@@ -1031,7 +1012,7 @@ const IncidentDashboard = () => {
 
         {/* ---- Escalate to Ticket Confirm Modal ---- */}
         {escalateTarget && (
-          <div className="modal-overlay" onClick={() => { if (!escalateSaving) setEscalateTarget(null); }}>
+          <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Escalate incident to Support Tickets" onClick={() => { if (!escalateSaving) setEscalateTarget(null); }}>
             <div className="inc-detail-modal" onClick={(e) => e.stopPropagation()}>
               <div className="inc-modal-header">
                 <div>
@@ -1069,12 +1050,16 @@ const IncidentDashboard = () => {
                 </p>
               </div>
 
+              <p style={{ color: '#94a3b8', fontSize: '0.78rem', margin: '4px 0 20px' }}>
+                Confirming creates one persisted Support Ticket. Repeated confirmation of this incident reuses the existing ticket.
+              </p>
+
               <div className="modal-actions">
                 <button className="cancel-btn" onClick={() => setEscalateTarget(null)} disabled={escalateSaving}>
                   Cancel
                 </button>
                 <button className="confirm-escalate-btn" onClick={confirmEscalate} disabled={escalateSaving}>
-                  {escalateSaving ? 'Escalating...' : 'Confirm Escalation'}
+                  {escalateSaving ? 'Creating Ticket…' : 'Confirm Escalation'}
                 </button>
               </div>
             </div>

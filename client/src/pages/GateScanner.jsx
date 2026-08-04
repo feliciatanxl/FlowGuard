@@ -757,50 +757,42 @@ const GateScanner = () => {
           </div>
         </header>
 
-        <div className="camera-source-bar" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
-          <span style={{ color: '#94a3b8', fontSize: '0.85rem', fontWeight: 600 }}>Camera Source:</span>
+        <section className="camera-control-panel" aria-label="Gate Scanner camera controls">
+          <div className="camera-control-row">
+          <span className="camera-control-label">Camera Source:</span>
           <button
+            type="button"
+            className={`camera-control-btn ${cameraSource === CAMERA_SOURCES.PI ? 'active' : ''}`}
             onClick={() => selectCameraSource(CAMERA_SOURCES.PI)}
-            style={{
-              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem',
-              border: cameraSource === CAMERA_SOURCES.PI ? '1px solid #3b82f6' : '1px solid #334155',
-              background: cameraSource === CAMERA_SOURCES.PI ? '#1d4ed8' : '#1e293b', color: '#e2e8f0'
-            }}
+            aria-pressed={cameraSource === CAMERA_SOURCES.PI}
           >
             Raspberry Pi Camera Module 3
           </button>
           <button
+            type="button"
+            className={`camera-control-btn ${cameraSource === CAMERA_SOURCES.WEBCAM ? 'active' : ''}`}
             onClick={() => selectCameraSource(CAMERA_SOURCES.WEBCAM)}
-            style={{
-              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem',
-              border: cameraSource === CAMERA_SOURCES.WEBCAM ? '1px solid #3b82f6' : '1px solid #334155',
-              background: cameraSource === CAMERA_SOURCES.WEBCAM ? '#1d4ed8' : '#1e293b', color: '#e2e8f0'
-            }}
+            aria-pressed={cameraSource === CAMERA_SOURCES.WEBCAM}
           >
             Laptop Webcam
           </button>
           <button
             type="button"
+            className="camera-control-btn"
             onClick={manualScanNow}
-            style={{
-              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem',
-              border: '1px solid #334155', background: '#1e293b', color: '#e2e8f0'
-            }}
           >
             Scan Now
           </button>
           <button
             type="button"
+            className="camera-control-btn"
             onClick={manualRetry}
-            style={{
-              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem',
-              border: '1px solid #334155', background: '#1e293b', color: '#e2e8f0'
-            }}
           >
             Reset
           </button>
-          <span style={{ color: '#38bdf8', fontSize: '0.82rem' }}>{cameraStatusMsg}</span>
-        </div>
+          </div>
+          <p className="camera-status-line" role="status">{cameraStatusMsg}</p>
+        </section>
 
         <div className="vpatrol-grid gate-grid">
           <div className="vpatrol-card monitor-section">
