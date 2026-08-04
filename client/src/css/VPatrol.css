@@ -128,6 +128,16 @@
 
 .camera-service-notice { color: #fbbf24; font-weight: 650; }
 
+/* Operator attendance action row + its current-selection confirmation line.
+   Kept clearly visible before scanning so the operator always knows whether a
+   completed recognition will check the person in/out or audit only. */
+.attendance-action-row { margin-top: 10px; }
+.attendance-action-current {
+    color: #e2e8f0;
+    font-weight: 600;
+}
+.attendance-action-current strong { color: #38bdf8; }
+
 /* GateScanner: focused terminal layout — camera left, gate status card right */
 .gate-main {
     display: flex;

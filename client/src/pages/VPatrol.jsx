@@ -60,6 +60,17 @@ const PI_FAIL_FALLBACK_MS = 2500;
 // an authorisation attempt was aborted because of it (~6 tracking samples).
 const MULTI_FACE_LOG_PERSIST_MS = 1500;
 
+// V-Patrol attendance action (operator control). PATROL preserves the existing
+// deployed behaviour (audit-only, no clock-in/out); IN/OUT record one explicit
+// attendance event after a completed authoritative recognition/liveness cycle.
+const ATTENDANCE_ACTIONS = [
+  { value: 'PATROL', label: 'Patrol only' },
+  { value: 'IN', label: 'Check In' },
+  { value: 'OUT', label: 'Check Out' },
+];
+const attendanceActionLabel = (value) =>
+  (ATTENDANCE_ACTIONS.find((a) => a.value === value) || ATTENDANCE_ACTIONS[0]).label;
+
 const createAccessCycleId = () => {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   // RFC-4122-shaped fallback for older kiosk browsers. This is an idempotency
@@ -108,6 +119,15 @@ const VPatrol = () => {
   // Manual stop/restart of the automatic recognition loops (patrol control).
   const [monitoringPaused, setMonitoringPaused] = useState(false);
   const pausedRef = useRef(false);
+  // Operator-selected attendance action. Default 'PATROL' preserves the existing
+  // deployed audit-only behaviour. A ref mirrors it so the async grant path reads
+  // the current selection, and resetting the scanner never changes it.
+  const [attendanceAction, setAttendanceAction] = useState('PATROL');
+  const attendanceActionRef = useRef('PATROL');
+  const selectAttendanceAction = (value) => {
+    attendanceActionRef.current = value;
+    setAttendanceAction(value);
+  };
   // Bumped on camera-source switch and unmount; responses from an older
   // session are stale and must be ignored.
   const scanSessionRef = useRef(0);
@@ -148,6 +168,10 @@ const VPatrol = () => {
   // V-Patrol is a monitoring post: it records access AUDIT events only and must
   // never toggle clock-in/out (that belongs to the Gate Scanner's scan endpoint).
   const ACCESS_EVENT_URL = `${API_BASE_URL}/api/facial-recognition/access-event`;
+  // Server-authoritative EXPLICIT attendance action (Check In / Check Out). Only
+  // called for a completed authoritative cycle when the operator has selected an
+  // action — never on every automatic scan, and never for a denied outcome.
+  const ATTENDANCE_ACTION_URL = `${API_BASE_URL}/api/attendance/action`;
   // Server-owned audit for FINAL denied outcomes (identity mismatch, liveness
   // timeout, persistent multiple faces). The server decides type/severity/
   // review status; the client only names the allowed reason.
@@ -368,6 +392,35 @@ const VPatrol = () => {
         console.log('Access-event sync failed', error);
         setServiceNotice('Access was verified, but the audit event could not be saved. Retry when the service is available.');
       });
+
+    // Operator-selected attendance action. Runs ONCE per completed authoritative
+    // cycle (this function is reached only after recognition + liveness + final
+    // same-person confirmation), reusing the same cycleId so the server treats a
+    // retry as idempotent. PATROL leaves the deployed audit-only behaviour intact.
+    const action = attendanceActionRef.current;
+    if (action === 'IN' || action === 'OUT') {
+      axios.post(ATTENDANCE_ACTION_URL, {
+        userId: verifiedUser.id,
+        action,
+        cameraLocation: CAMERA_LOCATION,
+        cycleId
+      }, { headers: { Authorization: `Bearer ${token}` } })
+        .then((res) => {
+          const data = res.data || {};
+          const verb = action === 'IN' ? 'Check-in' : 'Check-out';
+          if (data.recorded) {
+            setServiceNotice(`${verb} recorded for ${verifiedUser.name}.`);
+          } else if (data.result === 'ALREADY_ON_SITE') {
+            setServiceNotice(`${verifiedUser.name} is already on site — no duplicate check-in recorded.`);
+          } else if (data.result === 'ALREADY_OFF_SITE' || data.result === 'NO_ACTIVE_CHECK_IN') {
+            setServiceNotice(`${verifiedUser.name} has no active check-in — no check-out recorded.`);
+          }
+        })
+        .catch((error) => {
+          console.log('Attendance action sync failed', error);
+          setServiceNotice('Access verified, but the attendance action could not be saved. Retry when the service is available.');
+        });
+    }
 
     scheduleScannerReset(3500);
   };
@@ -998,6 +1051,28 @@ const VPatrol = () => {
             {monitoringPaused ? 'Resume Monitoring' : 'Stop Monitoring'}
           </button>
           </div>
+          <div className="camera-control-row attendance-action-row" role="group" aria-label="Attendance action">
+            <span className="camera-control-label">Attendance action:</span>
+            {ATTENDANCE_ACTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`camera-control-btn attendance-action-btn ${attendanceAction === option.value ? 'active' : ''}`}
+                onClick={() => selectAttendanceAction(option.value)}
+                aria-pressed={attendanceAction === option.value}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <p className="camera-status-line attendance-action-current" role="status">
+            Attendance action: <strong>{attendanceActionLabel(attendanceAction)}</strong>
+            {attendanceAction === 'PATROL'
+              ? ' — access is audited only; no clock-in/out is recorded.'
+              : attendanceAction === 'IN'
+                ? ' — a completed recognition checks the person in.'
+                : ' — a completed recognition checks the person out.'}
+          </p>
           <p className="camera-status-line">
             {cameraSource === CAMERA_SOURCES.PI
               ? 'Active source: Raspberry Pi 4 — Camera Module 3'
