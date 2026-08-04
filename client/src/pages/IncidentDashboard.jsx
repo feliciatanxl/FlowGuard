@@ -140,6 +140,11 @@ const IncidentDashboard = () => {
   const [backTopLeft, setBackTopLeft] = useState('50%');
   const mainRef = useRef(null);
 
+  // --- Toast placement: in-flow above the table while its top edge is still
+  // visible, floating top-right once the user has scrolled past it ---
+  const [tableTopVisible, setTableTopVisible] = useState(true);
+  const tableWrapRef = useRef(null);
+
   // ---------------------------------------------------------------------------
   // Toast (stacking, non-overwriting, typed)
   // ---------------------------------------------------------------------------
@@ -156,12 +161,23 @@ const IncidentDashboard = () => {
   const getToken = () => localStorage.getItem('accessToken');
 
   // ---------------------------------------------------------------------------
-  // Back-to-top: scroll listener on dashboard-main (it owns overflow-y: auto)
+  // Back-to-top + toast placement: scroll listener on dashboard-main (it owns
+  // overflow-y: auto). The table's top edge is "in view" as long as it hasn't
+  // scrolled above the container's own visible top — the same edge the in-flow
+  // toast stack sits just above, so this is exactly the condition under which
+  // that toast would otherwise be scrolled out of sight.
   // ---------------------------------------------------------------------------
   useEffect(() => {
     const el = mainRef.current;
     if (!el) return;
-    const handleScroll = () => setShowBackTop(el.scrollTop > 300);
+    const handleScroll = () => {
+      setShowBackTop(el.scrollTop > 300);
+      const tableEl = tableWrapRef.current;
+      if (tableEl) {
+        setTableTopVisible(tableEl.getBoundingClientRect().top >= el.getBoundingClientRect().top);
+      }
+    };
+    handleScroll();
     el.addEventListener('scroll', handleScroll, { passive: true });
     return () => el.removeEventListener('scroll', handleScroll);
   }, []);
@@ -571,9 +587,12 @@ const IncidentDashboard = () => {
           </select>
         </div>
 
-        {/* ---- Toast Stack (between filter bar and table) ---- */}
+        {/* ---- Toast Stack ----
+            In-flow above the table while its top edge is visible; once scrolled
+            past, the same stack floats top-right instead so status updates are
+            never missed further down the list. Only one is ever rendered. */}
         {toasts.length > 0 && (
-          <div className="inc-toast-stack">
+          <div className={`inc-toast-stack${tableTopVisible ? '' : ' inc-toast-stack-floating'}`}>
             {toasts.map(t => (
               <div
                 key={t.id}
@@ -586,7 +605,7 @@ const IncidentDashboard = () => {
         )}
 
         {/* ---- Incidents Table ---- */}
-        <div className="table-container inc-table-wrap">
+        <div className="table-container inc-table-wrap" ref={tableWrapRef}>
           <table className="management-table inc-table">
             <thead>
               <tr>
