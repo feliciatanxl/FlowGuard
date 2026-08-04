@@ -95,6 +95,25 @@ describe("V-Patrol Security Timeline cards", () => {
     const titles = [...container.querySelectorAll(".item-text h4")].map((el) => el.textContent);
     expect(titles.join(" ")).not.toMatch(/3f0a1c2e/);
   });
+
+  test("refresh restores repeated same-person events inside the same minute and second", async () => {
+    const repeated = [
+      { ...BACKEND_LOGS[0], id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", createdAt: "2026-08-03T07:59:12.900Z" },
+      { ...BACKEND_LOGS[0], id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", createdAt: "2026-08-03T07:59:12.100Z" },
+      { ...BACKEND_LOGS[0], id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", createdAt: "2026-08-03T07:59:05.000Z" },
+    ];
+    mockAxios.get.mockResolvedValue({ data: repeated });
+    const { container } = render(<VPatrol />);
+
+    await waitFor(() => expect(screen.getAllByText("Gantry Access")).toHaveLength(3));
+    expect(screen.getAllByText("Tan Xiu Li, Felicia")).toHaveLength(3);
+    const ids = [...container.querySelectorAll(".item-id-muted")].map((node) => node.textContent);
+    expect(ids).toEqual(repeated.map((log) => `#${log.id}`));
+    expect(new Set(ids).size).toBe(3);
+
+    fireEvent.change(screen.getByLabelText("Search timeline"), { target: { value: "Tan Xiu Li" } });
+    expect(screen.getAllByText("Gantry Access")).toHaveLength(3);
+  });
 });
 
 describe("V-Patrol attendance separation", () => {
@@ -121,6 +140,17 @@ describe("V-Patrol operational layout", () => {
     // Camera source switching stays available.
     expect(screen.getByRole("button", { name: "Raspberry Pi Camera Module 3" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Laptop Webcam" })).toBeTruthy();
+  });
+
+  test("camera actions share one wrapping row and availability is below it", async () => {
+    const { container } = await renderTimeline();
+    const row = container.querySelector(".camera-control-row");
+    for (const name of ["Raspberry Pi Camera Module 3", "Laptop Webcam", "Run Single Check", "Stop Monitoring"]) {
+      expect(row.contains(screen.getByRole("button", { name }))).toBe(true);
+    }
+    const status = container.querySelector(".camera-status-line");
+    expect(status).toBeTruthy();
+    expect(row.contains(status)).toBe(false);
   });
 
   test("mode pills, evaluation accordion and confusion matrix are gone from V-Patrol", async () => {

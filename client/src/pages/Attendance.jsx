@@ -99,6 +99,7 @@ const Attendance = () => {
   }, [attendance, isFM, isTenant]);
 
   const records = attendance?.records || [];
+  const currentOccupancy = attendance?.currentOccupancy || [];
 
   return (
     <div className="dashboard-layout">
@@ -117,7 +118,7 @@ const Attendance = () => {
             {filter === 'custom' && (
               <input type="date" value={customDate} onChange={(e) => setCustomDate(e.target.value)} aria-label="Custom attendance date" />
             )}
-            <button onClick={fetchAttendanceData} className="launch-terminal-btn" style={{ background: '#334155' }}>Refresh</button>
+            <button onClick={() => fetchAttendanceData()} className="launch-terminal-btn" style={{ background: '#334155' }}>Refresh</button>
             {userRole === 'FM' && (
               <button onClick={() => navigate('/gate-scanner')} className="launch-terminal-btn">Launch Gate Terminal</button>
             )}
@@ -136,10 +137,51 @@ const Attendance = () => {
         {error && <div className="attendance-error" role="alert">{error}</div>}
 
         {isFM ? (
-          <section className="attendance-aggregate-note">
-            <h3>Aggregate Operational View</h3>
-            <p>Facilities Managers receive occupancy totals only. Individual late-arrival performance and personal attendance history are excluded by the server.</p>
-          </section>
+          <>
+            <section className="attendance-aggregate-note">
+              <h3>Facility-wide operational view</h3>
+              <p>The current roster includes only people who are checked in. Individual lateness analytics and unnecessary attendance history remain excluded.</p>
+            </section>
+            <section className="attendance-roster" aria-labelledby="current-occupancy-heading">
+              <div className="attendance-roster-heading">
+                <div>
+                  <h2 id="current-occupancy-heading">Currently On Site</h2>
+                  <p>Facilities Manager, Tenant, and Staff occupants from authoritative attendance state.</p>
+                </div>
+                <span className="attendance-roster-count" aria-label={`${currentOccupancy.length} people currently on site`}>
+                  {currentOccupancy.length} On Site
+                </span>
+              </div>
+              <div className="table-container attendance-roster-table-wrap">
+                <table className="management-table attendance-roster-table">
+                  <thead>
+                    <tr>
+                      <th>PERSON</th>
+                      <th>ROLE</th>
+                      <th>CURRENT STATUS</th>
+                      <th>CHECK-IN TIME</th>
+                      <th>LAST ACCESS EVENT</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {loading ? (
+                      <tr><td colSpan={5} className="table-notice-state">Loading current occupancy...</td></tr>
+                    ) : currentOccupancy.length > 0 ? currentOccupancy.map((occupant) => (
+                      <tr key={occupant.userId}>
+                        <td data-label="Person" className="cell-worker-name">{occupant.person}</td>
+                        <td data-label="Role"><span className="cell-role-badge">{occupant.role}</span></td>
+                        <td data-label="Current Status"><span className="presence-tag on-site">On Site</span></td>
+                        <td data-label="Check-In Time">{formatDateTime(occupant.checkInTime)}</td>
+                        <td data-label="Last Access Event">{formatDateTime(occupant.lastAccessEventTime)}</td>
+                      </tr>
+                    )) : (
+                      <tr><td colSpan={5} className="table-notice-state">No one is currently checked in.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
         ) : (
           <div className="table-container">
             <table className="management-table">

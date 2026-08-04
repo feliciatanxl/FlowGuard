@@ -112,6 +112,7 @@ const deriveDailySummaries = (attendanceRecords = []) => {
         date,
         firstCheckIn: null,
         latestCheckOut: null,
+        lastAccessEventTime: null,
         currentStatus: 'OUT',
         punctuality: 'NO_IN',
         scanCount: 0
@@ -121,6 +122,7 @@ const deriveDailySummaries = (attendanceRecords = []) => {
     const summary = summaries.get(key);
     const timestamp = new Date(record.timestamp).toISOString();
     summary.scanCount += 1;
+    summary.lastAccessEventTime = timestamp;
     summary.currentStatus = record.type === 'IN' ? 'IN' : 'OUT';
 
     if (record.type === 'IN' && (!summary.firstCheckIn || new Date(timestamp) < new Date(summary.firstCheckIn))) {

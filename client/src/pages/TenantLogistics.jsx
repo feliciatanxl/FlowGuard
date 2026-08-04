@@ -350,23 +350,23 @@ const TenantLogistics = () => {
                         <td data-label="Company" className="booking-wrap-cell">{b.transport_company}</td>
                         <td data-label="Driver" className="booking-wrap-cell">{b.driver_name || '—'}</td>
                         <td data-label="Bay">{b.loading_bay}</td>
-                        <td data-label="Slot">{fmtSlot(b)}</td>
+                        <td data-label="Slot" className="booking-slot-cell">{fmtSlot(b)}</td>
                         <td data-label="Status"><span className={`status-badge ${String(b.status).toLowerCase()}`}>{b.status}</span></td>
                         <td data-label="Actions" className="booking-actions-cell">
                           {hasActions ? (
                             <div className="booking-action-group" aria-label={`Actions for ${b.booking_ref}`}>
                               {canManage && nextStatus && (
-                                <button className="edit-btn booking-action-btn booking-action-primary" onClick={() => updateStatus(b.id, nextStatus)}>
+                                <button type="button" className="edit-btn booking-action-btn booking-action-primary" title={`Mark ${b.booking_ref} as ${nextStatus}`} onClick={() => updateStatus(b.id, nextStatus)}>
                                   Mark {nextStatus}
                                 </button>
                               )}
                               {canEditOrCancel && (
-                                <button className="edit-btn booking-action-btn" onClick={() => openEdit(b)}>
+                                <button type="button" className="edit-btn booking-action-btn" title={`Edit ${b.booking_ref}`} onClick={() => openEdit(b)}>
                                   Edit
                                 </button>
                               )}
                               {canEditOrCancel && (
-                                <button className="edit-btn booking-action-btn booking-action-danger" onClick={() => cancelBooking(b.id)}>
+                                <button type="button" className="edit-btn booking-action-btn booking-action-danger" title={`Cancel ${b.booking_ref}`} onClick={() => cancelBooking(b.id)}>
                                   Cancel
                                 </button>
                               )}

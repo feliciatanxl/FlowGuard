@@ -468,6 +468,15 @@ describe("Clear Local Evaluation Records dialog", () => {
     expect(dialog.getByText(/never contain uploaded images, base64 data or embeddings/)).toBeInTheDocument();
   });
 
+  test("destructive clear action shares the responsive navigation action row", () => {
+    renderPage();
+    const clearButton = screen.getByRole("button", { name: "Clear Local Evaluation Records" });
+    const actionRow = clearButton.closest(".eval-action-row");
+    expect(actionRow).toBeInTheDocument();
+    expect(within(actionRow).getAllByRole("tab")).toHaveLength(4);
+    expect(clearButton.closest("header")).toBeNull();
+  });
+
   test("confirming clears only browser-local records and calls no operational API", () => {
     localStorage.setItem(EVAL_STORAGE_KEY, JSON.stringify([
       { id: "C-1", actualLabel: "P01", predictedLabel: "P01", condition: "Front", source: "Live", origin: "Manual", timestamp: "2026-07-10T02:00:00.000Z" },

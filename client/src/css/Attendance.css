@@ -40,6 +40,43 @@
   color: #94a3b8;
   line-height: 1.5;
 }
+
+.attendance-roster {
+  margin-top: 18px;
+  background: #1e2539;
+  border: 1px solid #2d364f;
+  border-radius: 12px;
+  padding: 20px;
+  min-width: 0;
+}
+
+.attendance-roster-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.attendance-roster-heading h2,
+.attendance-roster-heading p { margin: 0; }
+.attendance-roster-heading h2 { color: #f8fafc; font-size: 1.1rem; }
+.attendance-roster-heading p { color: #94a3b8; font-size: 0.84rem; margin-top: 5px; }
+
+.attendance-roster-count {
+  flex: 0 0 auto;
+  border: 1px solid rgba(59, 130, 246, 0.45);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(59, 130, 246, 0.12);
+  color: #bfdbfe;
+  font-size: 0.78rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.attendance-roster-table-wrap { overflow-x: auto; }
+.attendance-roster-table { min-width: 760px; }
 /* --- Layout Header & Actions --- */
 .attendance-header {
   display: flex;
@@ -133,6 +170,10 @@
 }
 
 @media (max-width: 768px) {
+
+  .attendance-roster { padding: 16px; }
+  .attendance-roster-heading { flex-direction: column; }
+  .attendance-roster-table { min-width: 0; }
 
   /* 1. Stack the title above the toolbar, but keep the toolbar itself on ONE
      row: date filter + Refresh + Launch Gate Terminal share a wrapping flex

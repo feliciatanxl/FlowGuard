@@ -8,6 +8,7 @@ import ImageBasedEvaluation from '../components/ImageBasedEvaluation';
 import useEvaluationParticipants from '../hooks/useEvaluationParticipants';
 import '../css/Dashboard.css';
 import '../css/FacialEvaluation.css';
+import '../css/EvaluationRecorderModal.css';
 import { API_BASE_URL } from '../constants/api';
 import { validateImageFile, createTemporaryObjectUrl, revokeTemporaryObjectUrl } from '../utils/mediaPreview';
 import { CAMERA_SOURCES, CAMERA_STATUS_MESSAGES, isPiCameraReachable, fetchPiSnapshotBitmap } from '../constants/piCamera';
@@ -148,6 +149,17 @@ const FacialEvaluation = () => {
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
   const [syncError, setSyncError] = useState('');
+  const syncCancelRef = useRef(null);
+
+  useEffect(() => {
+    if (!syncConfirmOpen) return undefined;
+    syncCancelRef.current?.focus();
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape' && !syncing) setSyncConfirmOpen(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [syncConfirmOpen, syncing]);
 
   const runParticipantSync = async () => {
     if (syncing) return;
@@ -548,9 +560,9 @@ const FacialEvaluation = () => {
     <div className="dashboard-layout">
       <Sidebar />
       <main className="dashboard-main eval-main">
-        <header className="dashboard-header"><div className="header-titles"><h1>Facial Recognition Evaluation</h1><p>Measure recognition accuracy using evaluator-confirmed ground-truth samples. FlowGuard proof-of-concept evaluation results — not certified biometric accuracy.</p></div><button className="eval-danger-btn" onClick={() => setClearDialogOpen(true)}>Clear Local Evaluation Records</button></header>
+        <header className="dashboard-header"><div className="header-titles"><h1>Facial Recognition Evaluation</h1><p>Measure recognition accuracy using evaluator-confirmed ground-truth samples. FlowGuard proof-of-concept evaluation results — not certified biometric accuracy.</p></div></header>
 
-        {syncConfirmOpen && <div className="eval-recorder-overlay" role="dialog" aria-modal="true" aria-label="Sync Participants"><div className="eval-recorder-modal"><h3>Sync Participants</h3><p>This assigns the next stable P-label to every database user that does not have one yet, regardless of role, enrolment or suspension. Existing labels are never changed or renumbered.</p><div className="eval-recorder-actions"><button onClick={() => setSyncConfirmOpen(false)} disabled={syncing}>Cancel</button><button className="eval-primary-btn" disabled={syncing} onClick={runParticipantSync}>{syncing ? 'Syncing…' : 'Confirm Sync'}</button></div></div></div>}
+        {syncConfirmOpen && <div className="eval-recorder-overlay" role="dialog" aria-modal="true" aria-label="Sync Participants" onClick={() => { if (!syncing) setSyncConfirmOpen(false); }}><div className="eval-recorder-modal" onClick={(event) => event.stopPropagation()}><h3>Sync Participants</h3><p>This assigns the next stable P-label to every database user that does not have one yet, regardless of role, enrolment or suspension. Existing labels are never changed or renumbered.</p><div className="eval-recorder-actions"><button ref={syncCancelRef} onClick={() => setSyncConfirmOpen(false)} disabled={syncing}>Cancel</button><button className="eval-primary-btn" disabled={syncing} onClick={runParticipantSync}>{syncing ? 'Syncing…' : 'Confirm Sync'}</button></div></div></div>}
 
         {clearDialogOpen && <div className="eval-recorder-overlay" role="dialog" aria-modal="true" aria-label="Clear Local Evaluation Records"><div className="eval-recorder-modal"><h3>Clear Local Evaluation Records</h3>
           <p>Identity evaluation records are stored locally in this browser only. Clearing this local evaluation metadata does not remove or modify:</p>
@@ -563,11 +575,16 @@ const FacialEvaluation = () => {
             <li>Bookings</li>
           </ul>
           <p>Access-decision records are cleared only when you separately select the option below. These records never contain uploaded images, base64 data or embeddings.</p>
-          <label><input type="checkbox" checked={clearAccessToo} onChange={(event) => setClearAccessToo(event.target.checked)} /> Also clear local access evaluation records</label><div className="eval-recorder-actions"><button onClick={() => setClearDialogOpen(false)}>Cancel</button><button className="eval-danger-btn" onClick={() => { saveRecords([]); setRecords([]); if (clearAccessToo) saveAccessEvaluationRecords([]); notifyEvaluationRecordsUpdated(); setClearDialogOpen(false); }}>Confirm Clear</button></div></div></div>}        <div className="eval-tabs" role="tablist">
+          <label><input type="checkbox" checked={clearAccessToo} onChange={(event) => setClearAccessToo(event.target.checked)} /> Also clear local access evaluation records</label><div className="eval-recorder-actions"><button onClick={() => setClearDialogOpen(false)}>Cancel</button><button className="eval-danger-btn" onClick={() => { saveRecords([]); setRecords([]); if (clearAccessToo) saveAccessEvaluationRecords([]); notifyEvaluationRecordsUpdated(); setClearDialogOpen(false); }}>Confirm Clear</button></div></div></div>}
+
+        <div className="eval-action-row">
+          <div className="eval-tabs" role="tablist">
           <button role="tab" aria-selected={activeTab === 'overview'} className={`eval-tab ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}>Overview</button>
           <button role="tab" aria-selected={activeTab === 'live'} className={`eval-tab ${activeTab === 'live' ? 'active' : ''}`} onClick={() => setActiveTab('live')}>Run Live Evaluation</button>
           <button role="tab" aria-selected={activeTab === 'records'} className={`eval-tab ${activeTab === 'records' ? 'active' : ''}`} onClick={() => setActiveTab('records')}>Evaluation Records</button>
           <button role="tab" aria-selected={activeTab === 'sim'} className={`eval-tab ${activeTab === 'sim' ? 'active' : ''}`} onClick={() => setActiveTab('sim')}>Simulated Workflow</button>
+          </div>
+          <button className="eval-danger-btn eval-clear-action" onClick={() => setClearDialogOpen(true)}>Clear Local Evaluation Records</button>
         </div>
 
         {activeTab === 'overview' && <>

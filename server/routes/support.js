@@ -4,7 +4,7 @@ const { readLimiter, chatLimiter } = require('../middlewares/rateLimit');
 router.use(readLimiter); // route-wide rate limiting
 const jwt = require('jsonwebtoken');
 const { Op } = require('sequelize');
-const { ChatTranscript, SupportTicket, KnowledgeBase, User, sequelize } = require('../models');
+const { ChatTranscript, SupportTicket, KnowledgeBase, User, IncidentLog, sequelize } = require('../models');
 const { verifyToken, requireRole } = require('../middlewares/auth');
 const { handleChatMessage } = require('../services/supportService');
 
@@ -172,7 +172,57 @@ router.get('/tickets', verifyToken, requireRole('FM'), async (req, res) => {
 // transcriptId is intentionally omitted; there is no chat transcript behind a
 // manual escalation.
 router.post('/tickets', verifyToken, requireRole('FM'), async (req, res) => {
-  const { issueTitle, issueDescription, category, priority, tenantName, unitNumber } = req.body;
+  const { issueTitle, issueDescription, category, priority, tenantName, unitNumber, sourceIncidentId } = req.body;
+
+  // Incident escalation uses the existing ticket schema without inventing a
+  // relationship column. The server loads the incident itself, stores a stable
+  // textual reference, and serializes creates so repeated confirmations cannot
+  // create duplicate tickets.
+  if (sourceIncidentId !== undefined) {
+    if (!Number.isInteger(Number(sourceIncidentId)) || Number(sourceIncidentId) <= 0) {
+      return res.status(400).json({ error: 'sourceIncidentId must be a positive integer.' });
+    }
+    try {
+      const incident = await IncidentLog.findByPk(Number(sourceIncidentId));
+      if (!incident) return res.status(404).json({ error: 'Incident not found.' });
+      const row = typeof incident.toJSON === 'function' ? incident.toJSON() : incident;
+      const stableTitle = `Incident #${row.id}: ${row.camera_location}`.substring(0, 255);
+      const description = [
+        `Escalated from FlowGuard Incident #${row.id}.`,
+        `Location: ${row.camera_location}.`,
+        `Incident type: ${row.status || 'Not recorded'}.`,
+        `Source: ${row.source || 'Not recorded'}.`,
+        `Severity: ${row.severity || 'Not recorded'}.`,
+        row.notes?.trim() ? `Description: ${row.notes.trim()}` : 'Description: No description provided.'
+      ].join('\n');
+      const result = await sequelize.transaction(async (transaction) => {
+        await sequelize.query('SELECT pg_advisory_xact_lock(hashtext(:dedupKey))', {
+          replacements: { dedupKey: `support-incident-${row.id}` },
+          transaction
+        });
+        const existing = await SupportTicket.findOne({ where: { issueTitle: stableTitle }, transaction });
+        if (existing) return { ticket: existing, duplicate: true };
+        const ticket = await SupportTicket.create({
+          issueTitle: stableTitle,
+          issueDescription: description,
+          category: 'Security Incident',
+          priority: ['High', 'Critical'].includes(row.severity) ? 'High' : row.severity === 'Medium' ? 'Medium' : 'Low',
+          status: 'Pending',
+          tenantName: null,
+          unitNumber: null
+        }, { transaction });
+        return { ticket, duplicate: false };
+      });
+      return res.status(result.duplicate ? 200 : 201).json({
+        message: result.duplicate ? 'This incident already has a support ticket.' : 'Incident escalated to Support Tickets.',
+        ticket: result.ticket,
+        duplicate: result.duplicate
+      });
+    } catch (err) {
+      console.error('Incident ticket escalation error:', err);
+      return res.status(500).json({ error: 'Could not escalate the incident to Support Tickets.' });
+    }
+  }
 
   if (!issueTitle?.trim() || !issueDescription?.trim()) {
     return res.status(400).json({ error: 'issueTitle and issueDescription are required.' });

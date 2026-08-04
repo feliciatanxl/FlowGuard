@@ -204,6 +204,11 @@
   min-width: 0;
   overflow-wrap: anywhere;     /* company / driver names wrap cleanly */
 }
+.booking-slot-cell {
+  min-width: 168px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .active-bookings .status-badge { white-space: nowrap; }
 
 /* Compact action group: uniform buttons, primary first, destructive Cancel

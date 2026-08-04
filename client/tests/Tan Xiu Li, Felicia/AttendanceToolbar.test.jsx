@@ -1,6 +1,6 @@
 // Frontend tests — Attendance toolbar still exposes the date filter, Refresh and
-// (FM-only) Launch Gate Terminal, and the FM privacy model is unchanged: FMs see
-// the aggregate occupancy note only, never an individual attendance/lateness table.
+// (FM-only) Launch Gate Terminal. FMs see the current on-site roster without
+// historical attendance or punctuality details.
 import { render, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { vi, describe, test, expect, beforeEach } from 'vitest';
@@ -12,7 +12,17 @@ import Attendance from '../../src/pages/Attendance';
 
 const FM_DATA = {
   role: 'FM',
-  summary: { peopleOnSite: 12, checkedInToday: 8, checkedOutToday: 3 },
+  summary: { peopleOnSite: 1, checkedInToday: 8, checkedOutToday: 3 },
+  currentOccupancy: [
+    {
+      userId: 7,
+      person: 'On-Site FM',
+      role: 'FM',
+      currentStatus: 'IN',
+      checkInTime: '2026-07-15T01:00:00Z',
+      lastAccessEventTime: '2026-07-15T03:00:00Z',
+    },
+  ],
   records: [],
 };
 
@@ -59,13 +69,23 @@ describe('Attendance toolbar (FM)', () => {
     expect(buttons).toContain('Launch Gate Terminal');
   });
 
-  test('FM privacy preserved: aggregate note only, no individual attendance table', async () => {
+  test('FM sees the current roster without historical punctuality details', async () => {
     renderAttendance();
-    await waitFor(() => expect(document.body.textContent).toContain('Aggregate Operational View'));
+    await waitFor(() => expect(document.body.textContent).toContain('Currently On Site'));
 
-    // No per-person table, and no individual punctuality/lateness columns for FM.
-    expect(document.querySelector('.management-table')).toBeNull();
+    const roster = document.querySelector('.attendance-roster-table');
+    expect(roster).toBeTruthy();
+    expect(roster.textContent).toContain('On-Site FM');
+    expect(roster.textContent).toContain('ROLE');
+    expect(roster.textContent).toContain('CURRENT STATUS');
+    expect(roster.textContent).toContain('CHECK-IN');
+    expect(roster.textContent).toContain('LAST ACCESS');
+
+    // Historical per-person attendance and punctuality remain hidden from FM.
+    expect(document.querySelectorAll('.management-table')).toHaveLength(1);
+    expect(document.querySelector('.management-table')).toBe(roster);
     expect(document.body.textContent).not.toContain('PUNCTUALITY');
+    expect(document.body.textContent).not.toContain('LATE');
   });
 });
 

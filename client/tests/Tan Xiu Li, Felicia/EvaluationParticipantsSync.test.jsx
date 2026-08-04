@@ -86,6 +86,17 @@ describe("Evaluation Participants sync card", () => {
     expect(mockAxios.post).not.toHaveBeenCalled();
   });
 
+  test("confirmation receives focus and Escape closes without syncing", async () => {
+    renderPage();
+    await within(getCard()).findByText("P03");
+    openConfirm();
+    const cancel = within(getDialog()).getByRole("button", { name: "Cancel" });
+    expect(cancel).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Sync Participants" })).toBeNull();
+    expect(mockAxios.post).not.toHaveBeenCalled();
+  });
+
   test("confirming calls ONLY the sync endpoint, shows the success count, and reloads participants", async () => {
     mockAxios.post.mockResolvedValue({ data: { synced: 2, participants } });
     renderPage();
