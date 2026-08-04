@@ -791,6 +791,11 @@ const GateScanner = () => {
             Reset
           </button>
           </div>
+          <p className="camera-status-line">
+            {cameraSource === CAMERA_SOURCES.PI
+              ? 'Active source: Raspberry Pi 4 — Camera Module 3'
+              : 'Active source: Laptop Webcam'}
+          </p>
           <p className="camera-status-line" role="status">{cameraStatusMsg}</p>
         </section>
 

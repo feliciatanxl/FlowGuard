@@ -364,6 +364,11 @@ const FaceEnrollment = () => {
             >
               Laptop Webcam
             </button>
+            <span style={{ color: '#e2e8f0', fontSize: '0.78rem', fontWeight: 700 }}>
+              {cameraSource === CAMERA_SOURCES.PI
+                ? 'Active source: Raspberry Pi 4 — Camera Module 3'
+                : 'Active source: Laptop Webcam'}
+            </span>
             <span style={{ color: '#38bdf8', fontSize: '0.78rem' }}>{cameraStatusMsg}</span>
           </div>
         )}

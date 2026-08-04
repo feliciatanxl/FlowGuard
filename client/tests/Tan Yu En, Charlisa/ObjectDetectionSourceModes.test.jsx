@@ -45,8 +45,17 @@ const NO_STREAM_CAMERA = {
   status: 'Online',
 };
 
+const SECOND_SECUREPI_CAMERA = {
+  ...SECUREPI_CAMERA,
+  id: 4,
+  camera_code: 'CAM-SECUREPI-02',
+  camera_name: 'SecurePi Alternate Port',
+  stream_url: 'http://securepi-secondary.local:9100/video_feed',
+};
+
 const trackStop = vi.fn();
 const getUserMedia = vi.fn();
+const securePiFetch = vi.fn();
 const deferred = () => {
   let resolve;
   let reject;
@@ -68,33 +77,41 @@ const loadObjectDetection = async () => {
   ({ default: ObjectDetection } = await import('../../src/pages/ObjectDetection'));
 };
 
-const mockBackend = (cameras, { peopleCount } = {}) => {
+const jsonResponse = (body, ok = true) => ({ ok, json: vi.fn().mockResolvedValue(body) });
+
+const mockBackend = (cameras, options = {}) => {
+  const {
+    peopleCount = { count: 0, detection_active: false },
+    health = { status: 'ok' },
+    alerts = [],
+  } = options;
   axios.get.mockImplementation((url) => {
     if (url === '/api/zones') return Promise.resolve({ data: [] });
     if (url === '/api/cameras') return Promise.resolve({ data: cameras });
-    if (url === '/api/detection-alerts') return Promise.resolve({ data: [] });
+    if (url === '/api/detection-alerts') return Promise.resolve({ data: alerts });
     if (url === '/api/yolo/people-count') return Promise.resolve({ data: { count: 0, detection_active: false } });
-    if (url.endsWith('/health')) return Promise.resolve({ data: { status: 'ok' } });
-    if (url.endsWith('/people-count')) {
-      return peopleCount
-        ? Promise.resolve({ data: peopleCount })
-        : Promise.reject(new Error('SecurePi /people-count not reachable'));
-    }
     return Promise.reject(new Error(`unexpected GET ${url}`));
   });
   axios.post.mockResolvedValue({ data: { detections: [], count: 0 } });
+  securePiFetch.mockImplementation((url) => {
+    if (url.endsWith('/health')) return Promise.resolve(jsonResponse(health));
+    if (url.endsWith('/people-count')) return Promise.resolve(jsonResponse(peopleCount));
+    return Promise.reject(new Error(`unexpected local fetch ${url}`));
+  });
 };
 
 const renderPage = () => render(<MemoryRouter><ObjectDetection /></MemoryRouter>);
 
-const healthCalls = () => axios.get.mock.calls.filter(([url]) => url.endsWith('/health'));
+const healthCalls = () => securePiFetch.mock.calls.filter(([url]) => url.endsWith('/health'));
 // SecurePi's own /people-count status route — distinct from the browser-YOLO
 // /api/yolo/people-count (Node proxy) polled in camera/file mode.
-const securePiPeopleCountCalls = () => axios.get.mock.calls.filter(([url]) => url.endsWith('/people-count') && !url.includes('/api/yolo'));
+const securePiPeopleCountCalls = () => securePiFetch.mock.calls.filter(([url]) => url.endsWith('/people-count'));
 
 beforeEach(async () => {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
+  localStorage.clear();
+  vi.stubGlobal('fetch', securePiFetch);
   // Deterministic baseline for every test: no SecurePi env fallback configured,
   // regardless of what client/.env sets on the developer's machine. Tests that need a
   // fallback explicitly vi.stubEnv + reload (see 'falls back to VITE_SECUREPI_STREAM_URL...').
@@ -110,6 +127,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 describe('SecurePi Hardware mode', () => {
@@ -149,7 +167,8 @@ describe('SecurePi Hardware mode', () => {
     await screen.findByRole('option', { name: /CAM-01/ });
     fireEvent.click(screen.getByRole('button', { name: 'SecurePi Hardware' }));
 
-    expect(await screen.findByText(/SecurePi stream not configured/)).toBeTruthy();
+    expect(await screen.findByText(/selected camera does not have a valid SecurePi stream URL/)).toBeTruthy();
+    expect(screen.getByText('Active source: Laptop Webcam')).toBeTruthy();
     expect(screen.queryByAltText('SecurePi live hardware camera')).toBeNull();
     expect(healthCalls()).toHaveLength(0);
   });
@@ -170,20 +189,104 @@ describe('SecurePi Hardware mode', () => {
     expect(healthCalls()[0][0]).toBe('http://test-securepi:9000/health');
   });
 
-  test('manual reconnect appends a cache-busting query to the stream URL', async () => {
+  test('failed health keeps the laptop webcam active and explicit Retry SecurePi can connect', async () => {
     mockBackend([SECUREPI_CAMERA]);
+    let healthAttempts = 0;
+    securePiFetch.mockImplementation((url) => {
+      if (url.endsWith('/health')) {
+        healthAttempts += 1;
+        return healthAttempts === 1
+          ? Promise.reject(new TypeError('network unavailable'))
+          : Promise.resolve(jsonResponse({ status: 'ok' }));
+      }
+      if (url.endsWith('/people-count')) return Promise.resolve(jsonResponse({ count: 1, detection_active: true }));
+      return Promise.reject(new Error(`unexpected local fetch ${url}`));
+    });
     renderPage();
 
     await screen.findByRole('option', { name: /CAM-SECUREPI-01/ });
     fireEvent.click(screen.getByRole('button', { name: 'SecurePi Hardware' }));
 
-    const img = await screen.findByAltText('SecurePi live hardware camera');
-    fireEvent.error(img); // simulate the MJPEG stream dropping
+    expect(await screen.findByText('SecurePi IMX500 unavailable — using laptop camera fallback')).toBeTruthy();
+    expect(screen.getByText('Active source: Laptop Webcam')).toBeTruthy();
+    expect(screen.queryByAltText('SecurePi live hardware camera')).toBeNull();
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+    expect(securePiPeopleCountCalls()).toHaveLength(0);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Reconnect SecurePi' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry SecurePi' }));
 
     const reconnected = await screen.findByAltText('SecurePi live hardware camera');
-    expect(reconnected).toHaveAttribute('src', 'http://172.20.10.2:8001/video_feed?t=1');
+    expect(reconnected).toHaveAttribute('src', 'http://172.20.10.2:8001/video_feed');
+    expect(screen.getByText('Active source: Raspberry Pi 5 — Sony IMX500 SecurePi')).toBeTruthy();
+    await waitFor(() => expect(trackStop).toHaveBeenCalledTimes(1));
+  });
+
+  test('a failed Retry SecurePi remains on one laptop webcam without polling people-count', async () => {
+    mockBackend([SECUREPI_CAMERA]);
+    securePiFetch.mockRejectedValue(new TypeError('network unavailable'));
+    renderPage();
+
+    await screen.findByRole('option', { name: /CAM-SECUREPI-01/ });
+    fireEvent.click(screen.getByRole('button', { name: 'SecurePi Hardware' }));
+    await screen.findByText('SecurePi IMX500 unavailable — using laptop camera fallback');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry SecurePi' }));
+
+    await waitFor(() => expect(healthCalls()).toHaveLength(2));
+    expect(await screen.findByText('Active source: Laptop Webcam')).toBeTruthy();
+    expect(screen.queryByAltText('SecurePi live hardware camera')).toBeNull();
+    expect(securePiPeopleCountCalls()).toHaveLength(0);
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
+  });
+
+  test('changing the selected camera aborts the old health probe before count polling', async () => {
+    mockBackend([SECUREPI_CAMERA, SECOND_SECUREPI_CAMERA]);
+    let oldSignal;
+    securePiFetch.mockImplementation((_url, options) => {
+      oldSignal = options.signal;
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+      });
+    });
+    renderPage();
+
+    await screen.findByRole('option', { name: /CAM-SECUREPI-02/ });
+    fireEvent.click(screen.getByRole('button', { name: 'SecurePi Hardware' }));
+    await waitFor(() => expect(oldSignal).toBeDefined());
+    fireEvent.change(document.querySelector('.od-camera-picker'), { target: { value: '4' } });
+
+    expect(oldSignal.aborted).toBe(true);
+    expect(screen.getByText('Active source: Laptop Webcam')).toBeTruthy();
+    expect(securePiPeopleCountCalls()).toHaveLength(0);
+  });
+
+  test('uses a camera-scoped browser override and leaves Camera Inventory unchanged', async () => {
+    mockBackend([SECUREPI_CAMERA]);
+    renderPage();
+    await screen.findByRole('option', { name: /CAM-SECUREPI-01/ });
+
+    fireEvent.change(screen.getByLabelText('SecurePi URL for this browser'), {
+      target: { value: 'http://securepi-browser.local:9200/video_feed' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save local override' }));
+    expect(await screen.findByText(/Browser-local override active/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'SecurePi Hardware' }));
+
+    await screen.findByAltText('SecurePi live hardware camera');
+    expect(healthCalls()[0][0]).toBe('http://securepi-browser.local:9200/health');
+    expect(SECUREPI_CAMERA.stream_url).toBe('http://172.20.10.2:8001/video_feed');
+  });
+
+  test('a local SecurePi failure does not hide cloud-backed alert records', async () => {
+    mockBackend([SECUREPI_CAMERA], {
+      alerts: [{ id: 91, status: 'Active', alert_type: 'PEST_DETECTION', object_class: 'rat', zone_name: 'Dock', camera_location: 'CAM-SECUREPI-01' }],
+    });
+    securePiFetch.mockRejectedValue(new TypeError('network unavailable'));
+    renderPage();
+
+    expect((await screen.findAllByText('Pest detected')).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: 'SecurePi Hardware' }));
+    await screen.findByText('SecurePi IMX500 unavailable — using laptop camera fallback');
+    expect(screen.getAllByText('Pest detected').length).toBeGreaterThan(0);
   });
 });
 
@@ -200,8 +303,8 @@ describe('SecurePi Hardware mode - live people count', () => {
     expect(await screen.findByText('3 People Detected')).toBeTruthy();
   });
 
-  test('a Pi-unreachable /people-count response falls back to 0 instead of leaving a stale count', async () => {
-    mockBackend([SECUREPI_CAMERA]); // no peopleCount stub => /people-count rejects
+  test('an invalid people-count response clears stale data and remains on laptop fallback', async () => {
+    mockBackend([SECUREPI_CAMERA], { peopleCount: null });
     renderPage();
 
     await screen.findByRole('option', { name: /CAM-SECUREPI-01/ });
@@ -209,6 +312,7 @@ describe('SecurePi Hardware mode - live people count', () => {
 
     await waitFor(() => expect(securePiPeopleCountCalls().length).toBeGreaterThan(0));
     expect(await screen.findByText('0 People Detected')).toBeTruthy();
+    expect(await screen.findByText('SecurePi IMX500 unavailable — using laptop camera fallback')).toBeTruthy();
   });
 
   test('a stale (detection_active: false) Pi response is reflected, not treated as a live count', async () => {
@@ -220,6 +324,8 @@ describe('SecurePi Hardware mode - live people count', () => {
 
     await waitFor(() => expect(securePiPeopleCountCalls().length).toBeGreaterThan(0));
     expect(await screen.findByText('0 People Detected')).toBeTruthy();
+    expect(screen.getByText('SecurePi responding but frame is stale')).toBeTruthy();
+    expect(screen.getByText(/Connection/).parentElement).toHaveTextContent('Degraded');
   });
 
   test('webcam mode never calls the SecurePi /people-count route (only the browser-YOLO endpoint)', async () => {

@@ -43,6 +43,7 @@ describe("GateScanner camera source", () => {
     await waitFor(() => {
       expect(screen.getByText("Pi Gate Camera connected")).toBeTruthy();
     });
+    expect(screen.getByText('Active source: Raspberry Pi 4 — Camera Module 3')).toBeTruthy();
     const preview = screen.getByAltText(/raspberry pi gate camera live preview/i);
     expect(preview.getAttribute("src")).toBe(PI_CAMERA_STREAM_URL);
     // Pi primary → the laptop webcam was never requested.
@@ -57,6 +58,7 @@ describe("GateScanner camera source", () => {
     await waitFor(() => {
       expect(screen.getByText("Pi Camera unavailable — using laptop webcam fallback")).toBeTruthy();
     });
+    expect(screen.getByText('Active source: Laptop Webcam')).toBeTruthy();
     expect(mockGetUserMedia).toHaveBeenCalled();
     // No Pi preview while on webcam fallback.
     expect(screen.queryByAltText(/raspberry pi gate camera live preview/i)).toBeNull();

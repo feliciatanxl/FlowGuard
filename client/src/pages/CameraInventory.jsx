@@ -1,9 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { Link } from 'react-router';
 import Sidebar from '../components/Sidebar';
 import UiIcon from '../components/UiIcon';
 import { ROLES } from '../constants/roles';
+import {
+  SECUREPI_CONNECTION_STATUS,
+  testSecurePiConnection,
+  validateSecurePiStreamUrl,
+} from '../utils/securepiStream';
 import '../css/Dashboard.css';
 import '../css/Cameras.css';
 
@@ -20,7 +25,16 @@ const VIDEO_SOURCES = [
 ];
 // Sentinel select value for a user-supplied HTTP/MJPEG stream (e.g. SecurePi on a Raspberry Pi).
 const CUSTOM_SOURCE = 'custom';
-const isHttpStreamUrl = (value) => /^https?:\/\//i.test(String(value || '').trim());
+
+const securePiTestMessage = (status) => {
+  if (status === SECUREPI_CONNECTION_STATUS.CONNECTED) return 'SecurePi connected';
+  if (status === SECUREPI_CONNECTION_STATUS.STALE) return 'SecurePi responding but frame is stale';
+  if (status === SECUREPI_CONNECTION_STATUS.TIMEOUT) return 'SecurePi connection timed out';
+  if (status === SECUREPI_CONNECTION_STATUS.PERMISSION_REQUIRED) return 'Local Network Access permission required';
+  if (status === SECUREPI_CONNECTION_STATUS.INVALID_RESPONSE) return 'Invalid SecurePi response';
+  if (status === SECUREPI_CONNECTION_STATUS.INVALID_URL) return 'Invalid SecurePi URL';
+  return 'SecurePi unreachable from this network';
+};
 
 const emptyCamera = {
   camera_code: '',
@@ -53,6 +67,8 @@ export default function CameraInventory() {
   const [saving, setSaving] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [securePiTest, setSecurePiTest] = useState({ status: 'idle', message: '', details: null });
+  const securePiTestControllerRef = useRef(null);
 
   const token = localStorage.getItem('accessToken');
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
@@ -90,8 +106,17 @@ export default function CameraInventory() {
     };
 
     void loadInventory();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      securePiTestControllerRef.current?.abort();
+    };
   }, [fetchCameras, fetchZones]);
+
+  const resetSecurePiTest = () => {
+    securePiTestControllerRef.current?.abort();
+    securePiTestControllerRef.current = null;
+    setSecurePiTest({ status: 'idle', message: '', details: null });
+  };
 
   const filteredCameras = useMemo(() => (
     cameras.filter((cam) => (
@@ -106,6 +131,7 @@ export default function CameraInventory() {
   }), [cameras]);
 
   const startCreate = () => {
+    resetSecurePiTest();
     const nextNumber = String(cameras.length + 1).padStart(2, '0');
     setForm({ ...emptyCamera, camera_code: `CAM-${nextNumber}` });
     setEditingId(null);
@@ -115,6 +141,7 @@ export default function CameraInventory() {
   };
 
   const startEdit = (cam) => {
+    resetSecurePiTest();
     const isPreset = VIDEO_SOURCES.some((source) => source.value === cam.stream_url);
     setForm({
       camera_code: cam.camera_code,
@@ -134,6 +161,7 @@ export default function CameraInventory() {
   };
 
   const resetForm = () => {
+    resetSecurePiTest();
     setForm(emptyCamera);
     setEditingId(null);
     setFormError('');
@@ -147,8 +175,9 @@ export default function CameraInventory() {
       return;
     }
     const isCustomSource = form.stream_source === CUSTOM_SOURCE;
-    if (isCustomSource && !isHttpStreamUrl(form.custom_stream_url)) {
-      setFormError('Custom stream URL must start with http:// or https:// (e.g. http://<pi-ip>:8001/video_feed).');
+    const streamValidation = isCustomSource ? validateSecurePiStreamUrl(form.custom_stream_url) : null;
+    if (streamValidation && !streamValidation.valid) {
+      setFormError(streamValidation.error);
       return;
     }
 
@@ -158,7 +187,7 @@ export default function CameraInventory() {
       location: form.location.trim(),
       zone_id: form.zone_id || null,
       status: form.status,
-      stream_url: isCustomSource ? form.custom_stream_url.trim() : form.stream_source,
+      stream_url: isCustomSource ? streamValidation.normalized : form.stream_source,
       camera_type: form.camera_type.trim() || null,
       notes: form.notes.trim() || null,
     };
@@ -183,6 +212,33 @@ export default function CameraInventory() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const testSecurePi = async () => {
+    resetSecurePiTest();
+    const validation = validateSecurePiStreamUrl(form.custom_stream_url);
+    if (!validation.valid) {
+      setSecurePiTest({ status: SECUREPI_CONNECTION_STATUS.INVALID_URL, message: 'Invalid SecurePi URL', details: null });
+      setFormError(validation.error);
+      return;
+    }
+
+    setFormError('');
+    const controller = new AbortController();
+    securePiTestControllerRef.current = controller;
+    setSecurePiTest({ status: 'testing', message: 'Testing SecurePi…', details: null });
+    const result = await testSecurePiConnection({
+      streamUrl: validation.normalized,
+      timeoutMs: 3500,
+      signal: controller.signal,
+    });
+    if (controller.signal.aborted) return;
+    securePiTestControllerRef.current = null;
+    setSecurePiTest({
+      status: result.status,
+      message: securePiTestMessage(result.status),
+      details: result.ok ? result.details : null,
+    });
   };
 
   const deleteCamera = async (id) => {
@@ -334,9 +390,42 @@ export default function CameraInventory() {
                 <label className="wide">Location<input value={form.location} onChange={(event) => setForm((prev) => ({ ...prev, location: event.target.value }))} placeholder="Zone G - Dispatch" /></label>
                 <label>Assigned Zone<select value={form.zone_id} onChange={(event) => setForm((prev) => ({ ...prev, zone_id: event.target.value }))}><option value="">Unassigned</option>{zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.zone_name}</option>)}</select></label>
                 <label>Status<select value={form.status} onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value }))}>{CAMERA_STATUSES.map((status) => <option key={status}>{status}</option>)}</select></label>
-                <label>Video Source<select value={form.stream_source} onChange={(event) => setForm((prev) => ({ ...prev, stream_source: event.target.value }))}>{VIDEO_SOURCES.map((source) => <option key={source.value} value={source.value}>{source.label}</option>)}<option value={CUSTOM_SOURCE}>Custom hardware/MJPEG URL</option></select></label>
+                <label>Video Source<select value={form.stream_source} onChange={(event) => { resetSecurePiTest(); setForm((prev) => ({ ...prev, stream_source: event.target.value })); }}>{VIDEO_SOURCES.map((source) => <option key={source.value} value={source.value}>{source.label}</option>)}<option value={CUSTOM_SOURCE}>Custom hardware/MJPEG URL</option></select></label>
                 {form.stream_source === CUSTOM_SOURCE && (
-                  <label className="wide">Stream URL<input value={form.custom_stream_url} onChange={(event) => setForm((prev) => ({ ...prev, custom_stream_url: event.target.value }))} placeholder="http://<pi-ip>:8001/video_feed" /></label>
+                  <div className="camera-securepi-test wide">
+                    <label>Stream URL<input value={form.custom_stream_url} onChange={(event) => { resetSecurePiTest(); setForm((prev) => ({ ...prev, custom_stream_url: event.target.value })); }} placeholder="http://securepi.local:5001/video_feed" /></label>
+                    <button
+                      type="button"
+                      className="camera-secondary-btn"
+                      disabled={securePiTest.status === 'testing'}
+                      onClick={() => { void testSecurePi(); }}
+                    >
+                      {securePiTest.status === 'testing' ? 'Testing SecurePi…' : 'Test SecurePi Connection'}
+                    </button>
+                    {securePiTest.message && (
+                      <div className={`camera-securepi-result ${securePiTest.status}`} role="status">
+                        <strong>{securePiTest.message}</strong>
+                        {securePiTest.status === SECUREPI_CONNECTION_STATUS.PERMISSION_REQUIRED && (
+                          <span>Allow Local Network Access for this FlowGuard site, then try again.</span>
+                        )}
+                        {[SECUREPI_CONNECTION_STATUS.UNREACHABLE, SECUREPI_CONNECTION_STATUS.TIMEOUT].includes(securePiTest.status) && (
+                          <span>Local device not reachable from this network. Confirm this computer and the Raspberry Pi are on the same hotspot or LAN.</span>
+                        )}
+                        {securePiTest.details && (
+                          <div className="camera-securepi-detail-grid">
+                            {securePiTest.details.cameraDescription && <span>Camera <strong>{securePiTest.details.cameraDescription}</strong></span>}
+                            {securePiTest.details.deviceId && <span>Device ID <strong>{securePiTest.details.deviceId}</strong></span>}
+                            {securePiTest.details.zone && <span>Zone <strong>{securePiTest.details.zone}</strong></span>}
+                            <span>Detection <strong>{securePiTest.details.detectionActive ? 'Active' : 'Standby'}</strong></span>
+                            <span>Visible people <strong>{securePiTest.details.visiblePeople}</strong></span>
+                            {securePiTest.details.frameAgeSeconds !== null && <span>Frame age <strong>{securePiTest.details.frameAgeSeconds}s</strong></span>}
+                            <span>Resolved port <strong>{securePiTest.details.resolvedPort}</strong></span>
+                          </div>
+                        )}
+                        <small>This confirms only that the local HTTP service is reachable; it does not validate the model or detection accuracy.</small>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
               <details className="camera-advanced-details" open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
