@@ -69,6 +69,17 @@ describe('FM dashboard analytics panels', () => {
     expect(screen.getAllByText('12 Jul').length).toBeGreaterThan(0);
   });
 
+  test('places both analytics panels as equivalent direct children of the shared grid', async () => {
+    mountFM(SAMPLE);
+    await screen.findByText('Seven-Day Alert Trend');
+
+    const grid = document.querySelector('.dashboard-analytics-grid');
+    const panels = Array.from(grid.children);
+    expect(panels).toHaveLength(2);
+    expect(panels.every((panel) => panel.classList.contains('analytics-panel'))).toBe(true);
+    expect(panels.every((panel) => panel.parentElement === grid)).toBe(true);
+  });
+
   test('shows empty states without crashing when analytics are zero/empty', async () => {
     mountFM({
       alertTrend7Days: SEVEN_DAYS.map((d) => ({ ...d, high: 0, critical: 0 })),

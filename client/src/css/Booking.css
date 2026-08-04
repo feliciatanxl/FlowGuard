@@ -193,7 +193,7 @@
 /* Bookings table scrolls horizontally (scoped to logistics) rather than being
    clipped by the global `.table-container { overflow: hidden }`. */
 .active-bookings .table-container { overflow-x: auto; }
-.active-bookings .management-table { min-width: 820px; } /* 8 columns; full-width card fits a laptop without scroll */
+.active-bookings .management-table { min-width: 920px; } /* intentional internal scroll keeps all 8 columns readable */
 
 /* --- Bookings table: readable cells + tidy action column --- */
 .booking-ref-cell {
@@ -211,31 +211,29 @@
 }
 .active-bookings .status-badge { white-space: nowrap; }
 
-/* Compact action group: uniform buttons, primary first, destructive Cancel
-   full-width on its own row — no uneven wrapping, no stretched rows. */
-.booking-actions-cell { width: 240px; }
+/* One action per row: status transition, Edit, then destructive Cancel. */
+.booking-actions-cell { width: 168px; min-width: 168px; }
 .booking-action-group {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(96px, 1fr));
-  gap: 6px;
-  max-width: 232px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 156px;
 }
 .booking-action-btn {
   margin: 0;
   width: 100%;
-  min-height: 34px;
-  padding: 6px 10px;
+  height: 36px;
+  min-height: 36px;
+  padding: 7px 10px;
   text-align: center;
   white-space: nowrap;
 }
-.booking-action-btn:only-child { grid-column: 1 / -1; }
 .booking-action-primary {
   background: #1d4ed8;
   color: #fff;
 }
 .booking-action-primary:hover { background: #2563eb; color: #fff; }
 .booking-action-danger {
-  grid-column: 1 / -1;         /* destructive Cancel sits alone below */
   background: rgba(244, 63, 94, 0.1);
   border: 1px solid rgba(244, 63, 94, 0.35);
   color: #fb7185;

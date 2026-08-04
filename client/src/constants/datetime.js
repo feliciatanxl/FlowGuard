@@ -123,13 +123,25 @@ export const isoToSingaporeLocalInput = (value) => {
   return `${bag.year}-${bag.month}-${bag.day}T${hour}:${bag.minute}`;
 };
 
-/** Booking-slot display in Singapore time: "27 Jul 2026, 6:01 PM". */
-export const formatSingaporeBookingDateTime = (value, fallback = '—') => {
+/** Minute-precision Singapore display: "27 Jul 2026, 6:01 PM". */
+export const formatSingaporeDateTime = (value, fallback = '—') => {
   if (!value) return fallback;
   const date = new Date(value);
   if (isNaN(date.getTime())) return fallback;
   return `${sgDate(date)}, ${sgTime(date)}`;
 };
+
+/** Singapore calendar-date display: "27 Jul 2026". */
+export const formatSingaporeDate = (value, fallback = '—') => {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (isNaN(date.getTime())) return fallback;
+  return sgDate(date);
+};
+
+/** Booking-slot display alias retained for existing logistics callers. */
+export const formatSingaporeBookingDateTime = (value, fallback = '—') =>
+  formatSingaporeDateTime(value, fallback);
 
 // ---------------------------------------------------------------------------
 // 1–2 hour booking-window rule (client mirror of server/utils/bookingDateTime.js).

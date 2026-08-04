@@ -358,8 +358,8 @@ const Users = () => {
                           <td data-label="Role">{renderRoleBadge(u.role)}</td>
                           <td className="access-cell email-cell" data-label="Email" title={u.email}>{u.email}</td>
                           <td data-label="Status">{renderStatusBadge(u)}</td>
-                          <td data-label="Face ID">{renderFaceIdTag(u)}</td>
-                          <td className="time-cell" data-label="Joined">{formatJoined(u)}</td>
+                          <td className="user-face-id-cell" data-label="Face ID">{renderFaceIdTag(u)}</td>
+                          <td className="time-cell user-joined-cell" data-label="Joined">{formatJoined(u)}</td>
                           <td className="actions-cell" data-label="Actions">{renderUserActions(u, isSelf)}</td>
                         </tr>
                       );

@@ -121,6 +121,9 @@
 .eval-primary-btn { background: #1d4ed8; border-color: #3b82f6; color: #fff; }
 .eval-secondary-btn { background: #1e293b; color: #e2e8f0; }
 .eval-danger-btn { background: rgba(239, 68, 68, 0.12); border-color: #ef4444; color: #f87171; }
+.eval-primary-btn:hover:not(:disabled) { background: #2563eb; }
+.eval-secondary-btn:hover:not(:disabled) { background: #334155; border-color: #475569; }
+.eval-danger-btn:hover:not(:disabled) { background: rgba(239, 68, 68, 0.22); }
 
 .eval-live-form { border: 1px dashed #334155; border-radius: 10px; padding: 12px; margin: 12px 0; }
 .eval-live-form h3 { margin: 0 0 8px; font-size: 0.95rem; }
@@ -166,7 +169,33 @@
 .eval-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
 .eval-table th, .eval-table td { border: 1px solid #2d364f; padding: 6px 10px; text-align: left; }
 .eval-table thead th { background: #111827; color: #94a3b8; }
-.eval-notes-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.eval-records-table { min-width: 880px; }
+.eval-record-actions-cell { width: 96px; min-width: 96px; }
+.eval-record-action-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 84px;
+}
+.eval-record-action-stack > button {
+  width: 100%;
+  height: 36px;
+  min-height: 36px;
+  margin: 0;
+  padding: 6px 10px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.eval-record-edit-details td { background: #111827; }
+.eval-record-edit-details label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+.eval-record-edit-details input { flex: 1; min-width: 160px; }
 
 .eval-source-tag { padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; }
 .eval-source-tag.live { background: rgba(16, 185, 129, 0.15); color: #34d399; }
@@ -201,7 +230,6 @@
 .eval-map-row { display: grid; grid-template-columns: 70px 1fr auto; align-items: center; gap: 10px; padding: 8px 10px; background: #0b0f1a; border: 1px solid #2d364f; border-radius: 8px; }
 .eval-error { color: #fecdd3; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 8px; padding: 8px 10px; }
 .eval-success { color: #bbf7d0; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 8px; padding: 8px 10px; }
-.eval-table td .eval-secondary-btn, .eval-table td .eval-danger-btn { margin: 2px; }
 /* --- Guided simulation CRUD additions --- */
 .eval-guidance ul {
     margin: 8px 0 0;

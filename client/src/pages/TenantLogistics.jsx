@@ -16,6 +16,7 @@ import {
   validateBookingWindowLocal,
   formatDurationMinutes,
 } from '../constants/datetime';
+import { buildBookingNotice } from '../utils/bookingNotice';
 
 const BAYS = ['Bay A', 'Bay B'];
 const STATUSES = ['Pending', 'Confirmed', 'Arrived', 'Completed', 'Cancelled'];
@@ -139,12 +140,6 @@ const TenantLogistics = () => {
     setIsFormOpen(true);
   };
 
-  const describeWhatsapp = (wa) => {
-    if (!wa) return '';
-    if (wa.simulated) return ' (WhatsApp simulated — disabled)';
-    return wa.success ? ' (WhatsApp sent)' : ' (WhatsApp delivery pending)';
-  };
-
   const submitBookingForm = async (e) => {
     e.preventDefault();
     // Backend is authoritative, but block an obviously-invalid window client-side too
@@ -168,7 +163,7 @@ const TenantLogistics = () => {
         setNotice('Booking updated.');
       } else {
         const res = await axios.post(`${API_BASE_URL}/api/bookings/create`, payload, authHeader);
-        setNotice(`Booking created (status: Pending).${describeWhatsapp(res.data?.whatsapp)}`);
+        setNotice(buildBookingNotice('Booking created (Pending).', res.data));
       }
       setForm(emptyForm);
       setIsFormOpen(false);
@@ -185,7 +180,7 @@ const TenantLogistics = () => {
   const updateStatus = async (id, status) => {
     try {
       const res = await axios.patch(`${API_BASE_URL}/api/bookings/${id}/status`, { status }, authHeader);
-      setNotice(`Booking ${status}.${describeWhatsapp(res.data?.whatsapp)}`);
+      setNotice(buildBookingNotice(`Booking ${status}.`, res.data));
       fetchBookings();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to update status.');
@@ -195,7 +190,7 @@ const TenantLogistics = () => {
   const cancelBooking = async (id) => {
     try {
       const res = await axios.patch(`${API_BASE_URL}/api/bookings/${id}/cancel`, {}, authHeader);
-      setNotice(`Booking cancelled.${describeWhatsapp(res.data?.whatsapp)}`);
+      setNotice(buildBookingNotice('Booking cancelled.', res.data));
       fetchBookings();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to cancel booking.');
@@ -354,7 +349,7 @@ const TenantLogistics = () => {
                         <td data-label="Status"><span className={`status-badge ${String(b.status).toLowerCase()}`}>{b.status}</span></td>
                         <td data-label="Actions" className="booking-actions-cell">
                           {hasActions ? (
-                            <div className="booking-action-group" aria-label={`Actions for ${b.booking_ref}`}>
+                            <div className="booking-action-group" data-layout="vertical" aria-label={`Actions for ${b.booking_ref}`}>
                               {canManage && nextStatus && (
                                 <button type="button" className="edit-btn booking-action-btn booking-action-primary" title={`Mark ${b.booking_ref} as ${nextStatus}`} onClick={() => updateStatus(b.id, nextStatus)}>
                                   Mark {nextStatus}

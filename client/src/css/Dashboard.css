@@ -618,10 +618,19 @@
    ========================================= */
 .dashboard-analytics-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
   align-items: stretch;
   margin-bottom: 30px;
+}
+
+/* IncidentAnalytics has an adjacent-panel spacing rule for its vertical flow.
+   Neutralise that inherited margin inside the Dashboard grid so both direct
+   children share the exact same grid-row rectangle. */
+.dashboard-analytics-grid > .analytics-panel,
+.dashboard-analytics-grid > .analytics-panel + .analytics-panel {
+  margin: 0;
+  align-self: stretch;
 }
 
 .analytics-panel {
@@ -1149,7 +1158,7 @@
      fixed chatbot FAB and reCAPTCHA badge in the lower-right never cover the
      last row's actions. */
   .dashboard-main {
-    padding: 90px 20px calc(96px + env(safe-area-inset-bottom));
+    padding: 90px 20px calc(144px + env(safe-area-inset-bottom));
   }
 
   .dashboard-header {
