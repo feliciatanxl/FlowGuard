@@ -50,7 +50,7 @@ All routes require a valid JWT (`Authorization: Bearer <token>`). Model: `server
 | `camera_name` | string | ✅ | |
 | `location` | string | ✅ | Free-text location description. |
 | `zone_id` | integer, nullable | – | Must reference an existing zone or is rejected. |
-| `stream_url` | string, nullable | – | Video source URL/path. |
+| `stream_url` | string, nullable | – | Video source URL/path. For a Raspberry Pi 5 / Sony IMX500 SecurePi camera this is the authoritative MJPEG stream URL the browser reads directly over the local network; see the [SecurePi edge-AI reference](securepi-flowguard-edge-ai.md) and the canonical external runtime [charlisaa/updated_securePi_FlowGuard](https://github.com/charlisaa/updated_securePi_FlowGuard). |
 | `status` | enum | – | One of `Online`, `Offline`, `Maintenance`, `Disabled`. Defaults to `Online`. |
 | `camera_type` | string, nullable | – | e.g. "Fixed", "PTZ", "Dome". |
 | `last_active_at` | datetime | – | Server-set on create/update; not client-writable. |

@@ -24,6 +24,19 @@ An honest summary of how AI assistants were used while building my modules
   WhatsApp/DB credentials come from environment variables only.
 - Made the final Git commits with meaningful messages.
 
+## Later-stage work (3–4 August 2026)
+
+Near submission I used AI mainly for integration, deployment and documentation accuracy rather than new features:
+
+- **Staging readiness & deployment:** diagnosed the Cloud Run `DetectionAlert` schema-sync failure (read-only migration guidance), documented the staging client URL and test-account matrix in `deployment.md`, removed a hardcoded FM seed password, and documented the Gemini Cloud Run runtime settings — without committing, deploying, running migrations, or revealing any secret.
+- **Independent Pi 4 vs Pi 5 handling:** kept the Raspberry Pi 4 Camera Module 3 as the facial-recognition node and integrated the Raspberry Pi 5 + Sony IMX500 SecurePi stream through Camera Inventory as a separate source, so one Pi being unreachable never marks the whole app offline and each falls back to the laptop webcam independently.
+- **SecurePi contract compatibility:** matched the real minimal SecurePi service contract (`status:"online"` + `latest_frame_age_seconds`, optional `/people-count` and `/snapshot`, MJPEG first frame as final confirmation) and fixed the client so a post-health `/people-count` CORS/404 failure is treated as an unsupported optional capability rather than the service being unreachable.
+- **Role-based attendance & RBAC:** the V-Patrol Patrol-only / Check In / Check Out control and server-authoritative `POST /api/attendance/action` (bounded `cycleId` idempotency, no new schema column), plus backend-enforced FM / Tenant / Staff attendance visibility, Activity Log date/time in Asia/Singapore, and `tenantId`-scoped booking privacy.
+- **Documentation & design synchronisation:** group docs, diagrams and rubric evidence kept consistent with the real code, and stale automated-test evidence corrected.
+
+The canonical external SecurePi runtime — the Raspberry Pi 5 + Sony IMX500 build physically used with this FlowGuard integration — is
+[charlisaa/updated_securePi_FlowGuard](https://github.com/charlisaa/updated_securePi_FlowGuard). FlowGuard stores/configures its stream URL and consumes its local service and edge alerts; it does not own or deploy that runtime. AI did not independently validate physical hardware — the connection, health response and MJPEG stream were confirmed by manual testing on the device.
+
 ## Secrets & safety
 - **No secrets committed.** All credentials are placeholders in `.env.example`; real values live in
   gitignored `.env` files. WhatsApp real-send is env-gated and off by default; tokens/phones are

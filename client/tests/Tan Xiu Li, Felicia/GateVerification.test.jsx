@@ -123,13 +123,27 @@ describe("QR result handling", () => {
 });
 
 describe("PoC OCR", () => {
-  test("8. OCR result is shown normalised with confidence", async () => {
+  test("8. readable OCR result is shown normalised with confidence", async () => {
     renderPage();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Start Camera/i })); });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Capture & Read Plate/i })); });
     expect(await screen.findByText("GBG1234M")).toBeTruthy(); // normalised
     expect(screen.getByText(/88%/)).toBeTruthy();             // confidence
     expect(h.recognizePlate).toHaveBeenCalled();
+  });
+
+  test("8b. unreadable OCR shows 'Not detected' + rescan guidance, never a plate", async () => {
+    h.recognizePlate.mockResolvedValueOnce({ raw: "YWERETANCLPPEMYY", normalized: "", confidence: 4, readable: false });
+    renderPage();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Start Camera/i })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Capture & Read Plate/i })); });
+    // Normalised plate is "Not detected" (not a collapsed garbage string).
+    expect(await screen.findByText("Not detected")).toBeTruthy();
+    expect(screen.getByText(/No valid vehicle plate could be read/i)).toBeTruthy();
+    // Raw OCR text is retained for troubleshooting only.
+    expect(screen.getByText("YWERETANCLPPEMYY")).toBeTruthy();
+    // It is NOT called a mismatch anywhere.
+    expect(screen.queryByText(/Mismatch/i)).toBeNull();
   });
 });
 
@@ -162,6 +176,23 @@ describe("Decision states", () => {
       booking: { booking_ref: "FG-ABC123", loading_bay: "Bay A", status: "Confirmed" },
     }, { plate: "GBG 9999Z" });
     expect(await screen.findByText("ACCESS DENIED")).toBeTruthy();
+    expect(screen.getByText(/Manual verification required/i)).toBeTruthy();
+    expect(screen.getByLabelText("Override reason")).toBeTruthy();
+  });
+
+  test("10b. OCR_UNREADABLE shows the rescan warning state, not a mismatch", async () => {
+    await gotoManualAndVerify({
+      access: "DENIED", reasonCode: "OCR_UNREADABLE", plateMatched: null,
+      expectedPlate: "SKL9081A", observedPlate: null, manualReviewRequired: true,
+      booking: { booking_ref: "FG-ABC123", loading_bay: "Bay A", status: "Confirmed" },
+    }, { plate: "GBG 1234M" });
+    // Warning header, not "ACCESS DENIED / Mismatch".
+    expect(await screen.findByText(/UNREADABLE — RESCAN REQUIRED/i)).toBeTruthy();
+    // The plate-check indicator is never the "✕ Mismatch" chip.
+    expect(screen.queryByText("✕ Mismatch")).toBeNull();
+    // Plate check is "—" (no detected plate is claimed to differ).
+    expect(screen.getByText(/No valid vehicle plate could be read/i)).toBeTruthy();
+    // Barrier stays closed with a manual-review path offered.
     expect(screen.getByText(/Manual verification required/i)).toBeTruthy();
     expect(screen.getByLabelText("Override reason")).toBeTruthy();
   });

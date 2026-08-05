@@ -75,7 +75,7 @@ const REASON_TEXT = {
   TOO_LATE: 'The vehicle is later than the approved arrival window.',
   PLATE_REQUIRED: 'A vehicle plate is required to verify this booking.',
   PLATE_MISMATCH: 'Detected plate does not match the approved booking.',
-  OCR_UNREADABLE: 'The plate could not be read automatically.',
+  OCR_UNREADABLE: 'No valid vehicle plate could be read — rescan required. Align the plate and retake, upload a clearer image, or use manual verification.',
   CAMERA_UNAVAILABLE: 'The gate camera was unavailable.',
   OVERRIDE_REASON_REQUIRED: 'A manual override requires a reason.',
   INVALID_ACTION: 'Invalid gate action.',
@@ -526,8 +526,10 @@ const GateVerification = () => {
       const result = await recognizePlate(source);
       if (!isCameraWorkCurrent(generation)) return null;
       setOcr({ ...result, simulated: false });
-      if (!result.normalized) {
-        setOcrError('No plate text could be read. Retake the photo, or use manual verification.');
+      if (!result.readable) {
+        // Garbage/no plate: never submitted as an observed plate (see submitAutomatic),
+        // so this is a rescan prompt, not a mismatch.
+        setOcrError('No valid vehicle plate could be read. Align the plate clearly and retake the image, upload a clearer image, or use manual verification.');
       }
       setPlateSource('ocr');
       setActualPlateSource(capturedFrom);
@@ -751,6 +753,10 @@ const GateVerification = () => {
   const decisionGranted = decision?.access === 'GRANTED';
   const decisionOverride = Boolean(decision?.overrideUsed);
   const reviewable = Boolean(decision && decision.access === 'DENIED' && decision.manualReviewRequired);
+  const decisionUnreadable = decision?.reasonCode === 'OCR_UNREADABLE';
+
+  // Simulated readings carry no `readable` flag; fall back to "has a normalised plate".
+  const ocrReadable = Boolean(ocr && (ocr.readable ?? ocr.normalized));
 
   // Manual-tab field validity (Section 5: disable Verify until both are valid).
   const manualRefValid = isValidBookingRef(bookingRef);
@@ -1038,8 +1044,15 @@ const GateVerification = () => {
                   {ocr && (
                     <div className="gate-ocr-result" aria-label="OCR result">
                       {ocr.simulated && <span className="gate-badge sim">Simulated LPR — PoC demonstration</span>}
+                      {/* Raw text is kept for troubleshooting only — it is never
+                          submitted as the observed plate when no plate was read. */}
                       <div className="gate-ocr-row"><span>Raw OCR text</span><code>{ocr.raw || '(none)'}</code></div>
-                      <div className="gate-ocr-row"><span>Normalised plate</span><strong>{ocr.normalized || '(none)'}</strong></div>
+                      <div className="gate-ocr-row">
+                        <span>Normalised plate</span>
+                        {ocrReadable
+                          ? <strong>{ocr.normalized}</strong>
+                          : <strong className="gate-ocr-unreadable">Not detected</strong>}
+                      </div>
                       <div className="gate-ocr-row">
                         <span>OCR confidence</span>
                         <span>{ocr.confidence == null ? '—' : `${ocr.confidence}%`}</span>
@@ -1127,13 +1140,19 @@ const GateVerification = () => {
                 <p>No decision yet. Complete the steps and press <strong>Verify</strong>.</p>
               </div>
             ) : (
-              <div className={`gate-decision ${decisionGranted ? 'granted' : 'denied'}`} role="status" aria-live="polite">
+              <div
+                className={`gate-decision ${decisionGranted ? 'granted' : decisionUnreadable ? 'unreadable' : 'denied'}`}
+                role="status"
+                aria-live="polite"
+              >
                 <div className="gate-decision-head">
-                  <span className="gate-decision-icon" aria-hidden="true">{decisionGranted ? '✓' : '✕'}</span>
+                  <span className="gate-decision-icon" aria-hidden="true">{decisionGranted ? '✓' : decisionUnreadable ? '⚠' : '✕'}</span>
                   <span className="gate-decision-title">
                     {decisionGranted
                       ? (decisionOverride ? 'ACCESS GRANTED — MANUAL OVERRIDE' : 'ACCESS GRANTED')
-                      : 'ACCESS DENIED'}
+                      : decisionUnreadable
+                        ? 'UNREADABLE — RESCAN REQUIRED'
+                        : 'ACCESS DENIED'}
                   </span>
                 </div>
 
@@ -1166,7 +1185,7 @@ const GateVerification = () => {
                   <div><span>Detected plate</span><strong>{decision.observedPlate || '—'}</strong></div>
                   <div>
                     <span>Plate check</span>
-                    <strong className={decision.plateMatched ? 'match' : 'mismatch'}>
+                    <strong className={decision.plateMatched == null ? '' : decision.plateMatched ? 'match' : 'mismatch'}>
                       {decision.plateMatched == null ? '—' : decision.plateMatched ? '✓ Match' : '✕ Mismatch'}
                     </strong>
                   </div>

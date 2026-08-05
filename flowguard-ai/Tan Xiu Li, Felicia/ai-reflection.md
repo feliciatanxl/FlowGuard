@@ -158,3 +158,38 @@ not claim that every prototype feature is production-ready. Overall, AI contribu
 planning, implementation, debugging, testing and documentation, but I reviewed the code and retained
 responsibility for the requirements, privacy choices, accepted/rejected changes, manual testing and
 final submission evidence.
+
+## Addendum — 3–4 August 2026 (Pi/SecurePi integration and documentation sync)
+
+After the 2 August reflection above I continued with a short, integration-and-documentation-focused
+stretch, and the archive now holds **52 dated FlowGuard sessions and 168 user prompts from 14 June to
+4 August 2026**. A few lessons from these last sessions are worth recording specifically.
+
+- **Browser-to-private-Pi connectivity is not the same as Cloud Run backend connectivity.** The two
+  Raspberry Pi camera paths run entirely between the laptop browser and the Pi over the shared
+  hotspot/LAN; Cloud Run is never in that path and must never be asked to proxy a private Pi address.
+  The deployed backend connectivity (JWT/API calls, edge-alert ingestion) is a separate concern. I
+  kept these two mental models apart when wiring the Pi 4 facial node and the Pi 5 SecurePi stream so
+  that a local camera failure never looked like a cloud outage and vice-versa.
+- **Test the direct health/MJPEG endpoints, not an assumed richer contract.** An early version of the
+  dual-Pi work assumed the SecurePi service would expose `/people-count` and `/snapshot`. The real
+  service only answered `/health` (`status:"online"`, `latest_frame_age_seconds`) and `/video_feed`.
+  The most useful debugging step was checking those exact endpoints directly in the browser: a
+  `/people-count` `404` without a CORS header surfaced as a CORS `TypeError`, which the client was
+  wrongly treating as "SecurePi unreachable". Fixing it meant keeping `/health` authoritative, treating
+  any optional-endpoint failure after health as "unsupported", and using the first MJPEG frame (with a
+  bounded ~8-second timeout) as the real hardware confirmation before falling back to the laptop webcam.
+- **Independent Pi handling matters.** The Pi 4 facial node (Felicia) and the Pi 5 SecurePi node
+  (Charlisa) must be configured and probed independently, with their own URLs and their own fallbacks,
+  so one being offline never disables the other or the cloud data.
+- **Avoiding accidental teammate scope.** My read-only pre-PR audits repeatedly caught teammate
+  incident-tracking / support-dashboard files being pulled into my branch through a merge, exceeding my
+  declared Pi/attendance/retention scope. I treated that as a blocker to resolve before any PR rather
+  than quietly shipping another member's work under my change.
+- **The Pi 5 SecurePi runtime that actually worked** is the separate, externally-maintained repository
+  [charlisaa/updated_securePi_FlowGuard](https://github.com/charlisaa/updated_securePi_FlowGuard).
+  FlowGuard connected to it, the health endpoint responded, the MJPEG stream opened, and FlowGuard
+  displayed the Pi 5 stream as its active source. That is a verified browser-integration result only —
+  I did not treat a working stream as proof of model accuracy, long-term reliability, or production
+  security, which still need physical validation on the intended hardware. FlowGuard configures and
+  consumes that service; it does not own or deploy the SecurePi runtime.
