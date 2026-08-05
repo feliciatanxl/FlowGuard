@@ -147,6 +147,8 @@ describe("edge WhatsApp — alert always saves; status reflects the send", () =>
     const res = await post(pestBody());
     expect(res.status).toBe(201);
     expect(res.body.whatsapp.status).toBe("Failed");
+    expect(res.body.whatsapp.error).toBe("Notification delivery failed.");
+    expect(JSON.stringify(res.body.whatsapp)).not.toContain("boom");
     const waUpdate = created.update.mock.calls.map(([a]) => a).find((a) => a.whatsapp_status);
     expect(waUpdate.whatsapp_status).toBe("Failed");
   });

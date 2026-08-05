@@ -1,6 +1,7 @@
 ﻿const express = require('express');
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
+const { Op } = require('sequelize');
 
 const mockAttendance = { findAll: jest.fn() };
 const mockUser = { findByPk: jest.fn(), count: jest.fn() };
@@ -111,5 +112,58 @@ describe('GET /api/dashboard/summary', () => {
     expect(res.body.nextRelevantBooking).toBeNull();
     expect(res.body.unavailable.nextRelevantBooking).toMatch(/No staff-to-booking/i);
     expect(mockAttendance.findAll.mock.calls[0][0].include[0].where).toMatchObject({ id: 60 });
+  });
+
+  test('summary is served with no-store cache headers so polling never reads a stale copy', async () => {
+    mockUser.findByPk.mockResolvedValue(authAccount(1, 'FM'));
+    const res = await request(app).get('/api/dashboard/summary').set('Authorization', `Bearer ${tokenFor('FM', 1)}`);
+    expect(res.headers['cache-control']).toMatch(/no-store/);
+    expect(res.headers['pragma']).toBe('no-cache');
+  });
+
+  test('FM response carries a generatedAt timestamp and analyticsAvailable flag', async () => {
+    mockUser.findByPk.mockResolvedValue(authAccount(1, 'FM'));
+    const res = await request(app).get('/api/dashboard/summary').set('Authorization', `Bearer ${tokenFor('FM', 1)}`);
+    expect(res.status).toBe(200);
+    expect(typeof res.body.generatedAt).toBe('string');
+    expect(new Date(res.body.generatedAt).toString()).not.toBe('Invalid Date');
+    expect(res.body.analyticsAvailable).toBe(true);
+  });
+
+  test('urgent detection-alert count is High/Critical AND active-workflow only', async () => {
+    mockUser.findByPk.mockResolvedValue(authAccount(1, 'FM'));
+    mockDetectionAlert.count.mockResolvedValue(2);
+    const res = await request(app).get('/api/dashboard/summary').set('Authorization', `Bearer ${tokenFor('FM', 1)}`);
+    expect(res.status).toBe(200);
+    expect(res.body.summary.urgentDetectionAlerts).toBe(2);
+    // The urgent-count query filters BOTH severity (High/Critical) and active workflow
+    // statuses — never Low/Medium and never Cleared.
+    const urgentWhere = mockDetectionAlert.count.mock.calls
+      .map((c) => c[0]?.where)
+      .find((w) => w && w.severity && w.status);
+    expect(urgentWhere.severity[Op.in]).toEqual(['High', 'Critical']);
+    expect(urgentWhere.status[Op.in]).toEqual(expect.arrayContaining(['Active', 'Acknowledged', 'Investigating', 'Escalated', 'Dispatched']));
+    expect(urgentWhere.status[Op.in]).not.toContain('Cleared');
+  });
+
+  test('open ticket count uses the persisted Pending/Investigating workflow values', async () => {
+    mockUser.findByPk.mockResolvedValue(authAccount(1, 'FM'));
+    await request(app).get('/api/dashboard/summary').set('Authorization', `Bearer ${tokenFor('FM', 1)}`);
+    const ticketWhere = mockSupportTicket.count.mock.calls[0][0].where;
+    expect(ticketWhere.status[Op.in]).toEqual(['Pending', 'Investigating']);
+    expect(ticketWhere.status[Op.in]).not.toContain('In Progress');
+  });
+
+  test('when analytics fail, the summary still returns with analyticsAvailable:false (not a fake empty history)', async () => {
+    mockUser.findByPk.mockResolvedValue(authAccount(1, 'FM'));
+    // Recent-alerts query (limit 5) succeeds; only the analytics aggregation query fails,
+    // so the whole summary must not 500 — it degrades to analyticsAvailable:false.
+    mockDetectionAlert.findAll.mockImplementation((opts) =>
+      opts && opts.limit === 5 ? Promise.resolve([]) : Promise.reject(new Error('analytics DB down'))
+    );
+    const res = await request(app).get('/api/dashboard/summary').set('Authorization', `Bearer ${tokenFor('FM', 1)}`);
+    expect(res.status).toBe(200);
+    expect(res.body.analyticsAvailable).toBe(false);
+    expect(res.body.analytics.alertTrend7Days).toEqual([]);
   });
 });

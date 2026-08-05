@@ -13,12 +13,14 @@
 // Only values the Incident Dashboard's own "Log Incident" dropdown already understands
 // (client/src/pages/IncidentDashboard.jsx) are ever returned.
 //
-// INCIDENT_TYPE_BY_DETECTION_TYPE comes from ../config/detectionTypes, the backend's
-// single source of truth for detection_type values (shared with routes/zones.js).
+// INCIDENT_TYPE_BY_DETECTION_TYPE and DEFAULT_DETECTION_TYPE come from
+// ../config/detectionTypes, the backend's single source of truth for detection_type
+// values (shared with routes/zones.js). The mapping is imported ONCE here — it must not
+// be redeclared locally. It includes the SecurePi edge types PEST_DETECTION /
+// RESTRICTED_MOTION / FORGOTTEN_BELONGING / ITEM_MOVEMENT, which the Incident Dashboard's
+// "Log Incident" dropdown (client/src/pages/IncidentDashboard.jsx) also understands.
 const { INCIDENT_TYPE_BY_DETECTION_TYPE, DEFAULT_DETECTION_TYPE } = require('../config/detectionTypes');
-// (client/src/pages/IncidentDashboard.jsx) are ever returned — including the SecurePi
-// edge types PEST_DETECTION / RESTRICTED_MOTION / FORGOTTEN_BELONGING / ITEM_MOVEMENT,
-// which were added to that dropdown alongside this mapping.
+
 const DEFAULT_INCIDENT_TYPE = INCIDENT_TYPE_BY_DETECTION_TYPE[DEFAULT_DETECTION_TYPE];
 
 // Resolves the IncidentLog type for a detection alert. Prefers an explicit

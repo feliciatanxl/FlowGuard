@@ -1,68 +1,160 @@
-# AI Reflection — Facial Recognition & Access Management (Felicia)
+# AI Reflection — FlowGuard Final Project Stage (Tan Xiu Li, Felicia)
 
-This module was built with the help of AI assistants (Claude and Gemini). The raw prompt
-logs are in [`ai-logs/`](./ai-logs/) and the shared chat links are in
-[`ai-logs/logs_link.md`](./ai-logs/logs_link.md).
+- **Reflection date:** 2 August 2026
+- **Project stage:** Week 16 / final submission preparation
+- **Primary feature:** Facial Recognition & Access Management
+- **Secondary feature:** Smart Logistics & Loading Bay Management
 
-## What AI helped with
-- Scaffolding the React enrolment flow (webcam capture + manual upload fallback) and the
-  V-Patrol / Gate Scanner live-recognition UI (state machine, face-box overlay, liveness).
-- Writing the Python InsightFace endpoints (`/api/encode-faces`, `/user/recognize`) and the
-  cosine-similarity matching logic.
-- Designing the Sequelize models and the Express routes for enrolment, user management,
-  security logs, and the new FM manual-review workflow.
-- Adding route protection, PDPA-style off-boarding, and the Jest / Vitest test suites.
-- Drafting documentation (API docs, DB schema, this report).
+## How I used AI during the project
 
-## What I manually reviewed
-- **Security boundaries** — I checked that protected pages (`/vpatrol`, `/users`,
-  `/tenant-management`, `/user-logs/:id`, `/security-review`, `/gate-scanner`, `/attendance`,
-  `/staff`, `/enrollment`) are wrapped in `ProtectedRoute`, and that the `/api/security/*`
-  routes reject requests without a JWT. I confirmed only FM users can review logs or reach
-  FM management pages.
-- **PDPA / data minimisation** — I verified deletion wipes the `faceVector`, removes the
-  attendance trail, and anonymises (does not silently keep) the personnel name on security
-  logs. I deliberately kept the access events for the audit trail and only stripped the PII.
-- **Data-store accuracy** — the embedding is stored as `FLOAT[]` (`ARRAY(FLOAT)`), not a
-  `pgvector` column, so I corrected the README and DB schema docs to match the real code.
+I used AI throughout FlowGuard as a development and review assistant, mainly through
+**Claude Code** and **Codex**. I also used Gemini occasionally for general brainstorming and
+reference, with the available shared links recorded in
+[`ai-logs/logs_link.md`](./ai-logs/logs_link.md). The detailed local prompt archive is mainly
+from Claude Code and Codex: it contains **43 dated FlowGuard sessions and 146 user prompts**
+from 14 June to 2 August 2026 in [`ai-logs/`](./ai-logs/).
 
-## What code I accepted / rejected
-- **Accepted:** the enrolment UI, the recognition state machine, the review-status model
-  fields, and the anonymise-on-delete approach.
-- **Adjusted:** I made `ProtectedRoute` support an `allowedRoles` array so multi-role pages
-  (attendance, staff) are not forced to a single role.
-- **Rejected / corrected:** an earlier AI draft claimed `pgvector`/`VECTOR(512)` in the docs
-  while the model actually uses `FLOAT[]`; I rejected the inaccurate wording. I also chose
-  **anonymisation over hard-deleting** security logs so the audit history survives off-boarding.
+The logs show that I did not use one prompt to generate the whole project. My use of AI changed
+as the project progressed. At the start, I used it to understand setup problems such as the
+PostgreSQL `vector` error, camera lag, poor frame quality and running the Node, React and Python
+services together. During the main development stage, I used it to plan and implement my facial
+recognition and Smart Logistics workflows. Near the deadline, most of my prompts shifted towards
+integration bugs, responsive UI, security alerts, dependency vulnerabilities, Cloud Run readiness,
+full regression testing and making the documentation match the real code.
 
-## How I verified correctness
-- `cd server && npx jest` → all backend tests pass (auth, enrol, delete/PDPA, review workflow).
-- `cd client && npx vitest run` → all frontend tests pass (enrol render, upload validation,
-  submit endpoint, route protection).
-- `cd client && npx vite build` → production build succeeds.
-- Manual browser checks: enrolment (camera + upload), live recognition logging, FM review
-  page status/notes update, and that logging out blocks the protected pages.
+## What AI helped me do
 
-## Secondary Smart Logistics support
-Facial Recognition & Access Management is my **primary** feature. I also implemented **Smart Logistics
-& Loading Bay Management** as a secondary/supporting feature that adds extra CRUD evidence via Bookings:
-- **Booking CRUD** — create (`POST /api/bookings/create`), read (role-scoped `GET /api/bookings/` +
-  public `GET /api/bookings/:ref`), update (`PATCH /api/bookings/:id/status`), soft-cancel
-  (`PATCH /api/bookings/:id/cancel`).
-- **WhatsApp notification workflow** — env-gated and mock-safe by default; never throws or leaks tokens.
-- **Driver Pass QR** — public `/driver-pass/:ref` page for drivers (no login).
-- **FM Gate Scan** — `PATCH /api/bookings/:ref/gate-scan` (entry/exit), FM-only.
-- **Next-in-line alert** — completing a booking notifies the next waiting booking for that bay.
-- **RBAC restrictions** — FM/Tenant/Staff scoped: Staff can create bookings for their unit but cannot
-  Gate Scan or mark status; only FM performs facility-level gate control.
+For **Facial Recognition & Access Management**, AI helped me work through the complete flow from
+enrolment to access review. This included the camera and manual-upload enrolment paths, the
+InsightFace encode/recognise endpoints, face tracking and bounding-box feedback, basic head-turn
+liveness, Gate Scanner and V-Patrol behaviour, attendance/security logging, evaluation participants,
+and the FM manual-review workflow. It also helped scaffold tests for enrolment, recognition states,
+RBAC, attendance, security events, denied outcomes and the camera fallbacks.
 
-I manually verified these flows in the browser (create → WhatsApp/simulated → driver pass → gate scan →
-next-in-line) and via the automated tests, and I did not commit any secrets — all WhatsApp/DB
-credentials come from environment variables only.
+For **Smart Logistics & Loading Bay Management**, AI helped with booking CRUD, role-scoped booking
+views, Singapore date/time handling, loading-bay overlap checks, one-to-two-hour booking validation,
+WhatsApp real/mock-safe notifications, the public Driver Pass, QR scanning, manual reference entry,
+plate OCR with manual correction, FM-only entry/exit decisions, gate audit logs and the next-driver
+notification flow. Later prompts also covered keeping the Driver Pass live after booking edits and
+supporting phone testing through a local hotspot without hardcoding a temporary IP into source code.
 
-## Limitations / risks
-- Recognition uses a fixed cosine-similarity threshold (0.45) and a simple head-turn liveness
-  check — not production anti-spoofing; good enough for a PoC demo.
-- Security logs link to users by **name**, not a foreign key, so the anonymisation matches on
-  name. A future improvement is a real `userId` FK with `ON DELETE SET NULL`.
-- The Vite dev proxy targets the backend on a fixed port; the `.env` `APP_PORT` must match it.
+AI was also useful for work that affected whether my features could survive integration. It helped
+trace merge regressions, database 500 errors, React CommonJS/ESM icon and QR-component crashes,
+Cloud Run timezone differences, CORS and API-base behaviour, Pi-camera/webcam source selection,
+CodeQL and Dependabot findings, test flakiness, Docker smoke checks, and final rubric/documentation
+audits. For documentation, I used it to draft API and schema explanations, use cases, change reports,
+test evidence and the Week 13 demo flow, but I checked these against the implementation before
+accepting them.
+
+## What I personally decided and reviewed
+
+The AI could suggest code, but I remained responsible for the feature rules and the final decision.
+The main decisions I reviewed were:
+
+- **Roles and ownership:** FM manages facial access, security review and facility-level gate
+  decisions. Tenants and Staff only see data allowed for their unit. Staff may create a booking for
+  their unit but cannot approve gate entry/exit or change facility-level booking status. Public
+  drivers only receive the minimum Driver Pass information needed for the visit.
+- **Biometric privacy:** off-boarding must remove the user's face vector and attendance-related
+  personal data while keeping a useful audit record in anonymised form. I chose anonymisation instead
+  of deleting the entire security history because the event still matters for accountability.
+- **Data accuracy:** the implemented face embedding is stored as PostgreSQL `FLOAT[]`
+  (`ARRAY(FLOAT)`), not a `pgvector VECTOR(512)` column. I corrected AI-written documentation that
+  claimed otherwise rather than changing the report to sound more advanced than the code.
+- **Fallbacks:** Raspberry Pi Camera Module 3 can be the preferred physical source, but webcam,
+  image upload, manual booking reference and manual plate correction remain available. These
+  fallbacks are important because the project is a PoC and the final demonstration environment may
+  not always have the same camera or network.
+- **Security boundaries:** I checked both the frontend route restrictions and backend enforcement.
+  Hiding a menu item is not enough; protected operations also require verified JWT/RBAC, tenant
+  ownership checks and FM-only server routes. Secrets stay in ignored environment files, while the
+  committed examples contain placeholders only.
+- **Scope control:** several prompts explicitly told the assistant not to modify teammate features,
+  change branches, expose `.env` values or weaken existing flows. When a result was incomplete,
+  outside the requested scope or based on an incorrect assumption, I corrected the prompt, narrowed
+  the task or rejected that part of the output.
+
+## Examples of AI output I accepted, adjusted or rejected
+
+I accepted AI-generated scaffolding when it matched the existing architecture and I could verify it,
+for example the manual security-review fields, booking-duration validation, Pi-first camera helper,
+dashboard refresh behaviour and focused Jest/Vitest regression tests.
+
+I adjusted suggestions when the general approach was useful but the project rule was different. One
+example was changing `ProtectedRoute` to support an `allowedRoles` array because some pages are shared
+by more than one authorised role. I also kept the three zone-selectable detection types separate from
+the larger seven-entry incident mapping so a configuration cleanup would not silently break existing
+Object Detection validation.
+
+I rejected or corrected suggestions when they were inaccurate or risky. The clearest example was the
+incorrect `pgvector` documentation. During dependency hardening, I also did not accept a broad
+`npm audit fix` result that increased dependency problems; the final changes used reviewed, narrow
+version updates instead. I did not add an unauthenticated testing endpoint, wildcard credentialed
+CORS, a cloud proxy into a private Pi, or a production fallback that could send a `localhost` Driver
+Pass link. These choices made the solution less flashy, but more truthful and safer.
+
+## How I checked the work
+
+I did not treat an AI response as proof that a task was complete. I repeatedly read the changed files,
+checked `git status` and the active branch, compared the result with the requested roles and data flow,
+and used both focused and full regression tests. As the project grew, the test totals also increased;
+the final 2 August hardening log records:
+
+- backend syntax checks passing and **40 suites / 578 tests passing**;
+- the clean full client run passing **64 files / 581 tests**;
+- the client production build passing;
+- the Raspberry Pi cache-server tests passing **9/9**; and
+- no new lint errors from the final feature changes, while older repository-wide lint debt was
+  reported separately instead of being hidden.
+
+I also manually checked the user journeys that are difficult to judge from unit tests alone:
+enrolment by camera and upload, recognition feedback, access/security log creation, FM review,
+role-based navigation, booking creation and edit, Driver Pass display, gate scanning/manual fallback,
+and phone access over the same local network. Where the AI environment could not access an
+authenticated browser, physical camera, private face images, Google Cloud metadata or the current
+hotspot address, I kept that as a stated limitation and performed the available manual check myself.
+
+The archived logs are intentionally not edited into a perfect success story. They include repeated
+prompts, interrupted work, environment failures, tests that exposed stale fixtures, and tasks that
+needed a second pass. This is more representative of how I actually used AI: generate or diagnose,
+review the evidence, correct the scope, test, and then decide whether to keep the result.
+
+## What I learned from using AI
+
+The most useful lesson was that AI works better when I give it the current branch, protected scope,
+existing behaviour, exact error output and a clear verification requirement. Broad prompts sometimes
+produced confident answers that did not match the repository. Smaller prompts with explicit files,
+roles, failure cases and “do not change” boundaries were easier to review and caused fewer regressions.
+
+I also learned that passing unit tests alone is not enough for a full-stack system. Several important
+problems only appeared across boundaries: Singapore time converted twice between browser and Cloud
+Run, a React package exported a module object instead of a component, a phone could not use a laptop's
+`localhost`, and a public HTTPS site cannot directly call an HTTP camera on a private LAN. Working
+through these issues helped me understand the actual request path and deployment environment instead
+of only editing the component where an error appeared.
+
+Near the deadline, I became more selective. I focused less on adding new features and more on
+stabilising the integrated journeys, preserving teammate work, fixing security findings, documenting
+limitations and collecting reproducible evidence. AI made the review faster, but deciding what was
+safe, accurate and within my responsibility still required my own judgement.
+
+## Remaining limitations and honest PoC boundary
+
+FlowGuard is an academic proof of concept, not a production biometric access product. The current
+head-turn liveness and cosine-similarity threshold are not certified anti-spoofing. Final automated
+checks covered camera adapters and fake/test sources, but did not replace a controlled evaluation with
+the physical Camera Module 3/IMX500, private known-face images and varied real lighting. A cloud-hosted
+browser also cannot directly reach a private-LAN HTTP Pi; Pi mode is intended for a local kiosk or
+laptop on the same network, with webcam/manual fallbacks elsewhere.
+
+Security logs still have some soft/name-based relationships where a proper user foreign key would be
+stronger. Rate limiting uses an in-process store and would need a shared production store for multiple
+instances. WhatsApp delivery depends on valid external credentials and is therefore mock-safe by
+default. The client still has a large main-bundle warning, and final deployed Cloud SQL/IAM/rollback
+evidence must be captured separately without exposing secrets.
+
+These limitations are included because a convincing final reflection should show what I can defend,
+not claim that every prototype feature is production-ready. Overall, AI contributed substantially to
+planning, implementation, debugging, testing and documentation, but I reviewed the code and retained
+responsibility for the requirements, privacy choices, accepted/rejected changes, manual testing and
+final submission evidence.

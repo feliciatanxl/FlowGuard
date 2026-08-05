@@ -1,10 +1,9 @@
 // Frontend tests — Settings role-based content after the cleanup pass.
 // All roles keep Face ID re-enrollment + Change Password; the FlowGuard AI
 // Engine, Camera Feed Quality and Danger Zone sections are permanently removed.
-import React from "react";
-import { render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { describe, test, expect, beforeEach } from "vitest";
+import { afterEach, describe, test, expect, beforeEach, vi } from "vitest";
 
 import Settings from "../../src/pages/Settings";
 
@@ -15,6 +14,10 @@ const renderAs = (role) => {
 };
 
 beforeEach(() => localStorage.clear());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("Settings — shared content", () => {
   test.each(["FM", "Tenant", "Staff"])("%s sees the Settings page with Face ID re-enrollment", (role) => {
@@ -54,5 +57,86 @@ describe("Settings — removed sections stay removed for every role", () => {
   test("notification controls stay FM-only", () => {
     renderAs("Staff");
     expect(screen.queryByText(/Push Notifications to Mobile/i)).toBeNull();
+  });
+});
+
+describe("Settings — Raspberry Pi Camera runtime configuration", () => {
+  test("Save validates and stores only the normalized base URL", () => {
+    renderAs("FM");
+    const input = screen.getByLabelText("Pi Camera Base URL");
+    expect(input.placeholder).toBe("http://172.20.10.4:8081");
+    fireEvent.change(input, { target: { value: "http://pi.local:8081/" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(input.value).toBe("http://pi.local:8081");
+    expect(localStorage.getItem("flowguard.piCameraBaseUrl")).toBe("http://pi.local:8081");
+    expect(screen.getByText(/Configuration source:/).textContent).toMatch(/Runtime/);
+    expect(localStorage.getItem("flowguard.piCameraSnapshot")).toBeNull();
+    expect(localStorage.getItem("flowguard.piCameraCredential")).toBeNull();
+  });
+
+  test("Save rejects an invalid URL without replacing the current setting", () => {
+    localStorage.setItem("flowguard.piCameraBaseUrl", "http://existing-pi.local:8081");
+    renderAs("FM");
+    fireEvent.change(screen.getByLabelText("Pi Camera Base URL"), {
+      target: { value: "javascript:alert(1)" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(screen.getByText("Invalid URL")).toBeTruthy();
+    expect(localStorage.getItem("flowguard.piCameraBaseUrl")).toBe("http://existing-pi.local:8081");
+  });
+
+  test("Test Connection calls /health and displays Connected for a healthy Pi", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ status: "ok", camera: "Pi Camera Module 3", sequence: 2 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAs("FM");
+    fireEvent.change(screen.getByLabelText("Pi Camera Base URL"), {
+      target: { value: "http://pi.local:8081" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Test Connection" }));
+
+    await waitFor(() => expect(screen.getByText("Connected")).toBeTruthy());
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://pi.local:8081/health",
+      expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) })
+    );
+  });
+
+  test("failed health request displays Unreachable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network down")));
+    renderAs("FM");
+    fireEvent.change(screen.getByLabelText("Pi Camera Base URL"), {
+      target: { value: "http://pi.local:8081" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Test Connection" }));
+    await waitFor(() => expect(screen.getByText("Unreachable")).toBeTruthy());
+  });
+
+  test("permission-like failure displays Permission Required guidance", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Blocked by local network permission")));
+    renderAs("FM");
+    fireEvent.change(screen.getByLabelText("Pi Camera Base URL"), {
+      target: { value: "http://pi.local:8081" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Test Connection" }));
+
+    await waitFor(() => expect(screen.getByText("Permission Required")).toBeTruthy());
+    expect(screen.getAllByText(/Allow Chrome local-network access/i).length).toBeGreaterThan(0);
+  });
+
+  test("Reset removes only the Pi override and returns to the default state", () => {
+    localStorage.setItem("flowguard.piCameraBaseUrl", "http://runtime-pi.local:8081");
+    localStorage.setItem("unrelated.setting", "keep-me");
+    renderAs("FM");
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+
+    expect(localStorage.getItem("flowguard.piCameraBaseUrl")).toBeNull();
+    expect(localStorage.getItem("unrelated.setting")).toBe("keep-me");
+    expect(screen.getByText(/Configuration source:/).textContent).toMatch(/Not configured/);
   });
 });

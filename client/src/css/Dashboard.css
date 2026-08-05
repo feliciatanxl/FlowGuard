@@ -618,9 +618,25 @@
    ========================================= */
 .dashboard-analytics-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
+  align-items: stretch;
   margin-bottom: 30px;
+}
+
+/* IncidentAnalytics has an adjacent-panel spacing rule for its vertical flow.
+   Neutralise that inherited margin inside the Dashboard grid so both direct
+   children share the exact same grid-row rectangle. height:100% + flex-column
+   are scoped to this grid context only — .analytics-panel is also used in plain
+   block flow (IncidentAnalytics.jsx), where it must size to its own content
+   instead of stretching to fill the scroll container's full height. */
+.dashboard-analytics-grid > .analytics-panel,
+.dashboard-analytics-grid > .analytics-panel + .analytics-panel {
+  margin: 0;
+  align-self: stretch;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .analytics-panel {
@@ -629,6 +645,7 @@
   border-radius: 12px;
   padding: 20px;
   min-width: 0; /* let the panel shrink inside the grid instead of forcing overflow */
+  min-height: 260px;
 }
 
 .analytics-panel-head {
@@ -673,10 +690,51 @@
 .legend-critical { background: #ef4444; }
 
 .analytics-empty {
-  margin: 8px 0 0;
+  margin: auto 0;
   color: #94a3b8;
   font-size: 0.85rem;
   line-height: 1.5;
+  text-align: center;
+}
+/* A temporary-outage state, visually distinct from a genuine "no data" week. */
+.analytics-unavailable { color: #fbbf24; }
+
+/* --- Live refresh bar: Last updated + manual Refresh --- */
+.dashboard-refresh-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin: 0 0 14px;
+}
+.dashboard-last-updated {
+  color: #94a3b8;
+  font-size: 0.8rem;
+}
+.dashboard-refresh-btn {
+  border: 1px solid #334155;
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.dashboard-refresh-btn:hover:not(:disabled) { border-color: #3b82f6; background: #24324a; }
+.dashboard-refresh-btn:disabled { opacity: 0.6; cursor: default; }
+.dashboard-refresh-btn:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+
+/* Soft "temporarily unavailable" banner shown while the last good data stays on screen. */
+.dashboard-stale-banner {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.35);
 }
 
 /* --- Seven-day trend: grouped vertical bars --- */
@@ -784,17 +842,21 @@
   text-align: right;
 }
 
-/* Screen-reader-only helper (mirrors chart data as a table for assistive tech). */
+/* Screen-reader-only helper (mirrors chart data as a table for assistive tech).
+   Robust for the production build: both the legacy `clip` and the modern `clip-path`
+   are set, plus a hard 1px box, so the raw table is NEVER visually rendered under the
+   chart even if one clipping method is dropped/optimised by the CSS pipeline. */
 .sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
 }
 
 /* =========================================
@@ -1099,7 +1161,7 @@
      fixed chatbot FAB and reCAPTCHA badge in the lower-right never cover the
      last row's actions. */
   .dashboard-main {
-    padding: 90px 20px calc(96px + env(safe-area-inset-bottom));
+    padding: 90px 20px calc(144px + env(safe-area-inset-bottom));
   }
 
   .dashboard-header {

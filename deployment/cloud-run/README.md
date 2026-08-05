@@ -88,12 +88,22 @@ docker push $REG/flowguard-client:v1
 
 (Or `gcloud builds submit` per directory with the same tags.)
 
+Pi runtime Settings is preferred. For a device-specific kiosk image only, the client
+Dockerfile also accepts the public optional arguments
+`VITE_ENABLE_PI_CAMERA`, `VITE_PI_CAMERA_HEALTH_URL`,
+`VITE_PI_CAMERA_STREAM_URL`, and `VITE_PI_CAMERA_SNAPSHOT_URL`. Leave all four unset
+for the normal deployable build with webcam fallback. These values ship in JavaScript;
+never use them for secrets and do not bake a transient hotspot IP into a shared image.
+
 ## Deploy
 
 Put every secret in **Secret Manager** first (`APP_SECRET`, `DB_PWD`,
-`AI_SERVICE_KEY`, `RECAPTCHA_SECRET_KEY`, `SMTP_PASS`, `EDGE_INGEST_TOKEN`, …)
+`AI_SERVICE_KEY`, `RECAPTCHA_SECRET_KEY`, `SMTP_PASS`, `EDGE_INGEST_TOKEN`,
+`GEMINI_API_KEY`, …)
 and grant the runtime service account `roles/secretmanager.secretAccessor`.
 See [env.example](env.example) for the full variable list per service.
+The Node server secret list also includes `GEMINI_API_KEY`, bound from the
+staging Secret Manager secret named `flowguard-gemini-api-key-staging`.
 
 ```bash
 REGION=asia-southeast1
@@ -145,6 +155,30 @@ gcloud run services update flowguard-server --region $REGION \
   --update-env-vars CLIENT_URL=$CLIENT_URL,FRONTEND_URL=$CLIENT_URL
 ```
 
+### Incremental Gemini configuration for staging
+
+`flowguard-server-staging` runs as
+`flowguard-server-sa@flowguard-502613.iam.gserviceaccount.com`. That runtime
+service account requires **Secret Manager Secret Accessor** on
+`flowguard-gemini-api-key-staging`. The secret value stays in Secret Manager;
+it is never stored in Git or supplied as a plain environment variable.
+
+Use an incremental service update so the existing configuration remains in
+place:
+
+```bash
+gcloud run services update flowguard-server-staging \
+  --region asia-southeast1 \
+  --update-secrets GEMINI_API_KEY=flowguard-gemini-api-key-staging:latest \
+  --update-env-vars GEMINI_MODEL=gemini-flash-latest,GEMINI_TIMEOUT_MS=30000,RATE_LIMIT_CHAT_WINDOW_MS=60000,RATE_LIMIT_CHAT_MAX=20
+```
+
+`--update-secrets` adds or updates only the named mapping and preserves the
+service's existing secret mappings. Do not replace or remove `APP_SECRET`,
+`DB_PWD`, `AI_SERVICE_KEY`, `RECAPTCHA_SECRET_KEY`, `SMTP_PASS`,
+`EDGE_INGEST_TOKEN`, or any WhatsApp secret mapping. Keep
+`DB_SYNC_ALTER=false`, and never set `PORT`; Cloud Run injects it.
+
 ## Recommended resources
 
 | Service            | Memory | CPU | Concurrency | Notes |
@@ -179,10 +213,12 @@ are unacceptable for the demo.
   persists frames.
 - **PDPA retention**: the backend's 90-day transcript cleanup cron starts with
   the server process.
-- **Raspberry Pi**: production builds contain **no default Pi address at all**
-  (the `raspberrypi.local` fallback is dev-only; kiosk builds opt in via
-  `VITE_PI_CAMERA_*`). Without it, scanner pages automatically use the browser
-  webcam. The SecurePi edge node pushes alerts *outbound* to
+- **Raspberry Pi**: production builds contain **no active default Pi address**.
+  The laptop browser can set the current hotspot address at Settings -> Raspberry
+  Pi Camera without rebuilding; optional public `VITE_PI_CAMERA_*` build arguments
+  remain available as fallback. Without runtime or Vite configuration, scanner
+  pages make no Pi request and automatically use the browser webcam. The browser,
+  not Cloud Run, connects directly to the private Pi. The SecurePi edge node pushes alerts *outbound* to
   `/api/edge/detection-alerts` with `EDGE_INGEST_TOKEN` — the cloud never
   needs to reach into the LAN.
 - Nginx adds `X-Content-Type-Options`, `X-Frame-Options: DENY` and a referrer

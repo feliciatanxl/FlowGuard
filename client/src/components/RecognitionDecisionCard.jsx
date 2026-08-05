@@ -1,18 +1,11 @@
-import React from 'react';
 import FaceRetouchingOffIcon from '@mui/icons-material/FaceRetouchingOff';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import BlockIcon from '@mui/icons-material/Block';
 import ReportProblemIcon from '@mui/icons-material/ReportProblem';
 import { Link } from 'react-router';
 import SafeMuiIcon from './SafeMuiIcon';
+import { DECISION_STATES } from '../constants/recognitionDecision';
 import '../css/RecognitionDecisionCard.css';
-
-export const DECISION_STATES = {
-  NO_FACE: 'NO_FACE',
-  GRANTED: 'GRANTED',
-  SUSPENDED: 'SUSPENDED',
-  UNKNOWN: 'UNKNOWN'
-};
 
 const PAGE_ACTIONS = {
   gate: {

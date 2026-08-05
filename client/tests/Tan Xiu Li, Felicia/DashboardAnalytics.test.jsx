@@ -1,5 +1,4 @@
 // Frontend tests — FM dashboard operational analytics panels (7-day trend + top zones).
-import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { vi, describe, test, expect, beforeEach } from 'vitest';
@@ -70,13 +69,25 @@ describe('FM dashboard analytics panels', () => {
     expect(screen.getAllByText('12 Jul').length).toBeGreaterThan(0);
   });
 
+  test('places both analytics panels as equivalent direct children of the shared grid', async () => {
+    mountFM(SAMPLE);
+    await screen.findByText('Seven-Day Alert Trend');
+
+    const grid = document.querySelector('.dashboard-analytics-grid');
+    const panels = Array.from(grid.children);
+    expect(panels).toHaveLength(2);
+    expect(panels.every((panel) => panel.classList.contains('analytics-panel'))).toBe(true);
+    expect(panels.every((panel) => panel.parentElement === grid)).toBe(true);
+  });
+
   test('shows empty states without crashing when analytics are zero/empty', async () => {
     mountFM({
       alertTrend7Days: SEVEN_DAYS.map((d) => ({ ...d, high: 0, critical: 0 })),
       topAlertZones7Days: []
     });
     expect(await screen.findByText(/No high or critical alerts recorded/i)).toBeTruthy();
-    expect(screen.getByText(/No detection-alert history/i)).toBeTruthy();
+    // Top zones is now scoped to High/Critical only, with its own distinct empty copy.
+    expect(screen.getByText(/No high or critical zone activity/i)).toBeTruthy();
   });
 
   test('does not crash when analytics key is absent from the response', async () => {

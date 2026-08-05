@@ -40,9 +40,14 @@ const sevenDayContext = (now) => {
 
 // Aggregates the last seven Singapore days of DetectionAlerts into:
 //   alertTrend7Days   - High/Critical counts per day (all seven days always present)
-//   topAlertZones7Days - the five busiest zones by total alert count, descending
+//   topAlertZones7Days - the five busiest zones by HIGH/CRITICAL alert count, descending
 // Uses DetectionAlert.severity, DetectionAlert.occurred_at (falling back to createdAt
 // when occurred_at is null), and DetectionAlert.zone_name.
+//
+// Severity scope is explicit and CONSISTENT with the rest of this high-priority
+// analytics section: BOTH the trend and the top-zones ranking count only High/Critical
+// alerts, so a zone busy with Low/Medium noise never outranks a zone with real
+// high-priority activity, and the two charts always tell the same story.
 const buildAlertAnalytics = async (DetectionAlert, { now = new Date() } = {}) => {
   const { keys, window } = sevenDayContext(now);
   const trend = new Map(keys.map((key) => [key, { high: 0, critical: 0 }]));
@@ -67,11 +72,15 @@ const buildAlertAnalytics = async (DetectionAlert, { now = new Date() } = {}) =>
     const row = typeof alert?.toJSON === 'function' ? alert.toJSON() : alert;
     if (!row) continue;
 
+    // Only High/Critical alerts feed BOTH the trend and the top-zones ranking.
+    const isHighPriority = row.severity === HIGH || row.severity === CRITICAL;
+    if (!isHighPriority) continue;
+
     const when = row.occurred_at || row.createdAt;
     const dayKey = when ? sgDateKey(when) : null;
     if (dayKey && trend.has(dayKey)) {
       if (row.severity === CRITICAL) trend.get(dayKey).critical += 1;
-      else if (row.severity === HIGH) trend.get(dayKey).high += 1;
+      else trend.get(dayKey).high += 1;
     }
 
     // "Unassigned Zone" only stands in for a real alert that genuinely has no zone_name.

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
@@ -12,7 +12,11 @@ import {
   formatSingaporeBookingDateTime,
   singaporeDateKey,
   getSingaporeTodayDateKey,
+  addSingaporeMinutesToLocalInput,
+  validateBookingWindowLocal,
+  formatDurationMinutes,
 } from '../constants/datetime';
+import { buildBookingNotice } from '../utils/bookingNotice';
 
 const BAYS = ['Bay A', 'Bay B'];
 const STATUSES = ['Pending', 'Confirmed', 'Arrived', 'Completed', 'Cancelled'];
@@ -32,6 +36,9 @@ const TenantLogistics = () => {
   const [notice, setNotice] = useState('');
   const [form, setForm] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
+  // Tracks whether the user deliberately set Slot End, so auto-suggesting an end one
+  // hour after a newly-picked start never overwrites an end they intentionally chose.
+  const [endTouched, setEndTouched] = useState(false);
 
   // Booking form is hidden by default and opens in a modal (keeps the list roomy).
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -53,22 +60,32 @@ const TenantLogistics = () => {
   const canGateScan = role === 'FM';                                  // gate entry/exit — FM only
   const canCreate = role === 'FM' || role === 'Tenant' || role === 'Staff'; // create bookings (Staff books for their unit)
 
-  const fetchBookings = async () => {
+  const fetchBookings = useCallback(async (signal) => {
     setLoading(true);
     setError('');
     try {
-      const res = await axios.get(`${API_BASE_URL}/api/bookings/`, authHeader);
+      // Reconstruct headers from the stable token (not the per-render authHeader
+      // object) so this callback identity stays stable and can't form a refetch loop.
+      const res = await axios.get(`${API_BASE_URL}/api/bookings/`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal
+      });
       setBookings(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
+      if (axios.isCancel?.(err) || err?.code === 'ERR_CANCELED') return;
       console.error('Failed to fetch bookings:', err);
       setError('Could not load bookings. Please try again.');
       setBookings([]);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
-  };
+  }, [token]);
 
-  useEffect(() => { fetchBookings(); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    (async () => { await fetchBookings(controller.signal); })();
+    return () => controller.abort();
+  }, [fetchBookings]);
 
   useEffect(() => {
     if (!notice) return;
@@ -76,13 +93,37 @@ const TenantLogistics = () => {
     return () => clearTimeout(t);
   }, [notice]);
 
-  const onField = (e) => setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
+  const onField = (e) => {
+    const { name, value } = e.target;
+    if (name === 'slot_start') {
+      // Auto-suggest an end one hour later, but never clobber an end the user
+      // deliberately chose (endTouched). Uses the Singapore +08 helper, not local time.
+      setForm((prev) => {
+        const next = { ...prev, slot_start: value };
+        if (value && (!endTouched || !prev.slot_end)) {
+          next.slot_end = addSingaporeMinutesToLocalInput(value, 60);
+        }
+        return next;
+      });
+      return;
+    }
+    if (name === 'slot_end') {
+      setEndTouched(true);
+      setForm((prev) => ({ ...prev, slot_end: value }));
+      return;
+    }
+    setForm((prev) => ({ ...prev, [name]: value }));
+  };
 
-  const openForm = () => { setError(''); setForm(emptyForm); setEditingId(null); setIsFormOpen(true); };
+  const openForm = () => { setError(''); setForm(emptyForm); setEditingId(null); setEndTouched(false); setIsFormOpen(true); };
   const closeForm = () => { setIsFormOpen(false); setEditingId(null); };
+
+  // Live client-side mirror of the backend 1–2 hour rule (server stays authoritative).
+  const windowCheck = validateBookingWindowLocal(form.slot_start, form.slot_end);
 
   const openEdit = (b) => {
     setError('');
+    setEndTouched(true); // an existing booking already has an end; keep it on start edits
     setForm({
       transport_company: b.transport_company || '',
       license_plate: b.license_plate || '',
@@ -99,14 +140,12 @@ const TenantLogistics = () => {
     setIsFormOpen(true);
   };
 
-  const describeWhatsapp = (wa) => {
-    if (!wa) return '';
-    if (wa.simulated) return ' (WhatsApp simulated — disabled)';
-    return wa.success ? ' (WhatsApp sent)' : ' (WhatsApp delivery pending)';
-  };
-
   const submitBookingForm = async (e) => {
     e.preventDefault();
+    // Backend is authoritative, but block an obviously-invalid window client-side too
+    // (covers an Enter-key submit that bypasses the disabled button).
+    const preCheck = validateBookingWindowLocal(form.slot_start, form.slot_end);
+    if (!preCheck.ok) { setError(preCheck.error); return; }
     setSubmitting(true);
     setError('');
     try {
@@ -124,7 +163,7 @@ const TenantLogistics = () => {
         setNotice('Booking updated.');
       } else {
         const res = await axios.post(`${API_BASE_URL}/api/bookings/create`, payload, authHeader);
-        setNotice(`Booking created (status: Pending).${describeWhatsapp(res.data?.whatsapp)}`);
+        setNotice(buildBookingNotice('Booking created (Pending).', res.data));
       }
       setForm(emptyForm);
       setIsFormOpen(false);
@@ -141,7 +180,7 @@ const TenantLogistics = () => {
   const updateStatus = async (id, status) => {
     try {
       const res = await axios.patch(`${API_BASE_URL}/api/bookings/${id}/status`, { status }, authHeader);
-      setNotice(`Booking ${status}.${describeWhatsapp(res.data?.whatsapp)}`);
+      setNotice(buildBookingNotice(`Booking ${status}.`, res.data));
       fetchBookings();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to update status.');
@@ -151,7 +190,7 @@ const TenantLogistics = () => {
   const cancelBooking = async (id) => {
     try {
       const res = await axios.patch(`${API_BASE_URL}/api/bookings/${id}/cancel`, {}, authHeader);
-      setNotice(`Booking cancelled.${describeWhatsapp(res.data?.whatsapp)}`);
+      setNotice(buildBookingNotice('Booking cancelled.', res.data));
       fetchBookings();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to cancel booking.');
@@ -203,7 +242,7 @@ const TenantLogistics = () => {
             <p>Smart queue management for the {BAYS.length} loading bays — book slots and avoid congestion</p>
           </div>
           <div className="header-actions">
-            <button className="edit-btn" onClick={fetchBookings}>Refresh</button>
+            <button className="edit-btn" onClick={() => fetchBookings()}>Refresh</button>
             {canGateScan && (
               <button className="edit-btn" onClick={() => navigate('/logistics/gate-verification')}>Gate Scan</button>
             )}
@@ -306,23 +345,23 @@ const TenantLogistics = () => {
                         <td data-label="Company" className="booking-wrap-cell">{b.transport_company}</td>
                         <td data-label="Driver" className="booking-wrap-cell">{b.driver_name || '—'}</td>
                         <td data-label="Bay">{b.loading_bay}</td>
-                        <td data-label="Slot">{fmtSlot(b)}</td>
+                        <td data-label="Slot" className="booking-slot-cell">{fmtSlot(b)}</td>
                         <td data-label="Status"><span className={`status-badge ${String(b.status).toLowerCase()}`}>{b.status}</span></td>
                         <td data-label="Actions" className="booking-actions-cell">
                           {hasActions ? (
-                            <div className="booking-action-group" aria-label={`Actions for ${b.booking_ref}`}>
+                            <div className="booking-action-group" data-layout="vertical" aria-label={`Actions for ${b.booking_ref}`}>
                               {canManage && nextStatus && (
-                                <button className="edit-btn booking-action-btn booking-action-primary" onClick={() => updateStatus(b.id, nextStatus)}>
+                                <button type="button" className="edit-btn booking-action-btn booking-action-primary" title={`Mark ${b.booking_ref} as ${nextStatus}`} onClick={() => updateStatus(b.id, nextStatus)}>
                                   Mark {nextStatus}
                                 </button>
                               )}
                               {canEditOrCancel && (
-                                <button className="edit-btn booking-action-btn" onClick={() => openEdit(b)}>
+                                <button type="button" className="edit-btn booking-action-btn" title={`Edit ${b.booking_ref}`} onClick={() => openEdit(b)}>
                                   Edit
                                 </button>
                               )}
                               {canEditOrCancel && (
-                                <button className="edit-btn booking-action-btn booking-action-danger" onClick={() => cancelBooking(b.id)}>
+                                <button type="button" className="edit-btn booking-action-btn booking-action-danger" title={`Cancel ${b.booking_ref}`} onClick={() => cancelBooking(b.id)}>
                                   Cancel
                                 </button>
                               )}
@@ -376,12 +415,21 @@ const TenantLogistics = () => {
                   </select>
                 </div>
                 <div className="form-group">
-                  <label>Slot Start</label>
-                  <input name="slot_start" type="datetime-local" value={form.slot_start} onChange={onField} />
+                  <label>Slot Start *</label>
+                  <input name="slot_start" type="datetime-local" value={form.slot_start} onChange={onField} required />
                 </div>
                 <div className="form-group">
-                  <label>Slot End</label>
-                  <input name="slot_end" type="datetime-local" value={form.slot_end} onChange={onField} />
+                  <label>Slot End *</label>
+                  <input name="slot_end" type="datetime-local" value={form.slot_end} onChange={onField} required />
+                </div>
+                <div className="booking-window-hint">
+                  <p className="booking-window-rule">Bookings must be between 1 and 2 hours.</p>
+                  <p className="booking-window-duration">
+                    Duration: <strong>{windowCheck.durationMinutes != null ? formatDurationMinutes(windowCheck.durationMinutes) : '—'}</strong>
+                  </p>
+                  {(form.slot_start || form.slot_end) && !windowCheck.ok && (
+                    <p className="booking-window-error" role="alert">⚠️ {windowCheck.error}</p>
+                  )}
                 </div>
                 <div className="form-group">
                   <label>Notes</label>
@@ -389,7 +437,7 @@ const TenantLogistics = () => {
                 </div>
                 <div className="booking-modal-actions">
                   <button type="button" className="cancel-btn" onClick={closeForm}>Cancel</button>
-                  <button type="submit" className="submit-booking-btn" disabled={submitting}>
+                  <button type="submit" className="submit-booking-btn" disabled={submitting || !windowCheck.ok}>
                     {submitting ? 'Saving...' : editingId ? 'Save Changes' : 'Create Booking'}
                   </button>
                 </div>

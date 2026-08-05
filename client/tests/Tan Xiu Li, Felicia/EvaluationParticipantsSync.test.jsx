@@ -2,7 +2,6 @@
 // Verifies the explicit FM-controlled backfill: confirmation-gated, single
 // POST to the sync endpoint only, safe success/failure messaging, participant
 // reload after success, and zero operational or biometric surface area.
-import React from "react";
 import { render, screen, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
@@ -83,6 +82,18 @@ describe("Evaluation Participants sync card", () => {
     await within(getCard()).findByText("P03");
     openConfirm();
     fireEvent.click(within(getDialog()).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Sync Participants" })).toBeNull();
+    expect(mockAxios.post).not.toHaveBeenCalled();
+  });
+
+  test("confirmation receives focus and Escape closes without syncing", async () => {
+    renderPage();
+    await within(getCard()).findByText("P03");
+    openConfirm();
+    const cancel = within(getDialog()).getByRole("button", { name: "Cancel" });
+    expect(cancel).toHaveFocus();
+    expect(cancel).toHaveClass('eval-secondary-btn');
+    fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Sync Participants" })).toBeNull();
     expect(mockAxios.post).not.toHaveBeenCalled();
   });

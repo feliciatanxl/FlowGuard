@@ -78,40 +78,6 @@
   }
 }
 
-/* ── Tabs ───────────────────────────────────────────────────────────────── */
-.support-tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 1.5rem;
-  background: #0f172a;
-  border: 1px solid #1e293b;
-  border-radius: 10px;
-  padding: 4px;
-  width: fit-content;
-}
-
-.support-tab {
-  padding: 10px 24px;
-  border-radius: 8px;
-  border: none;
-  background: transparent;
-  color: #94a3b8;
-  font-weight: 600;
-  font-size: 0.9rem;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.support-tab.active {
-  background: #1e293b;
-  color: #f8fafc;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-}
-
-.support-tab:hover:not(.active) {
-  color: #e2e8f0;
-}
-
 /* ── Status badge extras ─────────────────────────────────────────────────── */
 .status-badge.inprogress {
   background: rgba(59, 130, 246, 0.1);
@@ -123,6 +89,15 @@
   background: rgba(245, 158, 11, 0.1);
   color: #f59e0b;
   border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+/* Ticket status "Pending" — deliberately distinct from priority "Medium"
+   above; both used to render as the same amber, which was ambiguous with
+   the Priority column showing "Medium" in the same row. */
+.status-badge.pending {
+  background: rgba(167, 139, 250, 0.1);
+  color: #a78bfa;
+  border: 1px solid rgba(167, 139, 250, 0.2);
 }
 
 /* ── KB Form Card ────────────────────────────────────────────────────────── */
@@ -267,17 +242,6 @@
 
 /* ── Mobile ──────────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
-  .support-tabs {
-    width: 100%;
-  }
-
-  .support-tab {
-    flex: 1;
-    text-align: center;
-    padding: 10px 12px;
-    font-size: 0.85rem;
-  }
-
   .support-kb-form-card {
     padding: 18px 16px;
   }

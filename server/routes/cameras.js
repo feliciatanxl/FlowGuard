@@ -4,6 +4,7 @@ const { readLimiter } = require('../middlewares/rateLimit');
 router.use(readLimiter); // route-wide rate limiting
 const { Camera, MonitoringZone, sequelize } = require('../models');
 const { verifyToken, requireRole } = require('../middlewares/auth');
+const { sendUnexpectedError } = require('../utils/safeHttpError');
 
 const CAMERA_STATUSES = ['Online', 'Offline', 'Maintenance', 'Disabled'];
 
@@ -28,7 +29,7 @@ router.get('/', requireRole('FM', 'Staff'), async (req, res) => {
         });
         res.json(cameras);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Camera list failed:', err);
     }
 });
 
@@ -40,7 +41,7 @@ router.get('/:id', requireRole('FM', 'Staff'), async (req, res) => {
         if (!camera) return res.status(404).json({ error: 'Camera not found.' });
         res.json(camera);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Camera lookup failed:', err);
     }
 });
 
@@ -88,7 +89,7 @@ router.post('/', requireRole('FM'), async (req, res) => {
         });
         res.status(201).json(camera);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Camera creation failed:', err);
     }
 });
 
@@ -140,7 +141,7 @@ router.put('/:id', requireRole('FM'), async (req, res) => {
         });
         res.json(camera);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Camera update failed:', err);
     }
 });
 
@@ -152,7 +153,7 @@ router.delete('/:id', requireRole('FM'), async (req, res) => {
         await camera.destroy();
         res.sendStatus(200);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Camera deletion failed:', err);
     }
 });
 

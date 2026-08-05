@@ -1,7 +1,6 @@
 // Embedded "Facial Recognition Evaluation" accordion (Gate Scanner / V-Patrol):
 // collapsed by default, origin-scoped LIVE metrics, No Face excluded from the
 // scanner-side compact view, Advanced Matrix Details behind its own toggle.
-import React from "react";
 import { render, screen, fireEvent, act, cleanup, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";

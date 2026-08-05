@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import './PasswordInput.css';
 
 // Reusable password input with a show/hide toggle.

@@ -1,4 +1,4 @@
-import React, { useState } from 'react'; 
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import axios from 'axios'; 
 import { useGoogleReCaptcha } from 'react-google-recaptcha-v3'; 
@@ -42,7 +42,7 @@ const Register = () => {
         recaptchaToken: token 
       };
 
-      const res = await axios.post(`${API_BASE_URL}/user/register`, payload);
+      await axios.post(`${API_BASE_URL}/user/register`, payload);
       console.log("Registration successful.");
       navigate('/login');
 

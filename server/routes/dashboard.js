@@ -25,7 +25,10 @@ const { buildAlertAnalytics } = require('../services/dashboardAnalytics');
 const ACTIVE_ALERT_STATUSES = ['Active', 'Acknowledged', 'Investigating', 'Escalated', 'Dispatched'];
 const HIGH_SEVERITIES = ['High', 'Critical'];
 const OPEN_INCIDENT_STATUSES = ['Active', 'Pending Review', 'Escalated', 'Open'];
-const OPEN_TICKET_STATUSES = ['Pending', 'In Progress'];
+// SupportTicket's persisted workflow uses "Investigating" (not the legacy
+// display-only "In Progress" label). Keep the dashboard count aligned with the
+// support queue's actual enum values.
+const OPEN_TICKET_STATUSES = ['Pending', 'Investigating'];
 const ACTIVE_BOOKING_STATUSES = ['Confirmed', 'Arrived'];
 
 const safeCount = async (model, options = {}) => {
@@ -53,6 +56,18 @@ router.get('/summary', verifyToken, async (req, res) => {
     const { id: userId, role } = req.user;
     const window = todayWindow();
 
+    // The FM dashboard polls this endpoint on a short interval and must always reflect
+    // the current DB — never a stale cached copy from a proxy/browser.
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    });
+
+    // Single Singapore-time generation stamp echoed to every role so the client can show
+    // an accurate "Last updated" without trusting its own clock/timezone.
+    const generatedAt = new Date().toISOString();
+
     if (role === 'FM') {
       const attendance = await attendanceForUsers();
       const [cameraTotal, camerasOnline, camerasOffline, urgentDetectionAlerts, todayBookings, activeVehicles, openIncidents, openSupportTickets] = await Promise.all([
@@ -75,16 +90,22 @@ router.get('/summary', verifyToken, async (req, res) => {
 
       // Aggregate-only operational analytics (per-day High/Critical counts + busiest
       // zones over the last 7 SG days). FM-only; no individual alert rows, no personal
-      // or biometric fields. Failure here must never take down the whole summary.
+      // or biometric fields. Failure here must never take down the whole summary — and,
+      // rather than returning empty arrays that read like a legitimate "no history yet",
+      // it surfaces analyticsAvailable:false so the client can show an explicit
+      // "analytics temporarily unavailable" state instead of a fake empty chart.
       let analytics = { alertTrend7Days: [], topAlertZones7Days: [] };
+      let analyticsAvailable = true;
       try {
         analytics = await buildAlertAnalytics(DetectionAlert);
       } catch (analyticsErr) {
         console.error('Dashboard analytics error:', analyticsErr);
+        analyticsAvailable = false;
       }
 
       return res.json({
         role: 'FM',
+        generatedAt,
         summary: {
           cameras: { total: cameraTotal, online: camerasOnline, offline: camerasOffline },
           attendance: {
@@ -99,7 +120,8 @@ router.get('/summary', verifyToken, async (req, res) => {
           openSupportTickets
         },
         recentHighPriorityAlerts: recentHighPriorityAlerts.map((alert) => (typeof alert.toJSON === 'function' ? alert.toJSON() : alert)),
-        analytics
+        analytics,
+        analyticsAvailable
       });
     }
 
@@ -126,6 +148,7 @@ router.get('/summary', verifyToken, async (req, res) => {
 
       return res.json({
         role: 'Tenant',
+        generatedAt,
         summary: {
           staffTotal,
           staffCurrentlyOnSite: attendance.today.onSite,
@@ -144,6 +167,7 @@ router.get('/summary', verifyToken, async (req, res) => {
 
     return res.json({
       role: 'Staff',
+      generatedAt,
       summary: {
         currentClockStatus: ownToday?.currentStatus || 'OUT',
         todayFirstClockIn: ownToday?.firstCheckIn || null,

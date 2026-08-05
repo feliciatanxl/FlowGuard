@@ -40,6 +40,24 @@ function maskPhone(raw) {
   return digits.length <= 4 ? '****' : `****${digits.slice(-4)}`;
 }
 
+function bookingRecipientMetadata(booking = {}) {
+  const bookingRef = String(booking.booking_ref || '').trim();
+  const suppliedName = String(booking.driver_name || '').trim();
+  return {
+    recipientName: (suppliedName || `Driver for ${bookingRef || 'booking'}`).slice(0, 160),
+    recipientPhoneMasked: maskPhone(booking.driver_phone),
+  };
+}
+
+function bookingNotificationFailure(booking) {
+  return {
+    success: false,
+    simulated: false,
+    error: 'Notification delivery pending.',
+    ...bookingRecipientMetadata(booking),
+  };
+}
+
 // Normalize Singapore numbers: strip spaces/dashes/+, add 65 to bare 8-digit locals.
 function normalizePhone(raw) {
   let p = String(raw || '').replace(/[\s-]/g, '');
@@ -112,6 +130,16 @@ async function sendMessage(to, body) {
   }
 }
 
+async function sendBookingMessage(booking, body) {
+  const result = await sendMessage(booking.driver_phone, body);
+  return {
+    success: Boolean(result.success),
+    simulated: Boolean(result.simulated),
+    ...(result.success ? { message: result.message } : { error: 'Notification delivery pending.' }),
+    ...bookingRecipientMetadata(booking),
+  };
+}
+
 // Slot text is always Singapore wall-clock time, regardless of the server's
 // timezone (Cloud Run runs in UTC), so the driver reads the same "27 Jul 2026,
 // 6:01 PM" that was booked — never a UTC-shifted time.
@@ -182,40 +210,40 @@ function sendBookingCreated(booking) {
   }
 
   lines.push('Please wait for confirmation before arriving.');
-  return sendMessage(booking.driver_phone, lines.join('\n'));
+  return sendBookingMessage(booking, lines.join('\n'));
 }
 
 function sendBookingConfirmed(booking) {
-  return sendMessage(
-    booking.driver_phone,
+  return sendBookingMessage(
+    booking,
     `FlowGuard: Booking ${booking.booking_ref} is confirmed for ${formatSlotRange(booking)}, ${booking.loading_bay}. Please wait for the call-in and do not arrive early.`
   );
 }
 
 function sendBookingArrived(booking) {
-  return sendMessage(
-    booking.driver_phone,
+  return sendBookingMessage(
+    booking,
     `FlowGuard: Arrival logged for booking ${booking.booking_ref} at ${booking.loading_bay}. Please proceed to check-in.`
   );
 }
 
 function sendBookingCompleted(booking) {
-  return sendMessage(
-    booking.driver_phone,
+  return sendBookingMessage(
+    booking,
     `FlowGuard: Loading session completed for booking ${booking.booking_ref} at ${booking.loading_bay}. Thank you — safe travels.`
   );
 }
 
 function sendNextInLine(booking) {
-  return sendMessage(
-    booking.driver_phone,
+  return sendBookingMessage(
+    booking,
     `FlowGuard — Harrison Food Factory: Previous vehicle has left ${booking.loading_bay}. You may proceed to the loading bay if you are ready (booking ${booking.booking_ref}).`
   );
 }
 
 function sendBookingCancelled(booking) {
-  return sendMessage(
-    booking.driver_phone,
+  return sendBookingMessage(
+    booking,
     `FlowGuard: Your loading bay booking (${booking.booking_ref}) has been cancelled.`
   );
 }
@@ -467,4 +495,6 @@ module.exports = {
   _maskKey: maskKey,
   _maskToken: maskToken,
   _maskPhone: maskPhone,
+  bookingRecipientMetadata,
+  bookingNotificationFailure,
 };

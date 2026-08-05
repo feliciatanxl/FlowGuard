@@ -39,16 +39,20 @@ describe('buildAlertAnalytics (unit)', () => {
     expect(byDate['2026-07-09']).toMatchObject({ high: 0, critical: 0 }); // Medium is not counted in the trend
   });
 
-  test('returns top alert zones in descending order, all severities counted, unassigned labelled', async () => {
+  test('returns top alert zones in descending order, ONLY High/Critical counted, unassigned labelled', async () => {
     const rows = [
       { severity: 'High', zone_name: 'Loading Bay', occurred_at: '2026-07-10T02:00:00.000Z' },
       { severity: 'Critical', zone_name: 'Loading Bay', occurred_at: '2026-07-10T05:00:00.000Z' },
-      { severity: 'Medium', zone_name: 'Loading Bay', occurred_at: '2026-07-09T04:00:00.000Z' },
+      { severity: 'Medium', zone_name: 'Loading Bay', occurred_at: '2026-07-09T04:00:00.000Z' }, // excluded
+      { severity: 'Low', zone_name: 'Noisy Corner', occurred_at: '2026-07-09T04:00:00.000Z' },   // excluded entirely
       { severity: 'High', zone_name: 'Cold Store', occurred_at: '2026-07-08T04:00:00.000Z' },
       { severity: 'Critical', zone_name: null, occurred_at: '2026-07-07T04:00:00.000Z' }
     ];
     const { topAlertZones7Days } = await buildAlertAnalytics(modelWith(rows), { now: NOW });
-    expect(topAlertZones7Days[0]).toEqual({ zone: 'Loading Bay', count: 3 });
+    // Loading Bay = High + Critical = 2 (the Medium is NOT counted).
+    expect(topAlertZones7Days[0]).toEqual({ zone: 'Loading Bay', count: 2 });
+    // A Low-only zone never appears in the high-priority ranking.
+    expect(topAlertZones7Days.find((z) => z.zone === 'Noisy Corner')).toBeUndefined();
     expect(topAlertZones7Days.map((z) => z.count)).toEqual([...topAlertZones7Days.map((z) => z.count)].sort((a, b) => b - a));
     expect(topAlertZones7Days.find((z) => z.zone === 'Unassigned Zone')).toEqual({ zone: 'Unassigned Zone', count: 1 });
   });

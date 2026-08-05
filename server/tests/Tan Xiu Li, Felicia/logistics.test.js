@@ -44,7 +44,12 @@ const validBody = {
   transport_company: "NinjaVan",
   license_plate: "GBG 1234M",
   driver_phone: "+6591234567",
+  driver_name: "Tester Tan",
   loading_bay: "Bay A",
+  // Every booking now needs a 1–2 hour window (backend-authoritative). A valid
+  // 60-minute window keeps these create assertions focused on their own concern.
+  slot_start: "2026-08-10T02:00:00.000Z",
+  slot_end: "2026-08-10T03:00:00.000Z",
 };
 
 describe("Booking routes", () => {
@@ -78,7 +83,13 @@ describe("Booking routes", () => {
       .set("Authorization", `Bearer ${tokenFor("FM")}`)
       .send(validBody);
     expect(res.status).toBe(201);
-    expect(res.body.whatsapp).toEqual(expect.objectContaining({ simulated: true, success: true }));
+    expect(res.body.whatsapp).toEqual(expect.objectContaining({
+      simulated: true,
+      success: true,
+      recipientName: "Tester Tan",
+      recipientPhoneMasked: "****4567"
+    }));
+    expect(JSON.stringify(res.body.whatsapp)).not.toContain("+6591234567");
   });
 
   test("Staff CAN create a booking, linked to their tenant/unit (managerId)", async () => {
@@ -154,6 +165,11 @@ describe("Booking routes", () => {
       .send({ status: "Completed" });
     expect(res.status).toBe(200);
     expect(res.body.nextInLine).toBe("FG-NEXT");
+    expect(res.body.nextInLineWhatsapp).toEqual(expect.objectContaining({
+      simulated: true,
+      recipientName: "Tester Tan",
+      recipientPhoneMasked: "****4567"
+    }));
   });
 
   test("PATCH /:id/status to Arrived notifies the driver (FM, 200)", async () => {
@@ -187,6 +203,11 @@ describe("Booking routes", () => {
       .set("Authorization", `Bearer ${tokenFor("FM")}`)
       .send({ status: "Confirmed" });
     expect(res.status).toBe(200);
+    expect(res.body.whatsapp).toEqual(expect.objectContaining({
+      success: false,
+      recipientName: "Tester Tan",
+      recipientPhoneMasked: "****4567"
+    }));
     spy.mockRestore();
   });
 
@@ -235,7 +256,11 @@ describe("Booking routes", () => {
         .set("Authorization", `Bearer ${tokenFor("FM")}`);
       expect(res.status).toBe(200);
       expect(update).toHaveBeenCalledWith({ status: "Cancelled" });
-      expect(res.body.whatsapp).toBeNull();
+      expect(res.body.whatsapp).toEqual(expect.objectContaining({
+        success: false,
+        recipientName: "Tester Tan",
+        recipientPhoneMasked: "****4567"
+      }));
     } finally {
       waSpy.mockRestore();
     }
@@ -362,8 +387,21 @@ describe("WhatsApp service (disabled mode)", () => {
   });
 
   test("sendBookingConfirmed returns a simulated success and does not throw", async () => {
-    const result = await whatsapp.sendBookingConfirmed({ driver_phone: "+6500000000", loading_bay: "Bay A" });
-    expect(result).toEqual(expect.objectContaining({ success: true, simulated: true }));
+    const result = await whatsapp.sendBookingConfirmed({ booking_ref: "FG-TEST", driver_name: "Tester Tan", driver_phone: "+6500000000", loading_bay: "Bay A" });
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      simulated: true,
+      recipientName: "Tester Tan",
+      recipientPhoneMasked: "****0000"
+    }));
+    expect(JSON.stringify(result)).not.toContain("+6500000000");
+  });
+
+  test("booking recipient metadata falls back to the booking reference", () => {
+    expect(whatsapp.bookingRecipientMetadata({ booking_ref: "FG-FALLBACK", driver_phone: "6598761234" })).toEqual({
+      recipientName: "Driver for FG-FALLBACK",
+      recipientPhoneMasked: "****1234"
+    });
   });
 
   test("masks the API key in logs", () => {

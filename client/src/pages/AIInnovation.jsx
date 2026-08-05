@@ -77,13 +77,13 @@ const capabilities = [
   {
     number: '04',
     title: 'Operational Response',
-    summary: 'Bring security, access and service records together for authorised investigation and follow-up.',
+    summary: 'Use AI-assisted support and operational analytics for authorised investigation and follow-up.',
     items: [
-      'Security Command Centre',
-      'Linked alerts and incidents',
-      'Attendance/access records',
-      'Support tickets',
-      'Resolution notes and status tracking',
+      'Gemini-assisted helpdesk with deterministic fallback',
+      'Knowledge Base management',
+      'Support-ticket lifecycle',
+      'Incident Analytics',
+      'MTTR, confidence-bucket, and resolution-funnel insights',
     ],
     links: [
       { label: 'Launch Incident Dashboard', to: '/incidents', protected: true },
@@ -156,16 +156,18 @@ const workflowSteps = [
 ];
 
 const currentScope = [
-  'Facial checkpoint recognition',
+  'Facial checkpoint recognition with head-turn liveness workflow',
   'Object and zone monitoring',
   'Unattended-item detection for supported classes',
-  'Smart Logistics',
-  'Linked incident/support workflows',
-  'Google Cloud deployment',
+  'Smart Logistics, Driver Pass, QR and PoC plate verification',
+  'AI Helpdesk, Knowledge Base and Incident Analytics',
+  'FM/Tenant/Staff RBAC, attendance and current occupancy',
+  'Cloud Run and Cloud SQL deployment',
+  'SecurePi / IMX500 edge-event integration',
 ];
 
 const futureScope = [
-  'Pest and animal detection',
+  'Production pest and rodent detection requires a validated IMX500 model and physical deployment testing',
   'After-hours motion schedules',
   'Pick-up/set-down action recognition',
   'Multi-camera person re-identification',

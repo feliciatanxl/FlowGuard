@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
@@ -26,6 +26,7 @@ const statusClass = (s) => {
     case 'Investigating':         return 'inc-badge inc-status-investigating';
     case 'Escalated to Security': return 'inc-badge inc-status-escalated';
     case 'Cleared':               return 'inc-badge inc-status-cleared';
+    case 'False Positive':        return 'inc-badge inc-status-false-positive';
     default:                      return 'inc-badge';
   }
 };
@@ -126,6 +127,10 @@ const IncidentDashboard = () => {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteSaving, setDeleteSaving] = useState(false);
 
+  // --- Escalate to Ticket confirm modal (persists a real Support Ticket) ---
+  const [escalateTarget, setEscalateTarget] = useState(null);
+  const [escalateSaving, setEscalateSaving] = useState(false);
+
   // --- Toast stack (array, each has its own 3s timer) ---
   const [toasts, setToasts]     = useState([]);
   const toastCounterRef         = useRef(0);
@@ -134,6 +139,11 @@ const IncidentDashboard = () => {
   const [showBackTop, setShowBackTop] = useState(false);
   const [backTopLeft, setBackTopLeft] = useState('50%');
   const mainRef = useRef(null);
+
+  // --- Toast placement: in-flow above the table while its top edge is still
+  // visible, floating top-right once the user has scrolled past it ---
+  const [tableTopVisible, setTableTopVisible] = useState(true);
+  const tableWrapRef = useRef(null);
 
   // ---------------------------------------------------------------------------
   // Toast (stacking, non-overwriting, typed)
@@ -151,12 +161,23 @@ const IncidentDashboard = () => {
   const getToken = () => localStorage.getItem('accessToken');
 
   // ---------------------------------------------------------------------------
-  // Back-to-top: scroll listener on dashboard-main (it owns overflow-y: auto)
+  // Back-to-top + toast placement: scroll listener on dashboard-main (it owns
+  // overflow-y: auto). The table's top edge is "in view" as long as it hasn't
+  // scrolled above the container's own visible top — the same edge the in-flow
+  // toast stack sits just above, so this is exactly the condition under which
+  // that toast would otherwise be scrolled out of sight.
   // ---------------------------------------------------------------------------
   useEffect(() => {
     const el = mainRef.current;
     if (!el) return;
-    const handleScroll = () => setShowBackTop(el.scrollTop > 300);
+    const handleScroll = () => {
+      setShowBackTop(el.scrollTop > 300);
+      const tableEl = tableWrapRef.current;
+      if (tableEl) {
+        setTableTopVisible(tableEl.getBoundingClientRect().top >= el.getBoundingClientRect().top);
+      }
+    };
+    handleScroll();
     el.addEventListener('scroll', handleScroll, { passive: true });
     return () => el.removeEventListener('scroll', handleScroll);
   }, []);
@@ -230,7 +251,7 @@ const IncidentDashboard = () => {
   // On mount: fetch from DB (no seed — live AI data only)
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    fetchIncidents();
+    (async () => { await fetchIncidents(); })();
   }, [fetchIncidents]);
 
   // ---------------------------------------------------------------------------
@@ -258,10 +279,20 @@ const IncidentDashboard = () => {
     });
   }, [incidents, search, severityFilter, sourceFilter, statusFilter]);
 
-  const sourceCounts = useMemo(() => ({
-    ai:     incidents.filter(i => i.source !== 'Manual').length,
-    manual: incidents.filter(i => i.source === 'Manual').length,
-  }), [incidents]);
+  // Manual and Facial Recognition are literal source values; Object Detection is
+  // everything else (mirrors sourceClass()'s default-else bucketing above, since
+  // real incidents also arrive with source values like 'Browser Webcam', 'Uploaded
+  // Video', or 'SecurePi Edge Node' — not just the 3 literal strings). Computed this
+  // way, the 3 segments always sum to filtered.length and always agree with the
+  // table's own OD badge count.
+  // Scoped to `filtered` (not the raw `incidents` list) so the split-bar reflects
+  // whichever search/severity/source/status filters are currently applied — same
+  // scope as the stats cards below, so both stay in agreement.
+  const sourceCounts = useMemo(() => {
+    const manual = filtered.filter(i => i.source === 'Manual').length;
+    const fr = filtered.filter(i => i.source === 'Facial Recognition').length;
+    return { manual, fr, od: filtered.length - manual - fr };
+  }, [filtered]);
 
   const stats = useMemo(() => ({
     total:         filtered.length,
@@ -312,6 +343,30 @@ const IncidentDashboard = () => {
       showToast('Failed to delete incident. Please try again.', 'error');
     } finally {
       setDeleteSaving(false);
+    }
+  };
+
+  const handleEscalate = (incident) => setEscalateTarget(incident);
+
+  // The server loads the incident itself and composes the ticket's title/
+  // description (SupportTicket has no incidentId FK — it dedupes on a stable
+  // title instead, serialized behind a Postgres advisory lock keyed on the
+  // incident id), so the client only ever needs to pass sourceIncidentId.
+  const confirmEscalate = async () => {
+    if (!escalateTarget || escalateSaving) return;
+    setEscalateSaving(true);
+    try {
+      const res = await axios.post('/api/support/tickets', {
+        sourceIncidentId: escalateTarget.id
+      }, { headers: { Authorization: `Bearer ${getToken()}` } });
+      showToast(res.data?.duplicate
+        ? `Incident #${escalateTarget.id} is already tracked in Support Tickets.`
+        : `Incident #${escalateTarget.id} escalated to Support Tickets.`, 'success');
+      setEscalateTarget(null);
+    } catch (err) {
+      showToast(err.response?.data?.error || 'Failed to escalate incident to Support Tickets.', 'error');
+    } finally {
+      setEscalateSaving(false);
     }
   };
 
@@ -393,6 +448,9 @@ const IncidentDashboard = () => {
             <button className="inc-create-btn" onClick={() => setShowCreate(true)}>
               + Log Incident
             </button>
+            <button className="inc-analytics-btn" onClick={() => navigate('/incidents/analytics')}>
+              View Deep Analytics →
+            </button>
             <button className="inc-support-btn" onClick={() => navigate('/support-dashboard')}>
               Support Tickets →
             </button>
@@ -419,11 +477,64 @@ const IncidentDashboard = () => {
           </div>
         </div>
 
-        {/* ---- Source Counter ---- */}
-        <div className="inc-source-counter">
-          <span className="inc-source-chip inc-source-chip-ai">AI Detected: {sourceCounts.ai}</span>
-          <span className="inc-source-chip-divider">|</span>
-          <span className="inc-source-chip inc-source-chip-manual">Manually Logged: {sourceCounts.manual}</span>
+        {/* ---- Source Split Bar ---- */}
+        <div
+          className="inc-source-splitbar-wrap"
+          role="img"
+          aria-label={`Incident source breakdown: ${sourceCounts.manual} manual, ${sourceCounts.fr} facial recognition, ${sourceCounts.od} object detection.`}
+        >
+          <div className="inc-source-splitbar">
+            {filtered.length === 0 ? (
+              <div className="inc-source-segment inc-source-seg-empty" style={{ width: '100%' }} />
+            ) : (
+              <>
+                {sourceCounts.manual > 0 && (
+                  <div
+                    className="inc-source-segment inc-source-seg-manual"
+                    style={{ width: `${(sourceCounts.manual / filtered.length) * 100}%` }}
+                    tabIndex={0}
+                    title={`Manual: ${sourceCounts.manual}`}
+                  />
+                )}
+                {sourceCounts.fr > 0 && (
+                  <div
+                    className="inc-source-segment inc-source-seg-fr"
+                    style={{ width: `${(sourceCounts.fr / filtered.length) * 100}%` }}
+                    tabIndex={0}
+                    title={`Facial Recognition: ${sourceCounts.fr}`}
+                  />
+                )}
+                {sourceCounts.od > 0 && (
+                  <div
+                    className="inc-source-segment inc-source-seg-od"
+                    style={{ width: `${(sourceCounts.od / filtered.length) * 100}%` }}
+                    tabIndex={0}
+                    title={`Object Detection: ${sourceCounts.od}`}
+                  />
+                )}
+              </>
+            )}
+          </div>
+          <div className="inc-source-legend">
+            <span className="inc-source-legend-item">
+              <span className="inc-source-legend-dot inc-source-legend-dot-manual" /> Manual ({sourceCounts.manual})
+            </span>
+            <span className="inc-source-legend-item">
+              <span className="inc-source-legend-dot inc-source-legend-dot-fr" /> Facial Recognition ({sourceCounts.fr})
+            </span>
+            <span className="inc-source-legend-item">
+              <span className="inc-source-legend-dot inc-source-legend-dot-od" /> Object Detection ({sourceCounts.od})
+            </span>
+          </div>
+          <table className="sr-only">
+            <caption>Incident source breakdown</caption>
+            <thead><tr><th scope="col">Source</th><th scope="col">Count</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Manual</th><td>{sourceCounts.manual}</td></tr>
+              <tr><th scope="row">Facial Recognition</th><td>{sourceCounts.fr}</td></tr>
+              <tr><th scope="row">Object Detection</th><td>{sourceCounts.od}</td></tr>
+            </tbody>
+          </table>
         </div>
 
         {/* ---- Loading bar ---- */}
@@ -472,12 +583,16 @@ const IncidentDashboard = () => {
             <option>Investigating</option>
             <option>Escalated to Security</option>
             <option>Cleared</option>
+            <option>False Positive</option>
           </select>
         </div>
 
-        {/* ---- Toast Stack (between filter bar and table) ---- */}
+        {/* ---- Toast Stack ----
+            In-flow above the table while its top edge is visible; once scrolled
+            past, the same stack floats top-right instead so status updates are
+            never missed further down the list. Only one is ever rendered. */}
         {toasts.length > 0 && (
-          <div className="inc-toast-stack">
+          <div className={`inc-toast-stack${tableTopVisible ? '' : ' inc-toast-stack-floating'}`}>
             {toasts.map(t => (
               <div
                 key={t.id}
@@ -490,7 +605,7 @@ const IncidentDashboard = () => {
         )}
 
         {/* ---- Incidents Table ---- */}
-        <div className="table-container inc-table-wrap">
+        <div className="table-container inc-table-wrap" ref={tableWrapRef}>
           <table className="management-table inc-table">
             <thead>
               <tr>
@@ -569,6 +684,12 @@ const IncidentDashboard = () => {
                             onClick={() => openDetail(incident)}
                           >
                             View
+                          </button>
+                          <button
+                            className="action-btn action-escalate"
+                            onClick={() => handleEscalate(incident)}
+                          >
+                            Escalate to Ticket
                           </button>
                           <button
                             className="action-btn action-danger"
@@ -691,6 +812,7 @@ const IncidentDashboard = () => {
                       <option>Investigating</option>
                       <option>Escalated to Security</option>
                       <option>Cleared</option>
+                      <option>False Positive</option>
                     </select>
                   ) : (
                     <span className={statusClass(selectedIncident.resolutionStatus)} style={{ marginTop: '2px' }}>
@@ -901,6 +1023,62 @@ const IncidentDashboard = () => {
                   disabled={deleteSaving}
                 >
                   {deleteSaving ? 'Deleting...' : 'Confirm Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ---- Escalate to Ticket Confirm Modal ---- */}
+        {escalateTarget && (
+          <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Escalate incident to Support Tickets" onClick={() => { if (!escalateSaving) setEscalateTarget(null); }}>
+            <div className="inc-detail-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="inc-modal-header">
+                <div>
+                  <h2>Escalate to Support Ticket?</h2>
+                  <p style={{ color: '#64748b', margin: 0, fontSize: '0.85rem' }}>
+                    Review the details below before escalating this incident to Support.
+                  </p>
+                </div>
+                <button className="edit-btn" onClick={() => setEscalateTarget(null)} disabled={escalateSaving}>✕ Close</button>
+              </div>
+
+              <div className="inc-detail-grid">
+                <div className="inc-detail-item">
+                  <span className="inc-detail-label">Incident ID</span>
+                  <span>#{escalateTarget.id}</span>
+                </div>
+                <div className="inc-detail-item">
+                  <span className="inc-detail-label">Location</span>
+                  <span>{escalateTarget.camera_location}</span>
+                </div>
+                <div className="inc-detail-item">
+                  <span className="inc-detail-label">Source</span>
+                  <span className={sourceClass(escalateTarget.source)}>{sourceLabel(escalateTarget.source)}</span>
+                </div>
+                <div className="inc-detail-item">
+                  <span className="inc-detail-label">Severity</span>
+                  <span className={severityClass(escalateTarget.severity)}>{escalateTarget.severity}</span>
+                </div>
+              </div>
+
+              <div className="inc-form-group">
+                <label className="inc-detail-label">Description</label>
+                <p style={{ color: '#cbd5e1', lineHeight: 1.6, marginTop: '6px' }}>
+                  {escalateTarget.notes?.trim() ? escalateTarget.notes : <em style={{ color: '#64748b' }}>No description provided.</em>}
+                </p>
+              </div>
+
+              <p style={{ color: '#94a3b8', fontSize: '0.78rem', margin: '4px 0 20px' }}>
+                Confirming creates one persisted Support Ticket. Repeated confirmation of this incident reuses the existing ticket.
+              </p>
+
+              <div className="modal-actions">
+                <button className="cancel-btn" onClick={() => setEscalateTarget(null)} disabled={escalateSaving}>
+                  Cancel
+                </button>
+                <button className="confirm-escalate-btn" onClick={confirmEscalate} disabled={escalateSaving}>
+                  {escalateSaving ? 'Creating Ticket…' : 'Confirm Escalation'}
                 </button>
               </div>
             </div>

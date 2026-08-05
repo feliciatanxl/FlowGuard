@@ -1,8 +1,7 @@
 // Frontend tests — FM-only Loading Bay Gate Verification page.
 // Camera, QR and OCR are mocked at the util boundary so no physical camera is
 // needed; axios is mocked so no server is hit.
-import React from "react";
-import { render, screen, fireEvent, waitFor, act, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, act, cleanup } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { vi, describe, test, expect, beforeEach, afterEach } from "vitest";
 

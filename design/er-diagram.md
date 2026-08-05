@@ -1,77 +1,97 @@
 # FlowGuard entity-relationship diagram
 
+This group-level diagram reflects the current Sequelize models and additive migrations. It shows workflow-relevant fields and real database/association links while omitting most timestamps and technical indexes for readability.
+
 ```mermaid
 erDiagram
-  USER o|--o{ ATTENDANCE : "userId nullable; ON DELETE CASCADE"
-  USER o|--o| EVALUATION_PARTICIPANT : "userId; unique; ON DELETE SET NULL"
-  USER o|--o{ USER : "managerId nullable self association"
-  MONITORING_ZONE o|--o{ CAMERA : "zone_id nullable"
-  MONITORING_ZONE o|--o{ DETECTION_ALERT : "zone_id nullable"
-  CAMERA o|--o{ DETECTION_ALERT : "camera_id nullable"
-  INCIDENT_LOG o|--o{ DETECTION_ALERT : "incident_log_id nullable; not unique"
-  CHAT_TRANSCRIPT o|--o{ SUPPORT_TICKET : "transcriptId nullable; not unique"
+  USER o|--o{ USER : "manages Staff users"
+  USER o|--o{ ATTENDANCE : "has attendance"
+  USER o|--o| EVALUATION_PARTICIPANT : "may map to label"
+  USER o|--o{ BOOKING : "tenantId soft ownership"
+  USER o|--o{ GATE_ACCESS_LOG : "fmId soft audit"
+  USER o|--o{ SECURITY_LOG : "matchedUserId soft audit"
+  USER o|--o{ CHAT_TRANSCRIPT : "userId soft context"
+  USER o|--o{ SUPPORT_TICKET : "userId soft context"
+  BOOKING o|--o{ GATE_ACCESS_LOG : "bookingRef soft link"
+  MONITORING_ZONE o|--o{ CAMERA : "contains cameras"
+  MONITORING_ZONE o|--o{ DETECTION_ALERT : "resolved zone"
+  CAMERA o|--o{ DETECTION_ALERT : "resolved camera"
+  INCIDENT_LOG o|--o{ DETECTION_ALERT : "linked incident"
+  CHAT_TRANSCRIPT o|--o| SUPPORT_TICKET : "escalates to at most one"
 
   USER {
     int id PK
-    string name "not null"
-    string email UK "not null"
-    string password "not null"
-    enum role "FM Tenant Staff; default Tenant"
+    string name
+    string email UK
+    string password "bcrypt hash"
+    enum role "FM Tenant Staff"
+    int managerId FK "nullable self-link"
     string companyCode UK "nullable"
     datetime codeCreatedAt "nullable"
-    int codeMaxUsage "default 10"
-    int codeCurrentUsage "default 0"
-    int managerId FK "nullable"
-    boolean isEnrolled "default false"
-    float_array faceVector "PostgreSQL FLOAT[]; nullable"
-    boolean isActive "default true"
-    int tokenVersion "default 0"
+    int codeMaxUsage
+    int codeCurrentUsage
+    boolean isEnrolled
+    float_array faceVector "nullable FLOAT array"
+    boolean isActive
+    int tokenVersion
     string passwordResetTokenHash "nullable"
     datetime passwordResetExpiresAt "nullable"
-    datetime createdAt
-    datetime updatedAt
   }
+
+  ATTENDANCE {
+    int id PK
+    int userId FK "nullable"
+    enum type "IN OUT"
+    datetime timestamp
+  }
+
   EVALUATION_PARTICIPANT {
     int id PK
     int userId FK "nullable unique"
-    string evaluationLabel UK "not null"
-    boolean active "default true"
+    string evaluationLabel UK
+    boolean active
     datetime assignedAt
     datetime retiredAt "nullable"
-    datetime createdAt
-    datetime updatedAt
   }
-  ATTENDANCE {
-    int id PK
-    int userId FK "association field; nullable"
-    enum type "IN OUT"
-    datetime timestamp "default now"
-    datetime createdAt
-    datetime updatedAt
-  }
+
   SECURITY_LOG {
     string id PK
     string time
     string type
     text desc
-    string severity "default safe"
+    string severity
     string icon
     string personnelName "soft reference nullable"
     int matchedUserId "soft reference nullable"
     float confidence "nullable"
     string cameraLocation "nullable"
-    string reviewStatus "default Pending Review"
+    string reviewStatus
     text reviewNotes "nullable"
     string reviewedBy "nullable"
     datetime reviewedAt "nullable"
-    datetime createdAt
-    datetime updatedAt
   }
+
+  INVITE {
+    int id PK
+    string code UK
+    enum role "Tenant"
+    boolean isUsed
+    datetime expiresAt
+  }
+
+  STAFF {
+    int id PK
+    string name
+    string role "nullable"
+    text face_embedding
+    datetime deletedAt "paranoid"
+  }
+
   BOOKING {
     int id PK
     string booking_ref UK
     string tenant_name "nullable"
-    int tenantId "soft user reference nullable"
+    int tenantId "soft User reference nullable"
     string driver_name "nullable"
     string transport_company
     string license_plate
@@ -79,19 +99,18 @@ erDiagram
     string loading_bay
     datetime slot_start "nullable"
     datetime slot_end "nullable"
-    string status "Pending Confirmed Arrived Completed Cancelled"
+    string status "Pending to Cancelled"
     text notes "nullable"
     datetime arrived_at "nullable"
     datetime completed_at "nullable"
     datetime deletedAt "paranoid"
-    datetime createdAt
-    datetime updatedAt
   }
+
   GATE_ACCESS_LOG {
     uuid id PK
-    string bookingRef "indexed soft booking reference"
-    string action "entry exit; indexed"
-    string decision "granted denied"
+    string bookingRef "soft Booking reference"
+    string action "entry or exit"
+    string decision "granted or denied"
     string reasonCode
     string verificationMode "nullable"
     string plateSource "nullable"
@@ -100,30 +119,29 @@ erDiagram
     string observedPlate "nullable"
     boolean plateMatched "nullable"
     string loadingBay "nullable"
-    boolean overrideUsed "default false"
+    boolean overrideUsed
     text overrideReason "nullable"
-    int fmId "soft user reference nullable"
+    int fmId "soft User reference nullable"
     string fmEmail "nullable"
-    datetime createdAt "indexed decision time"
-    datetime updatedAt
+    datetime createdAt
   }
+
   MONITORING_ZONE {
     int id PK
     string zone_name
     string location
     int time_threshold "legacy minutes"
-    text monitored_classes "JSON encoded list"
+    text monitored_classes "JSON-encoded list"
     int density_threshold "nullable"
     int unattended_threshold_seconds "nullable"
     int alert_cooldown_seconds "nullable"
-    enum severity "Low Medium High Critical"
+    enum severity "Low to Critical"
     string assigned_team "soft reference nullable"
-    boolean detection_enabled "default true"
+    boolean detection_enabled
     string detection_type "nullable"
     datetime deletedAt "paranoid"
-    datetime createdAt
-    datetime updatedAt
   }
+
   CAMERA {
     int id PK
     string camera_code
@@ -136,20 +154,19 @@ erDiagram
     datetime last_active_at "nullable"
     text notes "nullable"
     datetime deletedAt "paranoid"
-    datetime createdAt
-    datetime updatedAt
   }
+
   DETECTION_ALERT {
     int id PK
     string zone_name
     string camera_location
-    string status "default Active"
+    string status
     string object_class "nullable"
     int duration_seconds "nullable"
     string person_name "nullable"
     string alert_type "nullable"
-    enum severity "Low Medium High Critical"
-    string source "default Object Detection"
+    enum severity "Low to Critical"
+    string source
     float confidence "nullable"
     string snapshot_url "nullable"
     string device_id "nullable"
@@ -157,24 +174,27 @@ erDiagram
     int camera_id FK "nullable"
     int zone_id FK "nullable"
     int incident_log_id FK "nullable"
+    string edge_event_id UK "nullable idempotency key"
+    string whatsapp_status
+    datetime whatsapp_sent_at "nullable"
+    text whatsapp_error "nullable"
     datetime deletedAt "paranoid"
-    datetime createdAt
-    datetime updatedAt
   }
+
   INCIDENT_LOG {
     int id PK
     string camera_location
     string status "incident type"
     string person_name "nullable"
     decimal confidence_score "nullable"
-    string severity "default Medium"
-    string source "default Facial Recognition"
-    string resolutionStatus "default Active"
-    text notes "default empty"
+    string severity
+    string source
+    string resolutionStatus
+    datetime resolvedAt "nullable"
+    text notes "nullable"
     datetime deletedAt "paranoid"
-    datetime createdAt
-    datetime updatedAt
   }
+
   CHAT_TRANSCRIPT {
     uuid id PK
     uuid sessionId UK
@@ -182,30 +202,34 @@ erDiagram
     string tenantName "nullable"
     string unitNumber "nullable"
     jsonb messages
-    boolean isEscalated "default false"
+    boolean isEscalated
     text escalationReason "nullable"
     datetime createdAt
     datetime updatedAt
   }
+
   SUPPORT_TICKET {
     uuid id PK
-    uuid transcriptId FK "nullable"
+    uuid transcriptId FK "nullable unique"
     int userId "soft reference nullable"
     string tenantName "nullable"
     string unitNumber "nullable"
     string issueTitle
     text issueDescription
+    string category
     enum priority "Low Medium High"
-    enum status "Pending In Progress Resolved"
+    enum status "Pending Investigating Resolved Closed"
+    boolean isArchived
     string resolvedBy "nullable"
     datetime resolvedAt "nullable"
     text resolutionNotes "nullable"
     datetime createdAt
     datetime updatedAt
   }
+
   KNOWLEDGE_BASE {
     uuid id PK
-    string category "default General"
+    string category
     text question
     text answer
     string_array keywords
@@ -214,34 +238,19 @@ erDiagram
     datetime createdAt
     datetime updatedAt
   }
-  INVITE {
-    int id PK
-    string code UK
-    enum role "Tenant"
-    boolean isUsed "default false"
-    datetime expiresAt
-    datetime createdAt
-    datetime updatedAt
-  }
-  STAFF {
-    int id PK
-    string name
-    string role
-    text assignedArea
-    datetime deletedAt "paranoid"
-    datetime createdAt
-    datetime updatedAt
-  }
 ```
 
-## Relationship and retention notes
+## Relationship and lifecycle notes
 
-- `DetectionAlert.incident_log_id -> IncidentLog.id` is the current nullable database link. It is not unique, so the database cardinality is many alerts to zero/one incident; current ingest creates one linked alert/incident pair transactionally. Shared status/severity/person changes and paranoid soft deletion synchronise linked records in both directions.
-- `SupportTicket.transcriptId` is a nullable FK with no unique constraint. The model exposes `ChatTranscript.hasOne`, and current escalation creates one ticket, but the database itself permits multiple tickets to reference a transcript.
-- `Booking.tenantId`, `SecurityLog.matchedUserId`, `SecurityLog.personnelName`, `GateAccessLog.bookingRef`, `GateAccessLog.fmId`, transcript/ticket `userId`, and `MonitoringZone.assigned_team` are application-level soft references; no Sequelize association/foreign key is declared for them.
-- `GateAccessLog` has confirmed indexes on `bookingRef`, `action`, and `createdAt`.
-- Paranoid models are Booking, Camera, MonitoringZone, DetectionAlert, IncidentLog, and Staff. The normal booking cancellation route changes status to `Cancelled`; it does not call `destroy()`.
-- User off-boarding hard-deletes the User only after wiping the embedding, deleting Attendance, anonymising SecurityLog identity fields, clearing Booking ownership, and retiring the EvaluationParticipant mapping.
-- No facial, QR, or plate image column exists. `snapshot_url` is alert metadata and may refer to an optional SecurePi-local snapshot.
+- `User.managerId` is the declared self-association used for Tenant-to-Staff account ownership. `Attendance.userId` cascades on User deletion; `EvaluationParticipant.userId` is unique and becomes null when the linked User is removed.
+- `Booking.tenantId`, `SecurityLog.matchedUserId`/`personnelName`, `GateAccessLog.bookingRef`/`fmId`, transcript/ticket `userId`, and `MonitoringZone.assigned_team` are application-level soft references, not declared Sequelize foreign-key associations.
+- `DetectionAlert.incident_log_id` is the current nullable link to `IncidentLog`. It is not unique, although present ingest workflows transactionally create one alert/incident pair. Linked lifecycle changes and paranoid deletion are synchronised in route code.
+- `DetectionAlert.edge_event_id` is unique when present. A SecurePi retry with the same stable ID returns the existing record rather than creating another alert, incident, or notification.
+- `DetectionAlert.whatsapp_status`, `whatsapp_sent_at`, and `whatsapp_error` retain the edge security-notification outcome independently of the committed alert.
+- `IncidentLog.resolvedAt` is stamped on terminal transitions and cleared when an incident reopens. Older terminal incidents without this migration-era timestamp are excluded from MTTR rather than assigned an invented resolution time.
+- `SupportTicket.transcriptId` is nullable and unique, matching the one-to-zero/one transcript relationship. Current fields support category, `Pending`/`Investigating`/`Resolved`/`Closed`, reversible archive, resolution metadata, and transactional ticket/transcript deletion.
+- Paranoid models are `Booking`, `Staff`, `Camera`, `MonitoringZone`, `DetectionAlert`, and `IncidentLog`. Normal booking cancellation uses status `Cancelled`; it is not a destructive delete.
+- `Staff` (`staff_members`) is a separate legacy biometric record with `face_embedding`; current role-based accounts use the self-linked `User` model.
+- No facial, QR, plate, or continuous-video column exists. `snapshot_url` is optional alert metadata backed by authenticated temporary server storage or an external/local source, not a durable Cloud SQL image.
 
-The matching PNG at `design/png/er-diagram.png` was regenerated from this Mermaid source with a transient Mermaid CLI and visually checked on 28 July 2026.
+The matching PNG is generated from this Mermaid source at `design/png/er-diagram.png`.

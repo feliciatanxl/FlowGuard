@@ -4,7 +4,6 @@
 // "Element type is invalid ... got: object". These tests supply REAL fake
 // module objects (Vitest auto-unwraps genuine MUI imports, so relying on
 // normal imports alone would prove nothing).
-import React from "react";
 import { render, screen, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
@@ -23,6 +22,7 @@ import TenantManagement from "../../src/pages/TenantManagement";
 import GateScanner from "../../src/pages/GateScanner";
 import VPatrol from "../../src/pages/VPatrol";
 import { EVAL_STORAGE_KEY } from "../../src/constants/evaluation";
+import { resetPiAvailabilityCache, saveRuntimePiCameraBaseUrl } from "../../src/constants/piCamera";
 
 const INVALID_ELEMENT_RE = /Element type is invalid|got: object|Objects are not valid as a React child|object.*React component/i;
 
@@ -172,7 +172,12 @@ describe("Runtime icon-bearing components", () => {
   });
 
   const mockCameraEnvironment = () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+    saveRuntimePiCameraBaseUrl("http://pi.test:8081");
+    resetPiAvailabilityCache();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "ok", camera: "Pi Camera Module 3" }),
+    }));
     Object.defineProperty(global.navigator, "mediaDevices", {
       configurable: true,
       value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [] }) },

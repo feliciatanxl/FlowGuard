@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { API_BASE_URL } from '../constants/api';
 import useEvaluationParticipants from '../hooks/useEvaluationParticipants';
@@ -6,16 +6,12 @@ import {
   ACCESS_DECISIONS,
   ACTUAL_AUTHORIZATION,
   DETECTION_OUTCOMES,
-  ENROLLED_LABELS,
-  IDENTITY_LABELS,
   UNKNOWN_LABEL,
   computeAccessDecisionMatrix,
   computeConfusionMatrix,
   createAccessEvaluationRecord,
   createRecord,
-  labelForUserId,
   loadAccessEvaluationRecords,
-  loadLabelMap,
   loadRecords,
   saveAccessEvaluationRecords,
   saveRecords,

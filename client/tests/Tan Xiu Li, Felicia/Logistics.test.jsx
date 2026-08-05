@@ -1,5 +1,4 @@
 // Frontend tests — Smart Logistics page renders, with loading → empty state.
-import React from "react";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { vi, describe, test, expect, beforeEach } from "vitest";
@@ -18,6 +17,7 @@ vi.mock("react-router", async (importOriginal) => {
 });
 
 import TenantLogistics from "../../src/pages/TenantLogistics";
+import { buildBookingNotice } from "../../src/utils/bookingNotice";
 import axios from "axios";
 
 const renderPage = () => render(<MemoryRouter><TenantLogistics /></MemoryRouter>);
@@ -124,6 +124,7 @@ describe("Logistics page", () => {
 
     const group = screen.getByLabelText("Actions for FG-AAA");
     expect(group.classList.contains("booking-action-group")).toBe(true);
+    expect(group.dataset.layout).toBe("vertical");
 
     const buttons = [...group.querySelectorAll("button")];
     expect(buttons.map((b) => b.textContent)).toEqual(["Mark Confirmed", "Edit", "Cancel"]);
@@ -161,6 +162,22 @@ describe("Logistics page", () => {
     );
   });
 
+  test("status feedback displays the masked real WhatsApp recipient", async () => {
+    mockGet.mockResolvedValue({
+      data: [{ id: 8, booking_ref: "FG-MASK", license_plate: "P8", transport_company: "C8", driver_name: "Tester Tan", loading_bay: "Bay A", slot_start: "2026-06-23T09:00", status: "Pending" }],
+    });
+    axios.patch.mockResolvedValueOnce({ data: { whatsapp: {
+      success: true, simulated: false, recipientName: "Tester Tan", recipientPhoneMasked: "****1234",
+    } } });
+    renderPage();
+    showAllDates();
+    await screen.findByText("FG-MASK");
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark Confirmed" }));
+    expect(await screen.findByText("Booking Confirmed. WhatsApp sent to Tester Tan (****1234)." )).toBeTruthy();
+    expect(document.body.textContent).not.toContain("6599991234");
+  });
+
   test("closed bookings show no action buttons (status only)", async () => {
     mockGet.mockResolvedValueOnce({
       data: [{ id: 9, booking_ref: "FG-DDD", license_plate: "P9", transport_company: "C9", driver_name: "D9", loading_bay: "Bay A", slot_start: "2026-06-20T09:00", status: "Completed" }],
@@ -190,5 +207,38 @@ describe("Logistics page", () => {
 
     expect(screen.getByText("FG-AAA")).toBeTruthy();
     expect(screen.queryByText("FG-BBB")).toBeNull();
+  });
+});
+
+describe("masked WhatsApp booking feedback", () => {
+  test("distinguishes sent, simulated and delivery-pending states", () => {
+    expect(buildBookingNotice("Booking created (Pending).", { whatsapp: {
+      success: true, simulated: false, recipientName: "Tester Tan", recipientPhoneMasked: "****1234",
+    } })).toBe("Booking created (Pending). WhatsApp sent to Tester Tan (****1234).");
+    expect(buildBookingNotice("Booking created (Pending).", { whatsapp: {
+      success: true, simulated: true, recipientName: "Tester Tan", recipientPhoneMasked: "****1234",
+    } })).toBe("Booking created (Pending). WhatsApp simulated for Tester Tan (****1234).");
+    expect(buildBookingNotice("Booking created (Pending).", { whatsapp: {
+      success: false, simulated: false, recipientName: "Tester Tan", recipientPhoneMasked: "****1234",
+    } })).toBe("Booking created (Pending). WhatsApp delivery pending for Tester Tan (****1234).");
+  });
+
+  test("uses the server fallback name and never includes an unmasked number", () => {
+    const notice = buildBookingNotice("Booking Completed.", { whatsapp: {
+      success: false,
+      recipientName: "Driver for FG-ABC123",
+      recipientPhoneMasked: "****1234",
+    } });
+    expect(notice).toContain("Driver for FG-ABC123 (****1234)");
+    expect(notice).not.toContain("6599991234");
+  });
+
+  test("includes safe next-in-line feedback when returned", () => {
+    const notice = buildBookingNotice("Booking Completed.", {
+      whatsapp: { success: true, recipientName: "Leaving Driver", recipientPhoneMasked: "****1111" },
+      nextInLineWhatsapp: { success: true, simulated: true, recipientName: "Next Driver", recipientPhoneMasked: "****2222" },
+    });
+    expect(notice).toContain("WhatsApp sent to Leaving Driver (****1111).");
+    expect(notice).toContain("Next in line: WhatsApp simulated for Next Driver (****2222).");
   });
 });

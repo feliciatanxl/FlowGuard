@@ -1,44 +1,340 @@
-// Helpers for resolving the SecurePi hardware (MJPEG) stream and health URLs.
-// Local demo paths such as /videos/loading.mp4 are NOT hardware streams —
-// only absolute http(s) URLs qualify.
+// Browser-only helpers for the Raspberry Pi 5 / Sony IMX500 SecurePi service.
+// The selected Camera Inventory stream URL is authoritative. A per-camera,
+// browser-local override can take precedence so different hotspot users can
+// resolve the same inventory camera without changing cloud data.
 
-export const isHttpUrl = (value) =>
-  typeof value === 'string' && /^https?:\/\//i.test(value.trim());
+export const SECUREPI_OVERRIDE_STORAGE_PREFIX = 'flowguard.securepiStreamUrl.';
+export const SECUREPI_STALE_FRAME_SECONDS = 10;
 
-// Resolution order:
-// 1. selected Camera Inventory record's stream_url (http/https only)
-// 2. VITE_SECUREPI_STREAM_URL development fallback
-// 3. '' → caller shows "SecurePi stream not configured"
-export const getHardwareStreamUrl = (selectedCamera, envStreamUrl = '') => {
-  if (isHttpUrl(selectedCamera?.stream_url)) return selectedCamera.stream_url.trim();
-  if (isHttpUrl(envStreamUrl)) return envStreamUrl.trim();
-  return '';
+export const SECUREPI_CONNECTION_STATUS = Object.freeze({
+  CONNECTED: 'connected',
+  STALE: 'stale',
+  TIMEOUT: 'timeout',
+  UNREACHABLE: 'unreachable',
+  PERMISSION_REQUIRED: 'permission-required',
+  INVALID_RESPONSE: 'invalid-response',
+  INVALID_URL: 'invalid-url',
+  ABORTED: 'aborted',
+});
+
+const SECRET_QUERY_KEY = /(?:^|[_-])(?:access[_-]?token|api[_-]?key|auth|authorization|bearer|credential|jwt|password|secret|signature|token)(?:$|[_-])/i;
+const SAFE_STATUS_VALUES = new Set(['ok', 'online', 'healthy', 'connected', 'degraded', 'stale']);
+const OPTIONAL_ENDPOINT_UNSUPPORTED_STATUSES = new Set([404, 405, 501]);
+
+const browserStorage = () => {
+  try {
+    return typeof window !== 'undefined' ? window.localStorage : null;
+  } catch {
+    return null;
+  }
 };
 
-// Resolution order:
-// 1. VITE_SECUREPI_HEALTH_URL
-// 2. derive <stream origin>/health from the MJPEG stream URL
-// 3. '' → caller disables health polling
+const overrideStorageKey = (cameraId) => (
+  cameraId === undefined || cameraId === null || cameraId === ''
+    ? ''
+    : `${SECUREPI_OVERRIDE_STORAGE_PREFIX}${encodeURIComponent(String(cameraId))}`
+);
+
+const safeText = (value, maxLength = 120) => {
+  if (typeof value !== 'string') return '';
+  return value.trim().slice(0, maxLength);
+};
+
+const finiteNonNegative = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+};
+
+export function validateSecurePiStreamUrl(value) {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) {
+    return { valid: false, normalized: '', error: 'Enter the SecurePi MJPEG stream URL.' };
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return { valid: false, normalized: '', error: 'Enter a valid absolute SecurePi URL.' };
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { valid: false, normalized: '', error: 'Only http:// and https:// SecurePi URLs are allowed.' };
+  }
+  if (parsed.username || parsed.password) {
+    return { valid: false, normalized: '', error: 'Credentials must not be embedded in the SecurePi URL.' };
+  }
+  if (parsed.hash) {
+    return { valid: false, normalized: '', error: 'The SecurePi URL must not contain a fragment.' };
+  }
+  for (const key of parsed.searchParams.keys()) {
+    if (SECRET_QUERY_KEY.test(key)) {
+      return { valid: false, normalized: '', error: 'SecurePi URLs must not contain tokens, credentials, or secrets.' };
+    }
+  }
+
+  return { valid: true, normalized: parsed.href, parsed, error: '' };
+}
+
+export const isHttpUrl = (value) => validateSecurePiStreamUrl(value).valid;
+
+export function deriveSecurePiEndpoints(streamUrl) {
+  const validation = validateSecurePiStreamUrl(streamUrl);
+  if (!validation.valid) return { valid: false, error: validation.error };
+  const { parsed } = validation;
+  const origin = parsed.origin;
+  return {
+    valid: true,
+    error: '',
+    streamUrl: validation.normalized,
+    origin,
+    healthUrl: new URL('/health', origin).href,
+    peopleCountUrl: new URL('/people-count', origin).href,
+    snapshotUrl: new URL('/snapshot', origin).href,
+    port: parsed.port || (parsed.protocol === 'https:' ? '443' : '80'),
+  };
+}
+
+export function readSecurePiStreamOverride(cameraId, storage = browserStorage()) {
+  const key = overrideStorageKey(cameraId);
+  if (!key) return { present: false, valid: false, normalized: '', error: '' };
+  let value;
+  try {
+    value = storage?.getItem?.(key) || '';
+  } catch {
+    return { present: false, valid: false, normalized: '', error: '' };
+  }
+  if (!value) return { present: false, valid: false, normalized: '', error: '' };
+  return { present: true, ...validateSecurePiStreamUrl(value) };
+}
+
+export function saveSecurePiStreamOverride(cameraId, value, storage = browserStorage()) {
+  const key = overrideStorageKey(cameraId);
+  if (!key) return { ok: false, valid: false, normalized: '', error: 'Select a Camera Inventory camera first.' };
+  const validation = validateSecurePiStreamUrl(value);
+  if (!validation.valid) return { ok: false, ...validation };
+  try {
+    storage?.setItem?.(key, validation.normalized);
+  } catch {
+    return { ok: false, valid: false, normalized: '', error: 'The SecurePi override could not be saved in this browser.' };
+  }
+  if (!storage || typeof storage.setItem !== 'function') {
+    return { ok: false, valid: false, normalized: '', error: 'Browser storage is unavailable.' };
+  }
+  return { ok: true, ...validation };
+}
+
+export function clearSecurePiStreamOverride(cameraId, storage = browserStorage()) {
+  const key = overrideStorageKey(cameraId);
+  try {
+    if (key) storage?.removeItem?.(key);
+  } catch {
+    // A blocked storage API behaves like an absent local override.
+  }
+}
+
+// Resolution order: browser-local override for this camera, selected Camera
+// Inventory stream_url, development-only environment fallback, then empty.
+export const getHardwareStreamUrl = (selectedCamera, envStreamUrl = '', localOverrideUrl = '') => {
+  const storedOverride = localOverrideUrl
+    ? validateSecurePiStreamUrl(localOverrideUrl)
+    : readSecurePiStreamOverride(selectedCamera?.id);
+  if (storedOverride.valid) return storedOverride.normalized;
+
+  const inventory = validateSecurePiStreamUrl(selectedCamera?.stream_url);
+  if (inventory.valid) return inventory.normalized;
+
+  const environment = validateSecurePiStreamUrl(envStreamUrl);
+  return environment.valid ? environment.normalized : '';
+};
+
 export const getHardwareHealthUrl = (streamUrl, envHealthUrl = '') => {
-  if (isHttpUrl(envHealthUrl)) return envHealthUrl.trim();
-  if (!isHttpUrl(streamUrl)) return '';
-  try {
-    return `${new URL(streamUrl.trim()).origin}/health`;
-  } catch {
-    return '';
-  }
+  const explicit = validateSecurePiStreamUrl(envHealthUrl);
+  if (explicit.valid) return explicit.normalized;
+  return deriveSecurePiEndpoints(streamUrl).healthUrl || '';
 };
 
-// Resolution order mirrors getHardwareHealthUrl:
-// 1. VITE_SECUREPI_PEOPLE_COUNT_URL
-// 2. derive <stream origin>/people-count from the MJPEG stream URL
-// 3. '' → caller disables live people-count polling
 export const getHardwarePeopleCountUrl = (streamUrl, envPeopleCountUrl = '') => {
-  if (isHttpUrl(envPeopleCountUrl)) return envPeopleCountUrl.trim();
-  if (!isHttpUrl(streamUrl)) return '';
-  try {
-    return `${new URL(streamUrl.trim()).origin}/people-count`;
-  } catch {
-    return '';
-  }
+  const explicit = validateSecurePiStreamUrl(envPeopleCountUrl);
+  if (explicit.valid) return explicit.normalized;
+  return deriveSecurePiEndpoints(streamUrl).peopleCountUrl || '';
 };
+
+export const getHardwareSnapshotUrl = (streamUrl) => deriveSecurePiEndpoints(streamUrl).snapshotUrl || '';
+
+function makeResult(status, details = {}) {
+  return {
+    ok: status === SECUREPI_CONNECTION_STATUS.CONNECTED || status === SECUREPI_CONNECTION_STATUS.STALE,
+    status,
+    ...details,
+  };
+}
+
+function createRequestControl(externalSignal, timeoutMs) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const onExternalAbort = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) onExternalAbort();
+  else externalSignal?.addEventListener?.('abort', onExternalAbort, { once: true });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  return {
+    signal: controller.signal,
+    didTimeOut: () => timedOut,
+    cleanup: () => {
+      clearTimeout(timer);
+      externalSignal?.removeEventListener?.('abort', onExternalAbort);
+    },
+  };
+}
+
+async function localNetworkPermissionState() {
+  if (typeof navigator === 'undefined' || !navigator.permissions?.query) return 'unknown';
+  for (const name of ['local-network', 'local-network-access']) {
+    try {
+      const result = await navigator.permissions.query({ name });
+      if (result?.state) return result.state;
+    } catch {
+      // Try both browser permission names, then use the safe failure fallback.
+    }
+  }
+  return 'unknown';
+}
+
+async function classifyFailure(error, { signal, timedOut }) {
+  if (signal?.aborted && !timedOut) return makeResult(SECUREPI_CONNECTION_STATUS.ABORTED);
+  if (timedOut) return makeResult(SECUREPI_CONNECTION_STATUS.TIMEOUT);
+  if (error?.name === 'AbortError') return makeResult(SECUREPI_CONNECTION_STATUS.ABORTED);
+  const permission = await localNetworkPermissionState();
+  const message = String(error?.message || '').toLowerCase();
+  if (permission === 'denied' || /local.?network|private.?network|mixed.?content|permission|security|blocked|cors/.test(message)) {
+    return makeResult(SECUREPI_CONNECTION_STATUS.PERMISSION_REQUIRED);
+  }
+  return makeResult(SECUREPI_CONNECTION_STATUS.UNREACHABLE);
+}
+
+async function readJson(response) {
+  if (!response.ok) return null;
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+function normalizeHealth(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const status = safeText(body.status, 24).toLowerCase();
+  if (!SAFE_STATUS_VALUES.has(status)) return null;
+  if (body.detection_active !== undefined && typeof body.detection_active !== 'boolean') return null;
+  if (body.streaming !== undefined && typeof body.streaming !== 'boolean') return null;
+  return {
+    status,
+    stale: status === 'stale' || status === 'degraded' || body.stale === true || body.streaming === false,
+    streaming: typeof body.streaming === 'boolean' ? body.streaming : null,
+    detectionActive: typeof body.detection_active === 'boolean' ? body.detection_active : null,
+    deviceId: safeText(body.device_id),
+    zone: safeText(body.zone || body.zone_name),
+    cameraDescription: safeText(body.camera_description || body.camera || body.description),
+    frameAgeSeconds: finiteNonNegative(
+      body.latest_frame_age_seconds ?? body.frame_age_seconds ?? body.age_seconds
+    ),
+  };
+}
+
+function normalizePeopleCount(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const count = finiteNonNegative(body.count ?? body.people_count ?? body.visible_people);
+  if (count === null) return null;
+  if (body.detection_active !== undefined && typeof body.detection_active !== 'boolean') return null;
+  return {
+    count: Math.floor(count),
+    detectionActive: typeof body.detection_active === 'boolean' ? body.detection_active : false,
+    deviceId: safeText(body.device_id),
+    zone: safeText(body.zone || body.zone_name),
+    frameAgeSeconds: finiteNonNegative(
+      body.latest_frame_age_seconds ?? body.frame_age_seconds ?? body.age_seconds
+    ),
+  };
+}
+
+export async function testSecurePiConnection({
+  streamUrl,
+  timeoutMs = 3500,
+  signal,
+  probePeopleCount = true,
+} = {}) {
+  const endpoints = deriveSecurePiEndpoints(streamUrl);
+  if (!endpoints.valid) {
+    return makeResult(SECUREPI_CONNECTION_STATUS.INVALID_URL, { error: endpoints.error });
+  }
+
+  const request = createRequestControl(signal, timeoutMs);
+  const fetchOptions = {
+    cache: 'no-store',
+    credentials: 'omit',
+    signal: request.signal,
+  };
+
+  try {
+    const healthResponse = await fetch(endpoints.healthUrl, fetchOptions);
+    const health = normalizeHealth(await readJson(healthResponse));
+    if (!health) {
+      return makeResult(SECUREPI_CONNECTION_STATUS.INVALID_RESPONSE, { endpoints });
+    }
+
+    let people = null;
+    let peopleCountSupported = false;
+    if (probePeopleCount) {
+      // Deliberately sequential: never ask for people-count until health succeeds.
+      // Browsers expose a CORS-blocked generic 404 as a fetch TypeError rather
+      // than a Response. Health is already authoritative at this point, so that
+      // fetch-level failure means only that this optional capability is absent.
+      try {
+        const countResponse = await fetch(endpoints.peopleCountUrl, fetchOptions);
+        if (!OPTIONAL_ENDPOINT_UNSUPPORTED_STATUSES.has(countResponse.status)) {
+          people = normalizePeopleCount(await readJson(countResponse));
+          if (!people) {
+            return makeResult(SECUREPI_CONNECTION_STATUS.INVALID_RESPONSE, { endpoints, health });
+          }
+          peopleCountSupported = true;
+        }
+      } catch (error) {
+        if (error?.name !== 'TypeError') throw error;
+      }
+    }
+
+    const frameAgeSeconds = people?.frameAgeSeconds ?? health.frameAgeSeconds;
+    const stale = health.stale
+      || (frameAgeSeconds !== null && frameAgeSeconds > SECUREPI_STALE_FRAME_SECONDS);
+    return makeResult(
+      stale ? SECUREPI_CONNECTION_STATUS.STALE : SECUREPI_CONNECTION_STATUS.CONNECTED,
+      {
+        endpoints,
+        health,
+        people,
+        peopleCountSupported,
+        details: {
+          cameraDescription: health.cameraDescription,
+          deviceId: people?.deviceId || health.deviceId,
+          zone: people?.zone || health.zone,
+          detectionActive: people?.detectionActive ?? health.detectionActive ?? false,
+          visiblePeople: people?.count ?? null,
+          frameAgeSeconds,
+          streaming: health.streaming,
+          resolvedPort: endpoints.port,
+        },
+      }
+    );
+  } catch (error) {
+    return classifyFailure(error, {
+      signal,
+      timedOut: request.didTimeOut(),
+    });
+  } finally {
+    request.cleanup();
+  }
+}

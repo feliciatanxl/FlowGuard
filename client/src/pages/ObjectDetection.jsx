@@ -2,9 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import { Link } from 'react-router';
 import Sidebar from '../components/Sidebar';
-import { getHardwareStreamUrl, getHardwareHealthUrl, getHardwarePeopleCountUrl } from '../utils/securepiStream';
+import {
+  SECUREPI_CONNECTION_STATUS,
+  clearSecurePiStreamOverride,
+  getHardwarePeopleCountUrl,
+  getHardwareStreamUrl,
+  readSecurePiStreamOverride,
+  saveSecurePiStreamOverride,
+  testSecurePiConnection,
+} from '../utils/securepiStream';
 import { validateVideoFile, createTemporaryObjectUrl, revokeTemporaryObjectUrl } from '../utils/mediaPreview';
 import { buildAnalyzeFramePayload, buildBearerHeaders } from '../utils/analyzeFrame';
+import { resolveAlertSource } from '../utils/alertSource';
 import { API_BASE_URL } from '../constants/api';
 import '../css/Dashboard.css';
 import '../css/ObjectDetection.css';
@@ -19,9 +28,18 @@ const PEOPLE_URL = '/api/yolo/people-count';
 const ANALYZE_FRAME_URL = '/api/yolo/analyze-frame';
 const OPEN_ALERT_STATUSES = ['Active', 'Acknowledged', 'Investigating', 'Escalated', 'Dispatched'];
 const SECUREPI_STREAM_URL = import.meta.env.VITE_SECUREPI_STREAM_URL || '';
-const SECUREPI_HEALTH_URL = import.meta.env.VITE_SECUREPI_HEALTH_URL || '';
-const SECUREPI_PEOPLE_COUNT_URL = import.meta.env.VITE_SECUREPI_PEOPLE_COUNT_URL || '';
-const SECUREPI_PEOPLE_COUNT_POLL_MS = 3000;
+const SECUREPI_POLL_MS = 5000;
+const SECUREPI_FIRST_FRAME_TIMEOUT_MS = 8000;
+
+const emptySecurePiConnection = () => ({ status: 'idle', message: '', details: null, fallback: false });
+
+const securePiFailureMessage = (status) => {
+  if (status === SECUREPI_CONNECTION_STATUS.TIMEOUT) return 'SecurePi connection timed out';
+  if (status === SECUREPI_CONNECTION_STATUS.PERMISSION_REQUIRED) return 'Local Network Access permission required';
+  if (status === SECUREPI_CONNECTION_STATUS.INVALID_RESPONSE) return 'Invalid SecurePi response';
+  if (status === SECUREPI_CONNECTION_STATUS.INVALID_URL) return 'The selected camera does not have a valid SecurePi stream URL';
+  return 'SecurePi unreachable from this network';
+};
 
 const Icon = ({ name }) => <span className={`od-icon od-icon-${name}`} aria-hidden="true" />;
 
@@ -88,21 +106,6 @@ const alertTimestamp = (alert) => {
   return date.toLocaleString('en-SG', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
 };
 
-// Keep the existing page export for callers/tests while the implementation is
-// shared with CameraFeed so both surfaces obey one Node/FastAPI contract.
-export { buildAnalyzeFramePayload } from '../utils/analyzeFrame';
-
-// Canonical alert-source label per sourceMode — the AI service whitelists these before
-// forwarding them into POST /api/detection-alerts, so keep values in sync with
-// ai-service/main.py's _ALLOWED_BROWSER_SOURCES.
-export const ALERT_SOURCE_BY_MODE = {
-  camera: 'Browser Webcam',
-  file: 'Uploaded Video',
-  hardware: 'SecurePi Edge Node',
-};
-
-export const resolveAlertSource = (sourceMode) => ALERT_SOURCE_BY_MODE[sourceMode] || 'Browser Webcam';
-
 const ObjectDetection = () => {
   const [zones, setZones] = useState([]);
   const [cameras, setCameras] = useState([]);
@@ -116,13 +119,11 @@ const ObjectDetection = () => {
   const [alertsRefreshing, setAlertsRefreshing] = useState(false);
   const [alertTypeFilter, setAlertTypeFilter] = useState('all');
   const [alertSeverityFilter, setAlertSeverityFilter] = useState('all');
-  const [snapshotPreview, setSnapshotPreview] = useState({ url: '', source: '' });
-  const [snapshotError, setSnapshotError] = useState(false);
+  const [snapshotPreview, setSnapshotPreview] = useState({ url: '', source: '', error: false });
 
   const [streamError, setStreamError] = useState(false);
   const [aiOffline, setAiOffline] = useState(false);
   const [nodeOffline, setNodeOffline] = useState(false);
-  const [sessionExpired, setSessionExpired] = useState(false);
   const [cameraStatus, setCameraStatus] = useState('starting');
   const [detections, setDetections] = useState([]);
   const [frameSize, setFrameSize] = useState({ width: 640, height: 480 });
@@ -131,45 +132,85 @@ const ObjectDetection = () => {
   const [sourceMode, setSourceMode] = useState('camera');
   const [uploadedVideoUrl, setUploadedVideoUrl] = useState('');
   const [uploadedVideoName, setUploadedVideoName] = useState('');
-  const [hardwareReloadKey, setHardwareReloadKey] = useState(0);
+  const [securePiConnection, setSecurePiConnection] = useState(emptySecurePiConnection);
+  const [securePiOverrideInput, setSecurePiOverrideInput] = useState('');
+  const [securePiOverrideUrl, setSecurePiOverrideUrl] = useState('');
+  const [securePiOverrideMessage, setSecurePiOverrideMessage] = useState('');
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const processingFrameRef = useRef(false);
   const aiHealthFailuresRef = useRef(0);
+  const mountedRef = useRef(false);
+  const securePiProbeControllerRef = useRef(null);
+  const securePiPollControllerRef = useRef(null);
+  const securePiPollInFlightRef = useRef(false);
+  const unsupportedPeopleCountUrlsRef = useRef(new Set());
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const token = localStorage.getItem('accessToken');
-  const headers = buildBearerHeaders(token);
+  // Memoised so the fetch callbacks below can list `headers` as a stable
+  // dependency without being recreated (and re-polling) on every render.
+  const headers = useMemo(() => buildBearerHeaders(token), [token]);
 
   const fetchZones = useCallback(() => {
     axios.get(ZONES_URL, { headers })
-      .then(res => { setZones(res.data); setNodeOffline(false); })
-      .catch(() => setNodeOffline(true));
-  }, []);
+      .then(res => {
+        if (!mountedRef.current) return;
+        setZones(res.data);
+        setNodeOffline(false);
+      })
+      .catch(() => {
+        if (mountedRef.current) setNodeOffline(true);
+      });
+  }, [headers]);
 
   const fetchCameras = useCallback(() => {
     axios.get(CAMERAS_URL, { headers })
       .then(res => {
+        if (!mountedRef.current) return;
         const list = Array.isArray(res.data) ? res.data : [];
         setCameras(list);
         setSelectedCameraId((prev) => (list.some((cam) => String(cam.id) === String(prev)) ? prev : (list[0]?.id ?? '')));
       })
-      .catch(() => setCameras([]));
-  }, []);
+      .catch(() => {
+        if (mountedRef.current) setCameras([]);
+      });
+  }, [headers]);
 
   const fetchAlerts = useCallback(() => {
     axios.get(ALERTS_URL, { headers })
-      .then(res => { setAlerts(res.data); setNodeOffline(false); })
-      .catch(() => setNodeOffline(true));
-  }, []);
+      .then(res => {
+        if (!mountedRef.current) return;
+        setAlerts(res.data);
+        setNodeOffline(false);
+      })
+      .catch(() => {
+        if (mountedRef.current) setNodeOffline(true);
+      });
+  }, [headers]);
 
   const handleRefreshAlerts = useCallback(() => {
     setAlertsRefreshing(true);
     axios.get(ALERTS_URL, { headers })
-      .then(res => { setAlerts(res.data); setNodeOffline(false); })
-      .catch(() => setNodeOffline(true))
-      .finally(() => setAlertsRefreshing(false));
-  }, []);
+      .then(res => {
+        if (!mountedRef.current) return;
+        setAlerts(res.data);
+        setNodeOffline(false);
+      })
+      .catch(() => {
+        if (mountedRef.current) setNodeOffline(true);
+      })
+      .finally(() => {
+        if (mountedRef.current) setAlertsRefreshing(false);
+      });
+  }, [headers]);
 
   // Read by fetchPeopleCount to skip the browser-YOLO poll while SecurePi hardware mode
   // owns peopleCount/detectionActive (see the hardware people-count effect below) — a
@@ -184,6 +225,7 @@ const ObjectDetection = () => {
     if (sourceModeRef.current === 'hardware') return;
     axios.get(PEOPLE_URL, { timeout: 8000, headers })
       .then(res => {
+        if (!mountedRef.current) return;
         aiHealthFailuresRef.current = 0;
         setPeopleCount(res.data.count ?? 0);
         setDetectionActive(res.data.detection_active ?? false);
@@ -191,6 +233,7 @@ const ObjectDetection = () => {
         setStreamError(false);
       })
       .catch(() => {
+        if (!mountedRef.current) return;
         aiHealthFailuresRef.current += 1;
         setPeopleCount(0);
         setDetectionActive(false);
@@ -198,7 +241,7 @@ const ObjectDetection = () => {
           setAiOffline(true);
         }
       });
-  }, []);
+  }, [headers]);
 
   const monitoredCamera = useMemo(
     () => cameras.find((cam) => String(cam.id) === String(selectedCameraId)) || null,
@@ -212,17 +255,134 @@ const ObjectDetection = () => {
     monitoredCameraRef.current = monitoredCamera;
   }, [monitoredCamera]);
   const hardwareStreamUrl = useMemo(
-    () => getHardwareStreamUrl(monitoredCamera, SECUREPI_STREAM_URL),
-    [monitoredCamera]
-  );
-  const hardwareHealthUrl = useMemo(
-    () => getHardwareHealthUrl(hardwareStreamUrl, SECUREPI_HEALTH_URL),
-    [hardwareStreamUrl]
+    () => getHardwareStreamUrl(
+      monitoredCamera,
+      SECUREPI_STREAM_URL,
+      securePiOverrideUrl
+    ),
+    [monitoredCamera, securePiOverrideUrl]
   );
   const hardwarePeopleCountUrl = useMemo(
-    () => getHardwarePeopleCountUrl(hardwareStreamUrl, SECUREPI_PEOPLE_COUNT_URL),
+    () => getHardwarePeopleCountUrl(hardwareStreamUrl),
     [hardwareStreamUrl]
   );
+
+  useEffect(() => {
+    const storedOverride = readSecurePiStreamOverride(monitoredCamera?.id);
+    const overrideUrl = storedOverride.valid ? storedOverride.normalized : '';
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- synchronizes the per-camera browser setting into the editor
+    setSecurePiOverrideInput(overrideUrl);
+    setSecurePiOverrideUrl(overrideUrl);
+    setSecurePiOverrideMessage('');
+  }, [monitoredCamera?.id]);
+
+  const abortSecurePiRequests = useCallback(() => {
+    securePiProbeControllerRef.current?.abort();
+    securePiProbeControllerRef.current = null;
+    securePiPollControllerRef.current?.abort();
+    securePiPollControllerRef.current = null;
+    securePiPollInFlightRef.current = false;
+  }, []);
+
+  const clearSecurePiLiveState = useCallback(() => {
+    setPeopleCount(0);
+    setDetectionActive(false);
+    setDetections([]);
+  }, []);
+
+  const activateLaptopFallback = useCallback((status, message = securePiFailureMessage(status)) => {
+    securePiPollControllerRef.current?.abort();
+    securePiPollControllerRef.current = null;
+    securePiPollInFlightRef.current = false;
+    clearSecurePiLiveState();
+    setStreamError(false);
+    setSourceMode('camera');
+    setCameraStatus('browser_camera_fallback');
+    setSecurePiConnection({ status, message, details: null, fallback: true });
+  }, [clearSecurePiLiveState]);
+
+  const applySecurePiResult = useCallback((result) => {
+    const degraded = result.status === SECUREPI_CONNECTION_STATUS.STALE;
+    if (result.peopleCountSupported === false && result.endpoints?.peopleCountUrl) {
+      unsupportedPeopleCountUrlsRef.current.add(result.endpoints.peopleCountUrl);
+    }
+    setPeopleCount(result.details.visiblePeople);
+    setDetectionActive(Boolean(result.details.detectionActive));
+    setCameraStatus(degraded ? 'securepi_degraded' : 'securepi_connected');
+    setSecurePiConnection({
+      status: result.status,
+      message: degraded ? 'SecurePi responding but frame is stale' : 'SecurePi connected',
+      details: result.details,
+      fallback: false,
+    });
+  }, []);
+
+  const connectSecurePi = useCallback(async () => {
+    abortSecurePiRequests();
+    setSecurePiConnection({ status: 'testing', message: 'Testing SecurePi…', details: null, fallback: false });
+    setCameraStatus('testing_securepi');
+
+    const controller = new AbortController();
+    securePiProbeControllerRef.current = controller;
+    const result = await testSecurePiConnection({
+      streamUrl: hardwareStreamUrl,
+      timeoutMs: 3500,
+      signal: controller.signal,
+      probePeopleCount: !unsupportedPeopleCountUrlsRef.current.has(hardwarePeopleCountUrl),
+    });
+    if (!mountedRef.current || controller.signal.aborted) return;
+    securePiProbeControllerRef.current = null;
+
+    if (!result.ok) {
+      activateLaptopFallback(result.status, securePiFailureMessage(result.status));
+      return;
+    }
+
+    setStreamError(false);
+    setCameraReady(false);
+    applySecurePiResult(result);
+    setSourceMode('hardware');
+  }, [abortSecurePiRequests, activateLaptopFallback, applySecurePiResult, hardwarePeopleCountUrl, hardwareStreamUrl]);
+
+  const handleCameraSelectionChange = (event) => {
+    abortSecurePiRequests();
+    clearSecurePiLiveState();
+    setSelectedCameraId(event.target.value);
+    setSecurePiConnection(emptySecurePiConnection());
+    setSourceMode('camera');
+  };
+
+  const handleBrowserCameraSelection = () => {
+    abortSecurePiRequests();
+    setSecurePiConnection(emptySecurePiConnection());
+    setSourceMode('camera');
+  };
+
+  const saveLocalSecurePiOverride = () => {
+    abortSecurePiRequests();
+    setSourceMode('camera');
+    clearSecurePiLiveState();
+    const result = saveSecurePiStreamOverride(monitoredCamera?.id, securePiOverrideInput);
+    if (!result.ok) {
+      setSecurePiOverrideMessage(result.error);
+      return;
+    }
+    setSecurePiOverrideInput(result.normalized);
+    setSecurePiOverrideUrl(result.normalized);
+    setSecurePiOverrideMessage('Browser-local override saved. Retry SecurePi to test it.');
+    setSecurePiConnection(emptySecurePiConnection());
+  };
+
+  const clearLocalSecurePiOverride = () => {
+    abortSecurePiRequests();
+    setSourceMode('camera');
+    clearSecurePiLiveState();
+    clearSecurePiStreamOverride(monitoredCamera?.id);
+    setSecurePiOverrideInput('');
+    setSecurePiOverrideUrl('');
+    setSecurePiOverrideMessage('Browser-local override cleared; Camera Inventory is the fallback.');
+    setSecurePiConnection(emptySecurePiConnection());
+  };
 
   useEffect(() => {
     fetchZones();
@@ -237,11 +397,12 @@ const ObjectDetection = () => {
       clearInterval(peopleInterval);
       clearInterval(alertsInterval);
     };
-  }, []);
+  }, [fetchZones, fetchCameras, fetchAlerts, fetchPeopleCount]);
 
   useEffect(() => {
     let stream;
     let frameInterval;
+    let sourceCancelled = false;
 
     const stopBrowserCamera = () => {
       if (stream) {
@@ -275,6 +436,7 @@ const ObjectDetection = () => {
 
       try {
         const res = await axios.post(ANALYZE_FRAME_URL, payload, { timeout: 20000, headers });
+        if (sourceCancelled || !mountedRef.current) return;
         setDetections(res.data.detections ?? []);
         setPeopleCount(res.data.count ?? 0);
         setDetectionActive(res.data.detection_active ?? false);
@@ -286,6 +448,7 @@ const ObjectDetection = () => {
         setAiOffline(false);
         setStreamError(false);
       } catch (err) {
+        if (sourceCancelled || !mountedRef.current) return;
         setDetectionActive(false);
         setCameraStatus(err.response ? 'analysis_error' : 'analysis_retrying');
       } finally {
@@ -307,22 +470,31 @@ const ObjectDetection = () => {
           audio: false,
         });
 
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.onloadedmetadata = async () => {
+        if (sourceCancelled || !mountedRef.current) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+
+        const video = videoRef.current;
+        if (video) {
+          video.srcObject = stream;
+          video.onloadedmetadata = async () => {
+            if (sourceCancelled || !mountedRef.current) return;
             try {
-              await videoRef.current.play();
+              await video.play();
+              if (sourceCancelled || !mountedRef.current) return;
               setCameraReady(true);
               setCameraStatus('browser_camera_active');
               analyzeCurrentFrame();
             } catch {
-              setCameraStatus('browser_camera_paused');
+              if (!sourceCancelled && mountedRef.current) setCameraStatus('browser_camera_paused');
             }
           };
           setBrowserCameraError(false);
           frameInterval = setInterval(analyzeCurrentFrame, 2200);
         }
       } catch {
+        if (sourceCancelled || !mountedRef.current) return;
         setBrowserCameraError(true);
         setCameraStatus('browser_camera_denied');
       }
@@ -342,12 +514,14 @@ const ObjectDetection = () => {
       video.src = uploadedVideoUrl;
       video.loop = true;
       video.onloadedmetadata = async () => {
+        if (sourceCancelled || !mountedRef.current) return;
         try {
           await video.play();
+          if (sourceCancelled || !mountedRef.current) return;
           setCameraReady(true);
           analyzeCurrentFrame();
         } catch {
-          setCameraStatus('uploaded_video_paused');
+          if (!sourceCancelled && mountedRef.current) setCameraStatus('uploaded_video_paused');
         }
       };
       frameInterval = setInterval(analyzeCurrentFrame, 2200);
@@ -356,7 +530,6 @@ const ObjectDetection = () => {
     const startHardwareStream = async () => {
       setBrowserCameraError(false);
       setDetections([]);
-      setDetectionActive(false);
     };
 
     if (sourceMode === 'file') {
@@ -368,92 +541,77 @@ const ObjectDetection = () => {
     }
 
     return () => {
+      sourceCancelled = true;
       clearInterval(frameInterval);
       stopBrowserCamera();
     };
-  }, [sourceMode, uploadedVideoUrl]);
+  }, [sourceMode, uploadedVideoUrl, headers]);
 
   useEffect(() => () => {
     if (uploadedVideoUrl) URL.revokeObjectURL(uploadedVideoUrl);
   }, [uploadedVideoUrl]);
 
-  // Hardware connection state reacts to the selected inventory camera changing
-  // without restarting the browser-camera/uploaded-video effect above.
+  // One SecurePi polling cycle owns both requests: /health is always validated
+  // before /people-count. Leaving hardware mode or selecting another camera
+  // clears this interval and aborts its in-flight request.
   useEffect(() => {
-    if (sourceMode !== 'hardware') return;
-    setStreamError(false);
-    setCameraReady(false);
-    setCameraStatus(hardwareStreamUrl ? 'connecting_securepi_edge' : 'securepi_stream_not_configured');
-  }, [sourceMode, hardwareStreamUrl]);
-
-  useEffect(() => {
-    if (sourceMode !== 'hardware' || !hardwareHealthUrl) return undefined;
+    if (sourceMode !== 'hardware' || !hardwareStreamUrl) return undefined;
     let cancelled = false;
-    const checkHealth = () => {
-      axios.get(hardwareHealthUrl, { timeout: 3000 })
-        .then(() => {
-          if (cancelled) return;
-          setCameraStatus('securepi_edge_live');
-          setStreamError(false);
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setCameraStatus('securepi_edge_offline');
-          setStreamError(true);
-        });
+    const pollSecurePi = async () => {
+      if (cancelled || securePiPollInFlightRef.current) return;
+      securePiPollInFlightRef.current = true;
+      const controller = new AbortController();
+      securePiPollControllerRef.current = controller;
+      const result = await testSecurePiConnection({
+        streamUrl: hardwareStreamUrl,
+        timeoutMs: 3500,
+        signal: controller.signal,
+        probePeopleCount: !unsupportedPeopleCountUrlsRef.current.has(hardwarePeopleCountUrl),
+      });
+      securePiPollInFlightRef.current = false;
+      if (securePiPollControllerRef.current === controller) securePiPollControllerRef.current = null;
+      if (cancelled || controller.signal.aborted || !mountedRef.current) return;
+      if (result.ok) applySecurePiResult(result);
+      else activateLaptopFallback(result.status, securePiFailureMessage(result.status));
     };
-    checkHealth();
-    const interval = setInterval(checkHealth, 10000);
+
+    const interval = setInterval(() => { void pollSecurePi(); }, SECUREPI_POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
+      securePiPollControllerRef.current?.abort();
+      securePiPollControllerRef.current = null;
+      securePiPollInFlightRef.current = false;
     };
-  }, [sourceMode, hardwareReloadKey, hardwareHealthUrl]);
+  }, [activateLaptopFallback, applySecurePiResult, hardwarePeopleCountUrl, hardwareStreamUrl, sourceMode]);
 
-  // SecurePi runs its own onboard YOLO and reports live counts on /people-count — the
-  // browser never sees its frames, so without this poll the People Detected badge and
-  // Inference State card stay frozen at whatever the browser-camera poll last wrote.
-  // Only active in hardware mode (fetchPeopleCount above skips itself the rest of the
-  // time) so webcam/uploaded-video behaviour is unchanged.
+  useEffect(() => () => abortSecurePiRequests(), [abortSecurePiRequests]);
+
   useEffect(() => {
-    if (sourceMode !== 'hardware' || !hardwarePeopleCountUrl) return undefined;
-    let cancelled = false;
-    const pollHardwarePeopleCount = () => {
-      axios.get(hardwarePeopleCountUrl, { timeout: 3000 })
-        .then((res) => {
-          if (cancelled) return;
-          setPeopleCount(res.data.count ?? 0);
-          setDetectionActive(Boolean(res.data.detection_active));
-        })
-        .catch((err) => {
-          // Pi unreachable or its own status just went stale — treat as "no live data"
-          // rather than leaving a possibly-stale count/active state on screen.
-          if (cancelled) return;
-          console.error('[SecurePi people-count] request failed:', hardwarePeopleCountUrl, err);
-          setPeopleCount(0);
-          setDetectionActive(false);
-        });
-    };
-    pollHardwarePeopleCount();
-    const interval = setInterval(pollHardwarePeopleCount, SECUREPI_PEOPLE_COUNT_POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [sourceMode, hardwarePeopleCountUrl]);
+    if (sourceMode !== 'hardware' || cameraReady) return undefined;
+    const firstFrameTimer = setTimeout(() => {
+      if (!mountedRef.current) return;
+      activateLaptopFallback(
+        SECUREPI_CONNECTION_STATUS.TIMEOUT,
+        'SecurePi MJPEG first frame timed out'
+      );
+    }, SECUREPI_FIRST_FRAME_TIMEOUT_MS);
+    return () => clearTimeout(firstFrameTimer);
+  }, [activateLaptopFallback, cameraReady, hardwareStreamUrl, sourceMode]);
 
   const handleUpdateAlertStatus = async (id, status) => {
     setAlertActionBusy(true);
     setWorkflowMessage('');
     try {
       const res = await axios.put(`${ALERTS_URL}/${id}`, { status }, { headers });
+      if (!mountedRef.current) return;
       setAlerts(prev => prev.map(a => a.id === id ? res.data : a));
       setWorkflowMessage(status === 'Cleared' ? 'Alert marked cleared.' : `Alert marked ${status.toLowerCase()}.`);
     } catch (err) {
       console.error('Update alert error:', err);
-      setWorkflowMessage('Could not update this alert. Check that the Node.js server is running.');
+      if (mountedRef.current) setWorkflowMessage('Could not update this alert. Check that the Node.js server is running.');
     } finally {
-      setAlertActionBusy(false);
+      if (mountedRef.current) setAlertActionBusy(false);
     }
   };
 
@@ -482,6 +640,7 @@ const ObjectDetection = () => {
       const results = await Promise.all(
         openAlerts.map((a) => axios.put(`${ALERTS_URL}/${a.id}`, { status: 'Cleared' }, { headers }))
       );
+      if (!mountedRef.current) return;
       setAlerts((prev) => prev.map((a) => {
         const updated = results.find((r) => r.data.id === a.id);
         return updated ? updated.data : a;
@@ -489,9 +648,9 @@ const ObjectDetection = () => {
       setWorkflowMessage('All active alerts cleared.');
     } catch (err) {
       console.error('Clear all alerts error:', err);
-      setWorkflowMessage('Could not clear all alerts. Check that the Node.js server is running.');
+      if (mountedRef.current) setWorkflowMessage('Could not clear all alerts. Check that the Node.js server is running.');
     } finally {
-      setAlertActionBusy(false);
+      if (mountedRef.current) setAlertActionBusy(false);
     }
   };
 
@@ -503,6 +662,8 @@ const ObjectDetection = () => {
     const check = validateVideoFile(file);
     if (!check.ok) { setWorkflowMessage(check.error); return; }
     revokeTemporaryObjectUrl(uploadedVideoUrl);
+    abortSecurePiRequests();
+    setSecurePiConnection(emptySecurePiConnection());
     setUploadedVideoUrl(createTemporaryObjectUrl(check.file));
     setUploadedVideoName(check.file.name);
     setSourceMode('file');
@@ -525,45 +686,52 @@ const ObjectDetection = () => {
     if (!displayedAlert) return '';
     return alertTitle(displayedAlert);
   }, [displayedAlert]);
+  const displayedSnapshotUrl = displayedAlert?.snapshot_url || '';
+  const activeSnapshotPreview = isRemoteSnapshot(displayedSnapshotUrl)
+    ? { url: displayedSnapshotUrl, error: false }
+    : snapshotPreview.source === displayedSnapshotUrl
+      ? snapshotPreview
+      : { url: '', error: false };
   useEffect(() => {
-    const snapshotUrl = displayedAlert?.snapshot_url || '';
-    setSnapshotError(false);
+    const snapshotUrl = displayedSnapshotUrl;
+    if (!isProtectedSnapshot(snapshotUrl)) return undefined;
 
-    if (!isProtectedSnapshot(snapshotUrl)) {
-      setSnapshotPreview({ url: isRemoteSnapshot(snapshotUrl) ? snapshotUrl : '', source: snapshotUrl });
-      return undefined;
-    }
-
-    setSnapshotPreview({ url: '', source: snapshotUrl });
     let cancelled = false;
     let objectUrl = '';
     axios.get(snapshotRequestUrl(snapshotUrl), { headers, responseType: 'blob' })
       .then((res) => {
         if (cancelled) return;
         if (typeof URL.createObjectURL !== 'function') {
-          setSnapshotError(true);
+          setSnapshotPreview({ url: '', source: snapshotUrl, error: true });
           return;
         }
         objectUrl = URL.createObjectURL(res.data);
-        setSnapshotPreview({ url: objectUrl, source: snapshotUrl });
+        setSnapshotPreview({ url: objectUrl, source: snapshotUrl, error: false });
       })
       .catch(() => {
-        if (!cancelled) setSnapshotError(true);
+        if (!cancelled) setSnapshotPreview({ url: '', source: snapshotUrl, error: true });
       });
 
     return () => {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [displayedAlert?.id, displayedAlert?.snapshot_url]);
+  }, [displayedSnapshotUrl, headers]);
   const sourceTitle = sourceMode === 'hardware'
-    ? 'SecurePi Edge Live'
+    ? 'Raspberry Pi 5 — Sony IMX500 SecurePi'
     : sourceMode === 'file'
       ? uploadedVideoName || 'Uploaded video file'
-      : 'Browser camera';
+      : 'Laptop Webcam';
   const sourceSubtitle = sourceMode === 'hardware'
-    ? 'Raspberry Pi AI Camera IMX500'
+    ? 'Validated local service connection and annotated MJPEG stream'
     : 'YOLO frame analysis';
+  const activeSourceLabel = sourceMode === 'hardware'
+    ? cameraReady
+      ? 'Active source: Raspberry Pi 5 — Sony IMX500 SecurePi'
+      : 'Connecting source: Raspberry Pi 5 — Sony IMX500 SecurePi'
+    : sourceMode === 'file'
+      ? 'Active source: Uploaded Video'
+      : 'Active source: Laptop Webcam';
 
   return (
     <div className="dashboard-layout">
@@ -581,7 +749,9 @@ const ObjectDetection = () => {
             </div>
             <div className="od-people-badge">
               <Icon name="person" />
-              {peopleCount} {peopleCount === 1 ? 'Person' : 'People'} Detected
+              {sourceMode === 'hardware' && peopleCount === null
+                ? 'People count not provided'
+                : `${peopleCount} ${peopleCount === 1 ? 'Person' : 'People'} Detected`}
             </div>
           </div>
         </header>
@@ -600,7 +770,7 @@ const ObjectDetection = () => {
         <section className="od-command-strip">
           <div className="od-command-card cyan">
             <span>Detections Today</span>
-            <strong>{peopleCount + alerts.length}</strong>
+            <strong>{(peopleCount ?? 0) + alerts.length}</strong>
             <small>Live frame plus alert log</small>
           </div>
           <div className="od-command-card red">
@@ -639,7 +809,7 @@ const ObjectDetection = () => {
               <button
                 type="button"
                 className={sourceMode === 'camera' ? 'active' : ''}
-                onClick={() => setSourceMode('camera')}
+                onClick={handleBrowserCameraSelection}
               >
                 Browser Camera
               </button>
@@ -650,14 +820,15 @@ const ObjectDetection = () => {
               <button
                 type="button"
                 className={sourceMode === 'hardware' ? 'active' : ''}
-                onClick={() => setSourceMode('hardware')}
+                onClick={() => { void connectSecurePi(); }}
+                disabled={securePiConnection.status === 'testing'}
               >
-                SecurePi Hardware
+                {securePiConnection.status === 'testing' ? 'Testing SecurePi…' : 'SecurePi Hardware'}
               </button>
               <select
                 className="od-input od-camera-picker"
                 value={selectedCameraId}
-                onChange={(event) => setSelectedCameraId(event.target.value)}
+                onChange={handleCameraSelectionChange}
               >
                 {cameras.length === 0 && <option value="">No cameras in inventory</option>}
                 {cameras.map((cam) => (
@@ -672,22 +843,71 @@ const ObjectDetection = () => {
                 : 'No camera selected from inventory - add one in Camera Inventory.'}
             </p>
 
+            <div className="od-source-status" role="status">
+              <strong>{activeSourceLabel}</strong>
+              {securePiConnection.fallback && (
+                <>
+                  <span>SecurePi IMX500 unavailable — using laptop camera fallback</span>
+                  <span>
+                    {securePiConnection.message}.
+                    {[SECUREPI_CONNECTION_STATUS.UNREACHABLE, SECUREPI_CONNECTION_STATUS.TIMEOUT].includes(securePiConnection.status)
+                      ? ' Local device not reachable from this network. Confirm this computer and the Raspberry Pi are on the same hotspot or LAN.'
+                      : ''}
+                  </span>
+                  {securePiConnection.status === SECUREPI_CONNECTION_STATUS.PERMISSION_REQUIRED && (
+                    <span>Allow Local Network Access for this FlowGuard site, then try again.</span>
+                  )}
+                  <button type="button" className="od-btn-primary" onClick={() => { void connectSecurePi(); }}>
+                    Retry SecurePi
+                  </button>
+                </>
+              )}
+              {!securePiConnection.fallback && securePiConnection.message && (
+                <span>{securePiConnection.message}</span>
+              )}
+            </div>
+
+            {monitoredCamera && (
+              <details className="od-securepi-override">
+                <summary>SecurePi URL for this browser</summary>
+                <p>Optional override scoped to {monitoredCamera.camera_code}; Camera Inventory remains the fallback.</p>
+                <div>
+                  <input
+                    className="od-input"
+                    type="url"
+                    inputMode="url"
+                    aria-label="SecurePi URL for this browser"
+                    value={securePiOverrideInput}
+                    onChange={(event) => {
+                      setSecurePiOverrideInput(event.target.value);
+                      setSecurePiOverrideMessage('');
+                    }}
+                    placeholder="http://securepi.local:8001/video_feed"
+                  />
+                  <button type="button" className="od-btn-primary" onClick={saveLocalSecurePiOverride}>Save local override</button>
+                  <button type="button" className="od-btn-cancel" onClick={clearLocalSecurePiOverride}>Clear override</button>
+                </div>
+                {securePiOverrideUrl && <span>Browser-local override active for this camera.</span>}
+                {securePiOverrideMessage && <span>{securePiOverrideMessage}</span>}
+              </details>
+            )}
+
+            {sourceMode === 'hardware' && securePiConnection.details && (
+              <div className="od-securepi-details" aria-label="SecurePi connection details">
+                <span>Connection <strong>{securePiConnection.status === SECUREPI_CONNECTION_STATUS.STALE ? 'Degraded' : 'Connected'}</strong></span>
+                <span>Detection <strong>{securePiConnection.details.detectionActive ? 'Active' : 'Standby'}</strong></span>
+                <span>Visible people <strong>{securePiConnection.details.visiblePeople === null ? 'Not provided by this SecurePi service' : securePiConnection.details.visiblePeople}</strong></span>
+                {securePiConnection.details.deviceId && <span>Device ID <strong>{securePiConnection.details.deviceId}</strong></span>}
+                {securePiConnection.details.zone && <span>Zone <strong>{securePiConnection.details.zone}</strong></span>}
+                {securePiConnection.details.frameAgeSeconds !== null && <span>Frame age <strong>{securePiConnection.details.frameAgeSeconds}s</strong></span>}
+              </div>
+            )}
+
             <canvas ref={canvasRef} style={{ display: 'none' }} />
 
             {sourceMode === 'file' && !uploadedVideoUrl ? (
               <div className="od-stream-placeholder">
                 Select a video file to run object detection on uploaded footage
-              </div>
-            ) : sourceMode === 'hardware' && !hardwareStreamUrl ? (
-              <div className="od-stream-placeholder">
-                SecurePi stream not configured - set an http:// stream URL on the selected camera in Camera Inventory, or VITE_SECUREPI_STREAM_URL in client/.env.local
-              </div>
-            ) : sourceMode === 'hardware' && streamError ? (
-              <div className="od-stream-placeholder od-stream-placeholder-stack">
-                <span>SecurePi stream offline - check Pi power, hotspot network, and port 8001</span>
-                <button type="button" className="od-btn-primary" onClick={() => { setStreamError(false); setHardwareReloadKey((prev) => prev + 1); }}>
-                  Reconnect SecurePi
-                </button>
               </div>
             ) : browserCameraError ? (
               <div className="od-stream-placeholder">
@@ -704,21 +924,17 @@ const ObjectDetection = () => {
               >
                 {sourceMode === 'hardware' ? (
                   <img
-                    key={hardwareReloadKey}
-                    src={hardwareReloadKey > 0
-                      ? `${hardwareStreamUrl}${hardwareStreamUrl.includes('?') ? '&' : '?'}t=${hardwareReloadKey}`
-                      : hardwareStreamUrl}
+                    key={hardwareStreamUrl}
+                    src={hardwareStreamUrl}
                     className="od-stream-img od-stream-img-hardware"
                     alt="SecurePi live hardware camera"
                     onLoad={() => {
                       setCameraReady(true);
-                      setCameraStatus('securepi_edge_live');
                       setStreamError(false);
                     }}
                     onError={() => {
                       setCameraReady(false);
-                      setCameraStatus('securepi_edge_offline');
-                      setStreamError(true);
+                      activateLaptopFallback(SECUREPI_CONNECTION_STATUS.UNREACHABLE, 'SecurePi MJPEG stream unavailable');
                     }}
                   />
                 ) : (
@@ -800,18 +1016,18 @@ const ObjectDetection = () => {
                       )}
                       <span>WhatsApp <strong className={whatsappStatusClass(whatsappStatusOf(displayedAlert))}>{whatsappStatusOf(displayedAlert)}</strong></span>
                     </div>
-                    {snapshotPreview.url ? (
+                    {activeSnapshotPreview.url ? (
                       <div className="od-snapshot-preview">
                         <img
-                          src={snapshotPreview.url}
+                          src={activeSnapshotPreview.url}
                           alt={`${displayedAlert.object_class || 'Object'} detection snapshot`}
                           className="od-snapshot-img"
                         />
-                        <a className="od-snapshot-link" href={snapshotPreview.url} target="_blank" rel="noreferrer">
+                        <a className="od-snapshot-link" href={activeSnapshotPreview.url} target="_blank" rel="noreferrer">
                           View edge snapshot
                         </a>
                       </div>
-                    ) : snapshotError ? (
+                    ) : activeSnapshotPreview.error ? (
                       <p className="od-snapshot-note">Snapshot upload found, but the image could not be loaded.</p>
                     ) : displayedAlert.snapshot_url ? (
                       <p className="od-snapshot-note">Snapshot captured on the edge device; remote upload unavailable.</p>

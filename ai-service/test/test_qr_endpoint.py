@@ -71,6 +71,41 @@ from fastapi.testclient import TestClient  # noqa: E402
 client = TestClient(main.app)
 AUTH = {"X-AI-Service-Key": "test-qr-key"}
 
+
+def test_health_is_public_and_safe():
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "face_model_ready": True,
+        "yolo_model_ready": False,
+        "server_camera_enabled": False,
+    }
+    serialized = response.text.lower()
+    assert "secret" not in serialized
+    assert "password" not in serialized
+
+
+def test_face_qr_and_yolo_routes_keep_service_authentication():
+    protected_routes = set()
+    for route in main.app.routes:
+        dependencies = getattr(getattr(route, "dependant", None), "dependencies", [])
+        if any(getattr(dependency.call, "__name__", "") == "require_service_key" for dependency in dependencies):
+            protected_routes.update((route.path, method) for method in route.methods)
+
+    assert {
+        ("/api/encode-faces", "POST"),
+        ("/user/recognize", "POST"),
+        ("/user/track", "POST"),
+        ("/refresh", "GET"),
+        ("/api/qr/decode", "POST"),
+        ("/api/yolo/stream", "GET"),
+        ("/api/yolo/analyze-frame", "POST"),
+        ("/api/yolo/people-count", "GET"),
+    }.issubset(protected_routes)
+    assert ("/health", "GET") not in protected_routes
+
 SMALL = np.full((32, 32, 3), 127, dtype=np.uint8)  # tiny — well under the 4 KB cap
 
 

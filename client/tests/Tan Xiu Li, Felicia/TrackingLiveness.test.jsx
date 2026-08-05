@@ -145,7 +145,10 @@ describe("box smoothing and lifecycle", () => {
   test("a camera-source switch resets the box immediately (no stale box from the old source)", () => {
     for (const page of PAGES) {
       const source = readPage(page);
-      expect(source).toMatch(/scanSessionRef\.current \+= 1; \/\/ invalidate responses captured from the old source\s*\n\s*(resetTurnstileKiosk|resetScanner)\(\);\s*\n\s*clearTrackingState\(\);/);
+      const selectSource = sliceBetween(source, "const selectCameraSource", "const start");
+      expect(selectSource).toMatch(/scanSessionRef\.current \+= 1/);
+      expect(selectSource).toMatch(/(resetTurnstileKiosk|resetScanner)\(\)/);
+      expect(selectSource).toMatch(/clearTrackingState\(\)/);
     }
   });
 });

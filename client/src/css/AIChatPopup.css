@@ -24,6 +24,11 @@
   transform: scale(1.1);
 }
 
+.chat-fab:focus-visible {
+  outline: 3px solid #f8fafc;
+  outline-offset: 3px;
+}
+
 /* Chat Window Container */
 .chat-window {
   position: absolute;
@@ -175,7 +180,7 @@
 @media (max-width: 480px) {
   .chat-popup-wrapper {
     right: 10px;
-    bottom: 20px;
+    bottom: 90px;
   }
   .chat-window {
     width: calc(100vw - 20px);

@@ -1,5 +1,4 @@
 // Frontend tests — Security Review timestamp (date + time) and date filtering.
-import React from "react";
 import { render, screen, waitFor, fireEvent, cleanup } from "@testing-library/react";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 

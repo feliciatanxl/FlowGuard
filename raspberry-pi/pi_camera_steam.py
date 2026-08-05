@@ -12,15 +12,22 @@ import threading
 import time
 import signal
 import sys
+import os
 
 import cv2
-from flask import Flask, Response, make_response
+from flask import Flask, Response, make_response, request
 
 TARGET_FPS = 15
 JPEG_QUALITY = 80
 # How long /video_feed blocks waiting for a fresher frame before re-checking —
 # a bounded condition wait, not a busy loop.
 FRAME_WAIT_TIMEOUT_S = 2.0
+SERVER_HOST = "0.0.0.0"
+SERVER_PORT = 8081
+DEFAULT_FLOWGUARD_FRONTEND_ORIGIN = (
+    "https://flowguard-client-staging-590663319889.asia-southeast1.run.app"
+)
+FLOWGUARD_FRONTEND_ORIGIN_ENV = "FLOWGUARD_FRONTEND_ORIGIN"
 
 
 class FrameCache:
@@ -92,24 +99,43 @@ class CaptureLoop(threading.Thread):
             self._stop_event.wait(max(0.0, self.frame_delay - elapsed))
 
 
-def add_cors(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+def add_response_headers(response, allowed_origin):
+    """Apply cache protection and exact-origin browser access headers."""
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers.add("Vary", "Origin")
+
+    request_origin = request.headers.get("Origin")
+    if request_origin == allowed_origin:
+        response.headers["Access-Control-Allow-Origin"] = allowed_origin
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        if request.headers.get("Access-Control-Request-Private-Network", "").lower() == "true":
+            response.headers["Access-Control-Allow-Private-Network"] = "true"
     return response
 
 
-def create_app(cache, target_fps=TARGET_FPS):
+def create_app(cache, target_fps=TARGET_FPS, frontend_origin=None):
     app = Flask(__name__)
+    allowed_origin = (
+        frontend_origin
+        if frontend_origin is not None
+        else os.environ.get(FLOWGUARD_FRONTEND_ORIGIN_ENV, DEFAULT_FLOWGUARD_FRONTEND_ORIGIN)
+    ).strip()
+    app.config[FLOWGUARD_FRONTEND_ORIGIN_ENV] = allowed_origin
+
+    @app.after_request
+    def apply_global_response_headers(response):
+        # Covers GETs, errors, streams, and Flask's automatic OPTIONS replies.
+        return add_response_headers(response, allowed_origin)
 
     @app.route("/")
     def home():
         response = make_response(
             "Pi Camera Stream running. Use /video_feed for live preview or /snapshot for one JPEG frame."
         )
-        return add_cors(response)
+        return response
 
     @app.route("/health")
     def health():
@@ -125,7 +151,7 @@ def create_app(cache, target_fps=TARGET_FPS):
             "frameAgeMs": frame_age_ms,
             "sequence": sequence,
         })
-        return add_cors(response)
+        return response
 
     def generate_frames():
         last_sequence = 0
@@ -146,16 +172,16 @@ def create_app(cache, target_fps=TARGET_FPS):
             generate_frames(),
             mimetype="multipart/x-mixed-replace; boundary=frame"
         )
-        return add_cors(response)
+        return response
 
     @app.route("/snapshot")
     def snapshot():
         jpg, _sequence, _captured_at = cache.latest()
         if jpg is None:
-            return add_cors(make_response("Camera warming up — no frame available yet", 503))
+            return make_response("Camera warming up — no frame available yet", 503)
         response = make_response(jpg)
         response.headers["Content-Type"] = "image/jpeg"
-        return add_cors(response)
+        return response
 
     return app
 
@@ -189,11 +215,11 @@ def main():
     signal.signal(signal.SIGTERM, shutdown_handler)
 
     app = create_app(cache)
-    print("[Pi Camera] Starting server on http://0.0.0.0:8081")
+    print(f"[Pi Camera] Starting server on http://{SERVER_HOST}:{SERVER_PORT}")
     print(f"[Pi Camera] Single capture thread @ ~{TARGET_FPS} FPS feeding the shared frame cache")
     print("[Pi Camera] Live preview: /video_feed")
     print("[Pi Camera] Snapshot: /snapshot")
-    app.run(host="0.0.0.0", port=8081, threaded=True)
+    app.run(host=SERVER_HOST, port=SERVER_PORT, threaded=True)
 
 
 if __name__ == "__main__":

@@ -1,26 +1,27 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
-import RecognitionDecisionCard, { DECISION_STATES } from '../components/RecognitionDecisionCard';
+import RecognitionDecisionCard from '../components/RecognitionDecisionCard';
+import { DECISION_STATES } from '../constants/recognitionDecision';
 import ImageBasedEvaluation from '../components/ImageBasedEvaluation';
 import useEvaluationParticipants from '../hooks/useEvaluationParticipants';
 import '../css/Dashboard.css';
 import '../css/FacialEvaluation.css';
+import '../css/EvaluationRecorderModal.css';
 import { API_BASE_URL } from '../constants/api';
+import { formatSingaporeDateTime } from '../constants/datetime';
 import { validateImageFile, createTemporaryObjectUrl, revokeTemporaryObjectUrl } from '../utils/mediaPreview';
 import { CAMERA_SOURCES, CAMERA_STATUS_MESSAGES, isPiCameraReachable, fetchPiSnapshotBitmap } from '../constants/piCamera';
+import { drawBitmapToCanvasAndClose } from '../utils/cameraSource';
 import {
   SCENARIOS,
   ENROLLED_LABELS,
   IDENTITY_LABELS,
   NO_FACE,
-  UNKNOWN_LABEL,
   CONDITIONS,
   SOURCES,
   ORIGINS,
-  EVAL_STORAGE_KEY,
-  EVAL_LABEL_MAP_KEY,
   SIM_USERS_KEY,
   DETECTION_OUTCOMES,
   loadRecords,
@@ -30,10 +31,6 @@ import {
   computeConfusionMatrix,
   toCsv,
   loadLabelMap,
-  saveLabelMap,
-  assignLabel,
-  removeMappedUser,
-  labelForUserId,
   loadSimUsers,
   saveSimUsers,
   buildEvaluationDraftFromRecognition,
@@ -44,6 +41,10 @@ import {
 
 const formatPct = (v) => `${(v * 100).toFixed(1)}%`;
 const nowIso = () => new Date().toISOString();
+const createSimParticipantId = () => `SIM-${Date.now().toString(36)}`;
+const formatEvaluationTime = (value) => formatSingaporeDateTime(value, 'Not recorded');
+const visibleEvaluationLabel = (record, field) =>
+  record.detectionOutcome === DETECTION_OUTCOMES.NO_FACE ? NO_FACE : record[field] || '-';
 
 const TABS = ['overview', 'live', 'records', 'sim'];
 const ORIENTATIONS = ['Front', 'Left Angle', 'Right Angle'];
@@ -112,10 +113,7 @@ const FacialEvaluation = () => {
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState({});
 
-  const [labelMap, setLabelMap] = useState(() => loadLabelMap());
-  const [enrolledUsers, setEnrolledUsers] = useState([]);
-  const [mappingDraft, setMappingDraft] = useState({ userId: '', label: 'P01' });
-  const [mappingError, setMappingError] = useState('');
+  const [labelMap] = useState(() => loadLabelMap());
 
   const [liveInput, setLiveInput] = useState({ actualLabel: '', condition: 'Front', notes: '' });
   const [liveResult, setLiveResult] = useState(null);
@@ -127,6 +125,9 @@ const FacialEvaluation = () => {
   const [uploadFrame, setUploadFrame] = useState(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const webcamStreamRef = useRef(null);
+  const cameraSessionRef = useRef(0);
+  const piRequestControllersRef = useRef(new Set());
 
   const [lastResult, setLastResult] = useState(null);
   const [simCondition, setSimCondition] = useState('Front');
@@ -145,13 +146,24 @@ const FacialEvaluation = () => {
   const token = localStorage.getItem('accessToken');
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [clearAccessToo, setClearAccessToo] = useState(false);
-  const { participants: evaluationParticipants, eligibleParticipants, labels: participantLabels, namesByLabel, reload: reloadParticipants } = useEvaluationParticipants();
+  const { participants: evaluationParticipants, eligibleParticipants, labels: participantLabels, reload: reloadParticipants } = useEvaluationParticipants();
 
   // Explicit FM-controlled backfill only — never triggered on page load.
   const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
   const [syncError, setSyncError] = useState('');
+  const syncCancelRef = useRef(null);
+
+  useEffect(() => {
+    if (!syncConfirmOpen) return undefined;
+    syncCancelRef.current?.focus();
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape' && !syncing) setSyncConfirmOpen(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [syncConfirmOpen, syncing]);
 
   const runParticipantSync = async () => {
     if (syncing) return;
@@ -178,13 +190,22 @@ const FacialEvaluation = () => {
     saveRecords(clean);
     notifyEvaluationRecordsUpdated();
   };
-  const persistMap = (next) => { setLabelMap(next); saveLabelMap(next); };
   const persistSimUsers = (next) => { setSimUsers(next); saveSimUsers(next); };
 
   useEffect(() => () => {
     if (uploadPreviewUrl) URL.revokeObjectURL(uploadPreviewUrl);
-    stopWebcam();
   }, [uploadPreviewUrl]);
+
+  // A camera permission prompt may resolve after navigation. Invalidate it
+  // and release the owned stream without relying on the detached video node.
+  useEffect(() => () => {
+    cameraSessionRef.current += 1;
+    piRequestControllersRef.current.forEach((controller) => controller.abort());
+    piRequestControllersRef.current.clear();
+    const stream = webcamStreamRef.current;
+    webcamStreamRef.current = null;
+    stream?.getTracks().forEach((track) => track.stop());
+  }, []);
 
   // Temporary wizard upload preview: object URL only, revoked on
   // replacement/unmount — image data is never stored or sent anywhere.
@@ -192,29 +213,21 @@ const FacialEvaluation = () => {
     if (wizardUploadUrl) URL.revokeObjectURL(wizardUploadUrl);
   }, [wizardUploadUrl]);
 
-  const loadEnrolledUsers = async () => {
-    setMappingError('');
-    try {
-      const res = await axios.get(`${API_BASE_URL}/user`, { headers: { Authorization: `Bearer ${token}` } });
-      setEnrolledUsers((Array.isArray(res.data) ? res.data : []).filter((u) => u.isEnrolled));
-    } catch {
-      setMappingError('Could not load enrolled users. Check FM access and server availability.');
-    }
-  };
-
-  const saveMapping = () => {
-    try {
-      const next = assignLabel(labelMap, mappingDraft.userId, mappingDraft.label);
-      persistMap(next);
-      setMappingError('');
-    } catch (err) {
-      setMappingError(err.message);
-    }
-  };
-
   const initLiveCamera = async () => {
     setLiveError('');
-    const piReachable = await isPiCameraReachable();
+    const cameraSession = cameraSessionRef.current + 1;
+    cameraSessionRef.current = cameraSession;
+    piRequestControllersRef.current.forEach((active) => active.abort());
+    piRequestControllersRef.current.clear();
+    const controller = new AbortController();
+    piRequestControllersRef.current.add(controller);
+    let piReachable;
+    try {
+      piReachable = await isPiCameraReachable(3500, { signal: controller.signal });
+    } finally {
+      piRequestControllersRef.current.delete(controller);
+    }
+    if (cameraSession !== cameraSessionRef.current) return;
     if (piReachable) {
       stopWebcam();
       setCameraSource(CAMERA_SOURCES.PI);
@@ -222,22 +235,41 @@ const FacialEvaluation = () => {
     } else {
       setCameraSource(CAMERA_SOURCES.WEBCAM);
       setCameraStatusMsg(CAMERA_STATUS_MESSAGES.PI_UNAVAILABLE);
-      await startWebcam();
+      await startWebcam(cameraSession);
     }
   };
 
-  const startWebcam = async () => {
+  const startWebcam = async (cameraSession) => {
     if (!navigator.mediaDevices?.getUserMedia) {
       setLiveError('No webcam is available. Use temporary upload instead.');
       return;
     }
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-    if (videoRef.current) videoRef.current.srcObject = stream;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      if (cameraSession !== cameraSessionRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      stopWebcam();
+      webcamStreamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      } else {
+        stream.getTracks().forEach((track) => track.stop());
+        webcamStreamRef.current = null;
+      }
+    } catch {
+      if (cameraSession === cameraSessionRef.current) {
+        setLiveError('Webcam permission was denied or the camera is unavailable. Use temporary upload instead.');
+      }
+    }
   };
 
   const stopWebcam = () => {
-    if (videoRef.current?.srcObject) {
-      videoRef.current.srcObject.getTracks().forEach((track) => track.stop());
+    const stream = webcamStreamRef.current || videoRef.current?.srcObject;
+    stream?.getTracks().forEach((track) => track.stop());
+    webcamStreamRef.current = null;
+    if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
   };
@@ -247,12 +279,20 @@ const FacialEvaluation = () => {
     if (!canvas) return null;
     const ctx = canvas.getContext('2d');
     if (cameraSource === CAMERA_SOURCES.PI) {
-      const bitmap = await fetchPiSnapshotBitmap();
-      const scale = Math.min(1, 640 / bitmap.width);
-      canvas.width = Math.round(bitmap.width * scale);
-      canvas.height = Math.round(bitmap.height * scale);
-      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      bitmap.close?.();
+      const cameraSession = cameraSessionRef.current;
+      const controller = new AbortController();
+      piRequestControllersRef.current.add(controller);
+      let bitmap;
+      try {
+        bitmap = await fetchPiSnapshotBitmap({ signal: controller.signal });
+      } finally {
+        piRequestControllersRef.current.delete(controller);
+      }
+      if (cameraSession !== cameraSessionRef.current) {
+        try { bitmap?.close?.(); } catch { /* ignore */ }
+        return null;
+      }
+      drawBitmapToCanvasAndClose(bitmap, canvas, { maxWidth: 640 });
       return canvas.toDataURL('image/jpeg', 0.4);
     }
     const video = videoRef.current;
@@ -398,7 +438,7 @@ const FacialEvaluation = () => {
       setSimMessage(`${wizard.participantLabel} re-enrolled in simulation only.`);
     } else {
       const participant = {
-        id: `SIM-${Date.now().toString(36)}`,
+        id: createSimParticipantId(),
         participantLabel: wizard.participantLabel,
         role: wizard.role,
         status: 'Active',
@@ -502,9 +542,9 @@ const FacialEvaluation = () => {
 
   // All scores derive automatically from records + filters — no Calculate
   // button. Any record or filter change recomputes the matrix immediately.
-  const filtered = useMemo(() => filterRecords(records, filters), [records, filters]);
-  const matrixFiltered = useMemo(() => filterRecords(records, matrixFilters), [records, matrixFilters]);
-  const stats = useMemo(() => computeConfusionMatrix(matrixFiltered, participantLabels), [matrixFiltered, participantLabels]);
+  const filtered = filterRecords(records, filters);
+  const matrixFiltered = filterRecords(records, matrixFilters);
+  const stats = computeConfusionMatrix(matrixFiltered, participantLabels);
   const labelOptions = [...IDENTITY_LABELS, NO_FACE];
   const totalUsers = evaluationParticipants.length;
   const enrolledUsersCount = evaluationParticipants.filter((p) => p.isEnrolled).length;
@@ -524,9 +564,9 @@ const FacialEvaluation = () => {
     <div className="dashboard-layout">
       <Sidebar />
       <main className="dashboard-main eval-main">
-        <header className="dashboard-header"><div className="header-titles"><h1>Facial Recognition Evaluation</h1><p>Measure recognition accuracy using evaluator-confirmed ground-truth samples. FlowGuard proof-of-concept evaluation results — not certified biometric accuracy.</p></div><button className="eval-danger-btn" onClick={() => setClearDialogOpen(true)}>Clear Local Evaluation Records</button></header>
+        <header className="dashboard-header"><div className="header-titles"><h1>Facial Recognition Evaluation</h1><p>Measure recognition accuracy using evaluator-confirmed ground-truth samples. FlowGuard proof-of-concept evaluation results — not certified biometric accuracy.</p></div></header>
 
-        {syncConfirmOpen && <div className="eval-recorder-overlay" role="dialog" aria-modal="true" aria-label="Sync Participants"><div className="eval-recorder-modal"><h3>Sync Participants</h3><p>This assigns the next stable P-label to every database user that does not have one yet, regardless of role, enrolment or suspension. Existing labels are never changed or renumbered.</p><div className="eval-recorder-actions"><button onClick={() => setSyncConfirmOpen(false)} disabled={syncing}>Cancel</button><button className="eval-primary-btn" disabled={syncing} onClick={runParticipantSync}>{syncing ? 'Syncing…' : 'Confirm Sync'}</button></div></div></div>}
+        {syncConfirmOpen && <div className="eval-recorder-overlay" role="dialog" aria-modal="true" aria-label="Sync Participants" onClick={() => { if (!syncing) setSyncConfirmOpen(false); }}><div className="eval-recorder-modal" onClick={(event) => event.stopPropagation()}><h3>Sync Participants</h3><p>This assigns the next stable P-label to every database user that does not have one yet, regardless of role, enrolment or suspension. Existing labels are never changed or renumbered.</p><div className="eval-recorder-actions"><button ref={syncCancelRef} className="eval-secondary-btn" onClick={() => setSyncConfirmOpen(false)} disabled={syncing}>Cancel</button><button className="eval-primary-btn" disabled={syncing} onClick={runParticipantSync}>{syncing ? 'Syncing…' : 'Confirm Sync'}</button></div></div></div>}
 
         {clearDialogOpen && <div className="eval-recorder-overlay" role="dialog" aria-modal="true" aria-label="Clear Local Evaluation Records"><div className="eval-recorder-modal"><h3>Clear Local Evaluation Records</h3>
           <p>Identity evaluation records are stored locally in this browser only. Clearing this local evaluation metadata does not remove or modify:</p>
@@ -539,11 +579,16 @@ const FacialEvaluation = () => {
             <li>Bookings</li>
           </ul>
           <p>Access-decision records are cleared only when you separately select the option below. These records never contain uploaded images, base64 data or embeddings.</p>
-          <label><input type="checkbox" checked={clearAccessToo} onChange={(event) => setClearAccessToo(event.target.checked)} /> Also clear local access evaluation records</label><div className="eval-recorder-actions"><button onClick={() => setClearDialogOpen(false)}>Cancel</button><button className="eval-danger-btn" onClick={() => { saveRecords([]); setRecords([]); if (clearAccessToo) saveAccessEvaluationRecords([]); notifyEvaluationRecordsUpdated(); setClearDialogOpen(false); }}>Confirm Clear</button></div></div></div>}        <div className="eval-tabs" role="tablist">
+          <label><input type="checkbox" checked={clearAccessToo} onChange={(event) => setClearAccessToo(event.target.checked)} /> Also clear local access evaluation records</label><div className="eval-recorder-actions"><button className="eval-secondary-btn" onClick={() => setClearDialogOpen(false)}>Cancel</button><button className="eval-danger-btn" onClick={() => { saveRecords([]); setRecords([]); if (clearAccessToo) saveAccessEvaluationRecords([]); notifyEvaluationRecordsUpdated(); setClearDialogOpen(false); }}>Confirm Clear</button></div></div></div>}
+
+        <div className="eval-action-row">
+          <div className="eval-tabs" role="tablist">
           <button role="tab" aria-selected={activeTab === 'overview'} className={`eval-tab ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}>Overview</button>
           <button role="tab" aria-selected={activeTab === 'live'} className={`eval-tab ${activeTab === 'live' ? 'active' : ''}`} onClick={() => setActiveTab('live')}>Run Live Evaluation</button>
           <button role="tab" aria-selected={activeTab === 'records'} className={`eval-tab ${activeTab === 'records' ? 'active' : ''}`} onClick={() => setActiveTab('records')}>Evaluation Records</button>
           <button role="tab" aria-selected={activeTab === 'sim'} className={`eval-tab ${activeTab === 'sim' ? 'active' : ''}`} onClick={() => setActiveTab('sim')}>Simulated Workflow</button>
+          </div>
+          <button className="eval-danger-btn eval-clear-action" onClick={() => setClearDialogOpen(true)}>Clear Local Evaluation Records</button>
         </div>
 
         {activeTab === 'overview' && <>
@@ -674,7 +719,54 @@ const FacialEvaluation = () => {
 
         {activeTab === 'records' && <section className="eval-card"><h2>Evaluation Records</h2><p className="eval-mode-note">ANONYMISED RECORDS — Images and biometric templates are not stored.</p><form className="eval-live-form" onSubmit={addLiveRecord} aria-label="Record live result"><h3>Manual live result fallback</h3><div className="eval-form-row"><label>Actual<select value={liveForm.actualLabel} onChange={(e) => setLiveForm({ ...liveForm, actualLabel: e.target.value })}>{labelOptions.map((l) => <option key={l}>{l}</option>)}</select></label><label>Predicted<select value={liveForm.predictedLabel} onChange={(e) => setLiveForm({ ...liveForm, predictedLabel: e.target.value })}>{labelOptions.map((l) => <option key={l}>{l}</option>)}</select></label><label>Confidence<input type="number" step="0.01" min="0" max="1" value={liveForm.confidence} onChange={(e) => setLiveForm({ ...liveForm, confidence: e.target.value })} /></label><label>Condition<select value={liveForm.condition} onChange={(e) => setLiveForm({ ...liveForm, condition: e.target.value })}>{CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></label><label>Origin<select value={liveForm.origin} onChange={(e) => setLiveForm({ ...liveForm, origin: e.target.value })}>{ORIGINS.map((o) => <option key={o}>{o}</option>)}</select></label><label>Latency (ms)<input type="number" min="0" value={liveForm.latencyMs} onChange={(e) => setLiveForm({ ...liveForm, latencyMs: e.target.value })} /></label><label className="eval-notes-field">Notes<input value={liveForm.notes} onChange={(e) => setLiveForm({ ...liveForm, notes: e.target.value })} /></label><button type="submit" className="eval-primary-btn">Add Live Result</button></div></form>
           <div className="eval-filter-bar"><label>Source<select aria-label="Filter by source" value={filters.source} onChange={(e) => setFilters({ ...filters, source: e.target.value })}>{['All', ...SOURCES].map((s) => <option key={s}>{s}</option>)}</select></label><label>Condition<select aria-label="Filter by condition" value={filters.condition} onChange={(e) => setFilters({ ...filters, condition: e.target.value })}>{['All', ...CONDITIONS].map((c) => <option key={c}>{c}</option>)}</select></label><label>Origin<select aria-label="Filter by origin" value={filters.origin} onChange={(e) => setFilters({ ...filters, origin: e.target.value })}>{['All', ...ORIGINS].map((o) => <option key={o}>{o}</option>)}</select></label><label>Date<input type="date" aria-label="Filter by date" value={filters.date} onChange={(e) => setFilters({ ...filters, date: e.target.value })} /></label><button className="eval-secondary-btn" onClick={exportCsv}>Export CSV</button><button className="eval-danger-btn" onClick={clearSimulated}>Clear Simulated Results</button></div>
-          <div className="eval-table-wrap"><table className="eval-table"><thead><tr><th>Actual</th><th>Predicted</th><th>Confidence</th><th>Condition</th><th>Latency</th><th>Source</th><th>Origin</th><th>Notes</th><th>Outcome</th><th>Time</th><th>Actions</th></tr></thead><tbody>{filtered.length === 0 ? <tr><td colSpan={11} className="eval-muted">No evaluation records match the current filters.</td></tr> : filtered.map((r) => <tr key={r.id} data-testid={`eval-row-${r.id}`}>{editingId === r.id ? <><td><select aria-label="Edit actual label" value={editDraft.actualLabel} onChange={(e) => setEditDraft({ ...editDraft, actualLabel: e.target.value })}>{IDENTITY_LABELS.map((l) => <option key={l}>{l}</option>)}</select></td><td><select aria-label="Edit predicted label" value={editDraft.predictedLabel} onChange={(e) => setEditDraft({ ...editDraft, predictedLabel: e.target.value })}>{IDENTITY_LABELS.map((l) => <option key={l}>{l}</option>)}</select></td><td>{r.confidence ?? '-'}</td><td><select aria-label="Edit condition" value={editDraft.condition} onChange={(e) => setEditDraft({ ...editDraft, condition: e.target.value })}>{CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></td><td>{r.latencyMs ?? '-'}</td><td>{r.source}</td><td><select aria-label="Edit origin" value={editDraft.origin} onChange={(e) => setEditDraft({ ...editDraft, origin: e.target.value })}>{ORIGINS.map((o) => <option key={o}>{o}</option>)}</select></td><td><input aria-label="Edit notes" value={editDraft.notes} onChange={(e) => setEditDraft({ ...editDraft, notes: e.target.value })} /></td><td>{r.detectionOutcome || '-'}</td><td>{(r.timestamp || '').slice(0, 16).replace('T', ' ')}</td><td><button className="eval-primary-btn" onClick={() => saveEdit(r.id)}>Save</button><button className="eval-secondary-btn" onClick={() => setEditingId(null)}>Cancel</button></td></> : <><td>{r.actualLabel || '-'}</td><td>{r.predictedLabel || '-'}</td><td>{r.confidence == null ? '-' : Number(r.confidence).toFixed(2)}</td><td>{r.condition}</td><td>{r.latencyMs == null ? '-' : `${r.latencyMs} ms`}</td><td><span className={`eval-source-tag ${r.source.toLowerCase()}`}>{r.source}</span></td><td>{r.origin}</td><td className="eval-notes-cell">{r.notes}</td><td>{r.detectionOutcome || '-'}</td><td>{(r.timestamp || '').slice(0, 16).replace('T', ' ')}</td><td><button className="eval-secondary-btn" onClick={() => startEdit(r)}>Edit</button><button className="eval-danger-btn" onClick={() => deleteRecord(r.id)}>Delete</button></td></>}</tr>)}</tbody></table></div></section>}
+          <div className="eval-table-wrap">
+            <table className="eval-table eval-records-table">
+              <thead>
+                <tr><th>Actual</th><th>Predicted</th><th>Confidence</th><th>Condition</th><th>Latency</th><th>Source</th><th>Origin</th><th>Time</th><th>Actions</th></tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 ? (
+                  <tr><td colSpan={9} className="eval-muted">No evaluation records match the current filters.</td></tr>
+                ) : filtered.map((r) => (
+                  <Fragment key={r.id}>
+                    <tr data-testid={`eval-row-${r.id}`}>
+                      {editingId === r.id ? (
+                        <>
+                          <td><select aria-label="Edit actual label" value={editDraft.actualLabel} onChange={(e) => setEditDraft({ ...editDraft, actualLabel: e.target.value })}>{IDENTITY_LABELS.map((l) => <option key={l}>{l}</option>)}</select></td>
+                          <td><select aria-label="Edit predicted label" value={editDraft.predictedLabel} onChange={(e) => setEditDraft({ ...editDraft, predictedLabel: e.target.value })}>{IDENTITY_LABELS.map((l) => <option key={l}>{l}</option>)}</select></td>
+                          <td>{r.confidence ?? '-'}</td>
+                          <td><select aria-label="Edit condition" value={editDraft.condition} onChange={(e) => setEditDraft({ ...editDraft, condition: e.target.value })}>{CONDITIONS.map((c) => <option key={c}>{c}</option>)}</select></td>
+                          <td>{r.latencyMs ?? '-'}</td>
+                          <td>{r.source}</td>
+                          <td><select aria-label="Edit origin" value={editDraft.origin} onChange={(e) => setEditDraft({ ...editDraft, origin: e.target.value })}>{ORIGINS.map((o) => <option key={o}>{o}</option>)}</select></td>
+                          <td>{formatEvaluationTime(r.timestamp)}</td>
+                          <td className="eval-record-actions-cell"><div className="eval-record-action-stack"><button className="eval-primary-btn" onClick={() => saveEdit(r.id)}>Save</button><button className="eval-secondary-btn" onClick={() => setEditingId(null)}>Cancel</button></div></td>
+                        </>
+                      ) : (
+                        <>
+                          <td>{visibleEvaluationLabel(r, 'actualLabel')}</td>
+                          <td>{visibleEvaluationLabel(r, 'predictedLabel')}</td>
+                          <td>{r.confidence == null ? '-' : Number(r.confidence).toFixed(2)}</td>
+                          <td>{r.condition}</td>
+                          <td>{r.latencyMs == null ? '-' : `${r.latencyMs} ms`}</td>
+                          <td><span className={`eval-source-tag ${r.source.toLowerCase()}`}>{r.source}</span></td>
+                          <td>{r.origin}</td>
+                          <td>{formatEvaluationTime(r.timestamp)}</td>
+                          <td className="eval-record-actions-cell"><div className="eval-record-action-stack"><button className="eval-secondary-btn" onClick={() => startEdit(r)}>Edit</button><button className="eval-danger-btn" onClick={() => deleteRecord(r.id)}>Delete</button></div></td>
+                        </>
+                      )}
+                    </tr>
+                    {editingId === r.id && (
+                      <tr className="eval-record-edit-details">
+                        <td colSpan={9}><label>Notes<input aria-label="Edit notes" value={editDraft.notes} onChange={(e) => setEditDraft({ ...editDraft, notes: e.target.value })} /></label></td>
+                      </tr>
+                    )}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>}
 
       </main>
     </div>

@@ -1,73 +1,135 @@
 # FlowGuard system architecture
 
-FlowGuard is a React/Vite client, Node/Express API, private Python/FastAPI AI service, and PostgreSQL application. The cloud design uses Cloud Run for all three services and Cloud SQL for PostgreSQL.
+## System overview
 
-## Runtime boundaries
+FlowGuard is a browser-based facility operations platform. A React/Vite single-page application calls a Node.js/Express API, which applies authentication, RBAC, validation, and authoritative workflow rules before persisting PostgreSQL records or invoking private/external services. A private FastAPI service performs facial, QR, and YOLO processing. Two separate local-edge paths are supported: a Raspberry Pi Camera Module 3 that the browser reads over a trusted local network, and SecurePi/IMX500 software that pushes authenticated event metadata to the backend.
 
-| Runtime | Repository path | Responsibility |
+PostgreSQL is authoritative for application state. Camera frames are not stored in Cloud SQL. User facial templates, operational records, transcript messages, event metadata, and lifecycle state are persistent; browser capture buffers are transient, FlowGuard alert snapshots use temporary instance-local storage, and SecurePi-local evidence follows the lifecycle of the selected external SecurePi runtime.
+
+## Runtime components
+
+| Component | Runtime and responsibility | Exposure |
 |---|---|---|
-| React/Nginx client | `client/` | Public and authenticated pages, local camera capture, native/ZXing QR decode, transient canvases, API calls to Node. |
-| Node/Express server | `server/` | JWT/RBAC, validation, authoritative user/booking/gate decisions, PostgreSQL writes, AI proxying, WhatsApp integration, audit and cron tasks. |
-| FastAPI AI service | `ai-service/` | InsightFace encoding/tracking/recognition, OpenCV QR candidate decode, YOLO frame analysis, zone-based alert emission. Private in Cloud Run. |
-| PostgreSQL/Cloud SQL | Sequelize and `psycopg2` clients | Authoritative users, embeddings, attendance, bookings, gate decisions, cameras/zones, alerts/incidents, transcripts/tickets/knowledge. |
-| Raspberry Pi camera | `raspberry-pi/` | Camera Module 3 snapshot/MJPEG source for enrolment, facial scanners, and gate QR/plate capture. |
-| SecurePi edge | `edge/securepi/` | Optional IMX500/local object detection, unattended timers, people alerts, outbound authenticated alert ingestion. |
+| Web client | React + Vite build served by Nginx in `flowguard-client-staging` on Cloud Run. Nginx provides SPA route fallback and same-origin `/api/*` and `/user/*` proxying. | Public. |
+| Application API | Node.js + Express in `flowguard-server-staging` on Cloud Run. Owns JWT/RBAC, CRUD, workflow decisions, audit, external-service calls, and readiness. | Public API with per-route controls. |
+| Database | PostgreSQL on Cloud SQL through Sequelize; FastAPI also reads the enrolled templates and zone configuration it needs. | No public application access; credentials are runtime configuration. |
+| AI service | FastAPI in private `flowguard-ai-staging` on Cloud Run. Hosts InsightFace encode/track/recognise, OpenCV QR candidate decoding, and YOLO frame analysis. | Private Cloud Run IAM plus `X-AI-Service-Key`. |
+| Gemini | Google Gemini REST API used by the support workflow for natural-language replies grounded in current Knowledge Base entries. | External; enabled only when `GEMINI_API_KEY` is configured. |
+| WhatsApp | Meta WhatsApp Cloud API for booking/driver and separately configured security-alert notifications. | External; persisted results can be simulated, sent, failed, skipped, or not requested. |
+| Cloud platform | Secret Manager, Artifact Registry, Cloud Build, Cloud Run, and Cloud SQL. | Google Cloud control/runtime plane. |
+| Gate camera | Raspberry Pi Camera Module 3 service in `raspberry-pi/`, exposing `/health`, `/video_feed`, and `/snapshot` on a trusted hotspot/LAN. | Local network only; browser connects directly. |
+| Laptop camera | Browser `getUserMedia` source used directly or as the safe Pi fallback. | Local browser device. |
+| SecurePi | Separate subsystem using Raspberry Pi 5 and Sony IMX500 for edge inference, local evidence, and outbound alert events. Source is maintained in dedicated SecurePi repositories, not copied into FlowGuard. | Local edge process; outbound authenticated HTTPS to Node. |
 
-The browser normally calls Node. Node adds the private AI-service credential and, on Cloud Run, a Google identity token. PostgreSQL is authoritative; AI responses are candidates/telemetry, not permission decisions.
+## Request boundaries
 
-## Route and ownership inventory
+1. **Browser -> deployed client.** Public, login, Driver Pass, and protected SPA routes are served by Nginx. React Router refreshes fall back to `index.html`.
+2. **Client -> Node backend.** Relative `/api/*` and `/user/*` requests pass through the client Nginx proxy. JWT and role checks protect non-public operations.
+3. **Node backend -> Cloud SQL.** Node re-reads current user state and stores users, attendance, bookings, gate decisions, cameras/zones, alerts/incidents, security logs, transcripts, tickets, knowledge entries, and evaluation participants.
+4. **Node backend -> private FastAPI AI service.** Facial, QR-cloud-fallback, and YOLO requests carry the app service key; on Cloud Run, Node also obtains a Google identity token for the AI service audience.
+5. **Node backend -> Gemini API.** The helpdesk sends only the current question and Knowledge Base grounding prompt. Gemini generates text; deterministic code decides escalation, category, priority, ticket creation, and database writes.
+6. **Node backend -> WhatsApp Cloud API.** Notifications run after the relevant database transaction. Delivery failure cannot undo a committed booking, gate result, alert, or incident, and the implemented workflow retains status/error metadata where supported.
+7. **Deployed browser -> local Pi camera.** The browser reads the Pi's private HTTP URL over the shared trusted hotspot/LAN. Cloud Run does **not** connect to or proxy the Pi private IP. Browser local-network permission and mixed-content/private-network policy can affect this path.
+8. **SecurePi -> authenticated edge-alert API.** SecurePi sends event metadata and, only in FlowGuard's supported multipart contract, an optional snapshot to `POST /api/edge/detection-alerts` with its dedicated bearer token. A stable event ID makes retries idempotent.
 
-| Frontend route/page | Owner/module | Node API | AI path | Primary data/CRUD | RBAC/automatic enhancement | Current limitation |
-|---|---|---|---|---|---|---|
-| `/enrollment` FaceEnrollment | Felicia / Facial Access | `POST /user/enroll-face` | `/api/encode-faces`, `/refresh` | User face update; EvaluationParticipant create | Any user self; FM any user; Tenant own Staff. Pi -> webcam; upload fallback. | Three-angle PoC; no certified spoof defence; frame not persisted. |
-| `/gate-scanner` GateScanner | Felicia / Facial Access | facial `/track`, `/recognize`, `/denied-event`; attendance `/scan` | `/user/track`, `/user/recognize` | Attendance create; SecurityLog create | FM; liveness/final same-ID/unknown/suspended/multiple-face handling | Software checkpoint only; head-turn liveness. |
-| `/vpatrol` VPatrol | Felicia / Facial Access | facial `/track`, `/recognize`, `/access-event`, `/denied-event`; security reads | `/user/track`, `/user/recognize` | SecurityLog create/read | FM; deduplicated safe/denied audit | No attendance change; not continuous cross-camera re-ID. |
-| `/facial-evaluation` | Felicia / Facial Access | evaluation participants, `/evaluate` | `/user/recognize` | Participant read/sync; browser-local evaluation results | FM; production tables remain unchanged by evaluation | Small internal PoC evaluation, not certification. |
-| `/users`, `/staff`, `/tenant-management`, `/user-logs/:id` | Shared auth + Felicia access management | `/user/*`, `/api/security/*` | `/refresh` after off-board | User CRUD, SecurityLog reads/review | DB-authoritative RBAC; PDPA transaction | User hard delete is intentional; some references are anonymised/soft. |
-| `/attendance` | Felicia / Facial Access | `/api/attendance/logs` | None | Attendance read | FM all; Tenant own Staff; Staff self | Scan writes occur through Gate Scanner/service caller. |
-| `/logistics` | Felicia / Smart Logistics | `/api/bookings/*` | None | Booking create/read/update/status/cancel | Scoped listings, SG time, conflict check, WhatsApp | Cancellation is status-based; no physical bay sensor. |
-| `/driver-pass/:ref` | Felicia / Smart Logistics | public `GET /api/bookings/:ref` | None | Safe Booking read | Polls no-store DTO; large QR/reference | Possession of ref permits this limited public read. |
-| `/logistics/gate-verification` | Felicia / Smart Logistics | `/api/qr/decode`, `/api/bookings/gate-verification` | `/api/qr/decode` | Booking transition; GateAccessLog create | FM; local/cloud/manual QR; PoC OCR; audited override; idempotency | OCR is not production LPR; barrier is simulated. |
-| `/camera-inventory`, `/detection-settings`, `/cameras` | Charlisa / Object & Space | `/api/cameras`, `/api/zones` | None or Node YOLO proxy | Camera/Zone CRUD | FM writes; FM/Staff read | Camera and zone routers apply JWT verification before role gates. |
-| `/object-detection` | Charlisa / Object & Space | `/api/yolo/*`, `/api/detection-alerts`, `/api/edge/detection-alerts` | `/api/yolo/*` | DetectionAlert CRUD; linked IncidentLog create | FM UI; FM/Staff/service/edge API paths; people/unattended rules | Model-supported generic classes only; schedules/pests/actions unsupported. |
-| `/support-dashboard`, floating chat | Lucas / Helpdesk | `/api/support/*` | None | Transcript/Ticket/Knowledge CRUD | Public deterministic chat; FM ticket/KB management | Keyword scoring, not an LLM. |
-| `/incidents` | Gladwin / Incidents | `/api/incident/*` | Optional configured scan endpoint | IncidentLog CRUD; linked alert sync | FM; auto-created from alerts plus manual create | Legacy scan-frame depends on separate `PYTHON_AI_URL`. |
+FastAPI also reads PostgreSQL facial templates and zone thresholds directly. This does not make inference responses authoritative: Node still owns user access, gate, attendance, alert, and incident decisions.
 
-## Facial and camera flow
+## Functional architecture
 
-- Laptop/browser webcam and Raspberry Pi Camera Module 3 both supply transient frames.
-- Enrolment captures front/left/right; upload is available when camera access fails.
-- Tracking returns face presence, count, box, and head-turn ratio without identity or persistence.
-- Recognition returns a matched user ID candidate. Node reads current PostgreSQL user state before returning an outcome.
-- Gate Scanner writes attendance after liveness and final same-ID confirmation. V-Patrol writes only security access logs.
-- Multiple faces are rejected; this is not labelled tailgating detection.
+### Client areas
 
-## Smart Logistics flow
+- Access and user management: login, enrolment, Gate Scanner, V-Patrol, attendance, users, staff, tenants, security review, and evaluation.
+- Smart Logistics: booking list/forms, public Driver Pass, QR/reference handling, proof-of-concept plate capture, and FM gate verification.
+- Monitoring and response: cameras, camera inventory, detection settings, Object Detection, alerts, incidents, and incident analytics.
+- Support and knowledge: floating chatbot, persistent session restore, support dashboard, ticket lifecycle, and Knowledge Base CRUD.
+- Shared operations: role-adaptive dashboard, settings, system health/error states, contact, and public information pages.
 
-- Booking date/time inputs without an offset are treated as Singapore wall-clock time and persisted as UTC instants.
-- Bay conflict validation rejects overlapping non-cancelled bookings with 409.
-- The public Driver Pass displays a QR/reference but does not itself authorise entry.
-- QR detection order is browser-native `BarcodeDetector`, ZXing, then cloud OpenCV through Node; manual entry remains available.
-- Plate OCR runs in the browser with Tesseract and permits FM correction. Node compares normalised plates.
-- `POST /api/bookings/gate-verification` re-reads/locks the booking, audits the decision, then transitions Confirmed -> Arrived or Arrived -> Completed. Repeat entry/exit is idempotent.
-- WhatsApp is post-commit/non-fatal and defaults to simulated mode. The visual barrier is a simulation.
+### Server areas
 
-## Object/incident flow
+- Authentication, account status, token versioning, password reset, enrolment, JWT verification, and RBAC.
+- User, attendance, booking, gate, camera, zone, alert, incident, security, support, dashboard, and knowledge APIs.
+- Gate verification, security/gate audit, attendance/dashboard aggregation, Gemini, WhatsApp, AI-service authentication, and snapshot lifecycle services.
+- Health/readiness handling, transcript cleanup, CORS/rate limiting, consistent error responses, and schema/startup checks.
 
-- Zone configuration can define monitored classes, density and unattended thresholds, cooldown, severity, detection type, and enablement.
-- FastAPI and SecurePi use people proximity and elapsed time for unattended-object alerts only for classes produced by the active model.
-- Both standard and SecurePi alert-ingest routes create `DetectionAlert` and `IncidentLog` atomically and store `incident_log_id`.
-- Updates and soft deletes synchronise in either direction.
+### AI and edge areas
 
-## Helpdesk flow
+- FastAPI: three-image facial encoding, tracking without identity, recognition candidate generation, QR candidate extraction, people/object analysis, and zone-based alert emission.
+- Camera Module 3: one in-memory latest-JPEG cache shared by MJPEG and snapshot responses; no disk frame archive.
+- SecurePi: edge inference and alert decisions on Pi 5/IMX500, with local evidence/outbox only where the selected external runtime implements it.
 
-The public chat stores a `ChatTranscript`, searches `KnowledgeBase` by token overlap, and escalates on configured phrases or the fifth user message. Escalation creates a linked `SupportTicket`. FM can read the transcript, update status/resolution notes, or delete the ticket/transcript. No LLM call exists in this route.
+## Repository structure
 
-## Cloud, security, privacy, and performance
+```text
+client/
+  src/
+    components/     shared UI, charts, chatbot, route/error helpers
+    pages/          public, role-scoped, monitoring, logistics, and support views
+    utils/          camera, QR/plate, alert-source, and analytics helpers
+    constants/      roles, camera, recognition, liveness, and API constants
+    css/            page and component styling
+  nginx.conf        same-origin API proxy and SPA fallback
+  Dockerfile        Vite build and Nginx Cloud Run image
+server/
+  routes/           HTTP endpoints and route-level policy
+  models/           Sequelize schema and associations
+  services/         domain workflows and external integrations
+  middlewares/      JWT/RBAC, CORS, limits, and error handling
+  config/           server and detection configuration
+  utils/            validation, bridge, storage, and formatting helpers
+  migrations/       additive PostgreSQL schema changes
+  tests/            Jest route/service/integration evidence
+ai-service/         private FastAPI facial, QR, and object-analysis service
+raspberry-pi/       Camera Module 3 local MJPEG/snapshot service and tests
+design/             group design sources and rendered PNG diagrams
+docs/               group evidence/run sheet plus separately owned documentation
+deployment/         Cloud Run configuration guidance and placeholders
+flowguard-ai/       existing individual AI-use records; not runtime application code
+```
 
-- Cloud Run client and Node server are public; FastAPI is private and requires Cloud Run IAM plus the app service key.
-- Cloud SQL PostgreSQL is authoritative. `faceVector` is `FLOAT[]`, not pgvector.
-- CORS fails closed in production/staging without configured origins.
-- `MemoryStore` rate limiting is per server instance and resets with cold starts.
-- Frames are transient. Facial, QR, and plate images are not permanently stored by the current PoC. Embeddings and audit metadata are stored; models are baked into the AI image.
-- SecurePi local snapshots are separate optional edge files and are not a general cloud upload store.
+There is no `edge/securepi/` runtime folder in the current repository. SecurePi remains part of the system architecture through the FlowGuard edge API, browser integration, and [edge-AI reference](../docs/securepi-flowguard-edge-ai.md); its hardware/model source stays in dedicated repositories.
+
+## Data architecture
+
+- Core identity and access: `User`, `Attendance`, `SecurityLog`, and `EvaluationParticipant`; `Staff` and `Invite` are separate legacy/onboarding records.
+- Logistics: `Booking` and `GateAccessLog`.
+- Monitoring: `Camera`, `MonitoringZone`, `DetectionAlert`, and `IncidentLog`.
+- Support: `ChatTranscript`, `SupportTicket`, and `KnowledgeBase`.
+- Current ingest paths create a `DetectionAlert` and linked `IncidentLog` atomically. Edge retries are deduplicated by `DetectionAlert.edge_event_id` when supplied.
+- Incident `resolvedAt` enables MTTR calculations; support category, status, archive, and unique transcript linkage support the current helpdesk lifecycle.
+
+See [er-diagram.md](er-diagram.md) for current implemented fields and relationship boundaries.
+
+## Security architecture
+
+- JWT verification re-reads the user from PostgreSQL and checks current role, active state, and token version.
+- Client `ProtectedRoute` improves navigation, while server middleware remains the authoritative RBAC boundary.
+- Production/staging CORS allowlists fail closed when required origins are not configured; authentication, chat, reads/writes, AI, and uploads have route-aware limits.
+- Secrets remain in runtime configuration/Secret Manager and are not placed in client `VITE_` values, Docker images, or documentation.
+- The AI service is private: Cloud Run IAM and the shared service key protect inbound inference requests.
+- Cloud SQL is not exposed as a public application endpoint.
+- Edge ingest uses a separate bearer token, ignores caller-supplied source identity, and fails closed when `EDGE_INGEST_TOKEN` is absent.
+- Stable edge event IDs and a unique database constraint make supported retries idempotent.
+- Server startup/readiness fails closed when the database or required schema is unavailable; normal deployment keeps `DB_SYNC_ALTER=false`.
+- SecurityLog and GateAccessLog retain audit metadata; detection alerts retain source, link, and WhatsApp state.
+- Facial, QR, and plate frames are transient. Optional alert snapshots are authenticated and stored on ephemeral instance-local disk with cleanup controls; they are not a durable cloud evidence archive.
+
+## Reliability and fallback
+
+| Failure or condition | Implemented behaviour |
+|---|---|
+| Pi not configured or unavailable | Supported camera pages use or allow the **Laptop Webcam** fallback; no Pi request is made when Pi integration is disabled/unconfigured. |
+| Private AI unavailable | Node returns a controlled error; access/gate callers do not treat an inference failure as permission. Existing UI provides retry/manual or prepared-data paths depending on the workflow. |
+| Gemini unconfigured, timed out, or failed | Support uses deterministic Knowledge Base matching or a fixed clarification/escalation-status response. Escalation decisions remain deterministic. |
+| Duplicate SecurePi event | Existing alert is returned; a second alert/incident and notification are not created for the same stable event ID. |
+| Database/schema unavailable | Startup/readiness remains not ready rather than serving a false healthy state. |
+| WhatsApp unavailable | The committed application record remains; simulation/failure/skip state and error metadata are recorded by the applicable workflow. |
+| Backend temporarily unavailable to SecurePi | The combined external SecurePi design retains local evidence and an outbox for retry; the simpler stream variant does not. Documentation must identify which runtime is used. |
+| Browser cannot use automatic QR/plate result | Manual booking-reference entry and FM-corrected plate input remain available; the backend makes the final gate decision and audits it. |
+
+## Known boundaries
+
+- Memory-backed rate limiting is per Node instance/cold start, not a distributed global quota.
+- FastAPI/YOLO and SecurePi support only the classes and rules actually configured and validated; pest/rodent hardware accuracy is not established.
+- Current FlowGuard and some SecurePi variants do not share a fully interoperable standalone snapshot-upload route; metadata alerts and local evidence must not be presented as durable cloud snapshot storage.
+- Incident analytics are calculated in the client from the FM incident list. Existing incidents without `resolvedAt` are excluded from MTTR.
+- The gate barrier is simulated, and browser plate OCR is proof-of-concept assistance rather than production LPR.

@@ -36,8 +36,8 @@ load_dotenv()
 app = FastAPI()
 
 # --- Service-to-service authentication -------------------------------------
-# The Node backend (and only the Node backend) may call the facial-recognition
-# endpoints. It sends the shared secret in an X-AI-Service-Key header.
+# The Node backend (and only the Node backend) may call the AI endpoints. It sends
+# the shared secret in an X-AI-Service-Key header.
 # For local development the key may be left unset (a warning is printed and the
 # check is skipped) — never deploy without AI_SERVICE_KEY configured.
 _AI_SERVICE_KEY = os.getenv("AI_SERVICE_KEY", "")
@@ -58,6 +58,17 @@ _FACE_CTX_ID = int(os.getenv("FACE_CTX_ID", "-1"))
 face_app = FaceAnalysis(name=_FACE_MODEL_NAME)
 face_app.prepare(ctx_id=_FACE_CTX_ID, det_size=(_FACE_DET_SIZE, _FACE_DET_SIZE))
 print(f"InsightFace ready: {_FACE_MODEL_NAME}, det_size={_FACE_DET_SIZE}, ctx_id={_FACE_CTX_ID}")
+
+
+@app.get("/health")
+async def health():
+    """Safe Cloud Run health response; no credentials, paths, or camera access."""
+    return {
+        "status": "ok",
+        "face_model_ready": face_app is not None,
+        "yolo_model_ready": bool(YOLO_AVAILABLE),
+        "server_camera_enabled": os.getenv("USE_SERVER_CAMERA", "false").lower() == "true",
+    }
 
 # 2. Database Connection Helper
 def get_db_connection():
@@ -205,8 +216,8 @@ async def encode_faces(images: FaceImages):
         raise HTTPException(status_code=500, detail="Failed to process facial images.")
 
 
-# CORS: the frontend no longer calls the face endpoints directly (they go through
-# the Node backend), but the YOLO stream endpoints are still browser-fetched in
+# CORS: the frontend no longer calls the AI endpoints directly (they go through
+# the Node backend), including the YOLO endpoints that were once browser-fetched in
 # development. Origins are restricted to an env-configured allowlist — never a
 # wildcard combined with credentials.
 _allowed_origins = [
@@ -1261,7 +1272,7 @@ def _frame_generator():
         time.sleep(1.0 / max(_STREAM_FPS, 1))
 
 
-@app.get("/api/yolo/stream")
+@app.get("/api/yolo/stream", dependencies=[Depends(require_service_key)])
 async def yolo_stream():
     """MJPEG stream of annotated webcam feed with YOLO bounding boxes."""
     return StreamingResponse(
@@ -1283,7 +1294,7 @@ class AnalyzeFrameRequest(BaseModel):
     source: Optional[str] = None
 
 
-@app.post("/api/yolo/analyze-frame")
+@app.post("/api/yolo/analyze-frame", dependencies=[Depends(require_service_key)])
 async def yolo_analyze_frame(request: AnalyzeFrameRequest):
     """Analyze a browser-captured frame and return an annotated JPEG."""
     global _latest_frame, _detection_active, _camera_status
@@ -1325,7 +1336,7 @@ async def yolo_analyze_frame(request: AnalyzeFrameRequest):
     }
 
 
-@app.get("/api/yolo/people-count")
+@app.get("/api/yolo/people-count", dependencies=[Depends(require_service_key)])
 async def yolo_people_count():
     """Returns the current people count from the latest YOLO frame."""
     return {

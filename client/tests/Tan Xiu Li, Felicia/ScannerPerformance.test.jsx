@@ -17,17 +17,21 @@ import {
   markPiUnavailable,
   isPiInCooldown,
   resetPiAvailabilityCache,
+  saveRuntimePiCameraBaseUrl,
 } from "../../src/constants/piCamera";
 
 const readPage = (name) =>
   fs.readFileSync(path.resolve(__dirname, `../../src/pages/${name}`), "utf8");
 
 beforeEach(() => {
+  localStorage.clear();
+  saveRuntimePiCameraBaseUrl("http://pi.test:8081");
   resetPiAvailabilityCache();
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  localStorage.clear();
 });
 
 describe("frame capture optimisation", () => {
@@ -129,7 +133,10 @@ describe("Pi fallback caching", () => {
     expect(isPiInCooldown(now + PI_UNAVAILABLE_COOLDOWN_MS)).toBe(false);
 
     // After the cooldown, a fresh probe is allowed again.
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "ok", camera: "Pi Camera Module 3" }),
+    });
     vi.stubGlobal("fetch", fetchMock);
     await expect(isPiCameraReachableCached(now + PI_UNAVAILABLE_COOLDOWN_MS)).resolves.toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);

@@ -19,6 +19,9 @@ _spec = importlib.util.spec_from_file_location("pi_camera_steam", MODULE_PATH)
 pi = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pi)
 
+ALLOWED_ORIGIN = pi.DEFAULT_FLOWGUARD_FRONTEND_ORIGIN
+UNAPPROVED_ORIGIN = "https://unapproved.example"
+
 
 class FakeCamera:
     """Stands in for Picamera2: counts every capture_array call."""
@@ -128,6 +131,14 @@ def test_snapshot_and_video_feed_share_one_cache_with_one_encode_per_frame(cache
     assert camera.capture_calls == stable_captures  # snapshots never capture
 
 
+def test_cache_retains_only_the_latest_jpeg(cache):
+    cache.publish(b"jpeg::old")
+    cache.publish(b"jpeg::latest")
+    jpeg, sequence, _ = cache.latest()
+    assert jpeg == b"jpeg::latest"
+    assert sequence == 2
+
+
 # ---------------------------------------------------------------------------
 # 3. Controlled target FPS.
 # ---------------------------------------------------------------------------
@@ -180,9 +191,83 @@ def test_health_reports_safe_operational_telemetry_only(cache, client):
     assert "jpeg" not in str(body) and "image" not in body
 
 
-def test_cors_and_no_cache_headers_are_preserved(cache, client):
+def test_get_routes_allow_only_the_exact_flowguard_origin_and_disable_caching(cache, client):
     cache.publish(b"jpeg::frame")
     for route in ("/snapshot", "/health", "/"):
-        res = client.get(route)
-        assert res.headers["Access-Control-Allow-Origin"] == "*"
+        res = client.get(route, headers={"Origin": ALLOWED_ORIGIN})
+        assert res.headers["Access-Control-Allow-Origin"] == ALLOWED_ORIGIN
+        assert "Origin" in res.headers.get("Vary", "")
         assert "no-store" in res.headers["Cache-Control"]
+        assert res.headers["Pragma"] == "no-cache"
+
+
+def test_video_feed_has_exact_origin_no_store_and_expected_multipart_boundary(cache, client):
+    cache.publish(b"jpeg::stream-frame")
+    res = client.get(
+        "/video_feed",
+        headers={"Origin": ALLOWED_ORIGIN},
+        buffered=False,
+    )
+    try:
+        assert res.status_code == 200
+        assert res.headers["Access-Control-Allow-Origin"] == ALLOWED_ORIGIN
+        assert "no-store" in res.headers["Cache-Control"]
+        assert res.headers["Content-Type"].startswith(
+            "multipart/x-mixed-replace; boundary=frame"
+        )
+        first_chunk = next(res.response)
+        assert first_chunk.startswith(b"--frame\r\nContent-Type: image/jpeg\r\n\r\n")
+    finally:
+        res.close()
+
+
+@pytest.mark.parametrize("route", ["/health", "/snapshot", "/video_feed"])
+def test_approved_origin_options_has_cors_and_no_store(route, cache, client):
+    cache.publish(b"jpeg::frame")
+    res = client.options(
+        route,
+        headers={
+            "Origin": ALLOWED_ORIGIN,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Content-Type",
+        },
+    )
+    assert res.status_code == 200
+    assert res.headers["Access-Control-Allow-Origin"] == ALLOWED_ORIGIN
+    assert res.headers["Access-Control-Allow-Methods"] == "GET, OPTIONS"
+    assert res.headers["Access-Control-Allow-Headers"] == "Content-Type"
+    assert "no-store" in res.headers["Cache-Control"]
+
+
+def test_approved_private_network_options_returns_opt_in(cache, client):
+    res = client.options(
+        "/snapshot",
+        headers={
+            "Origin": ALLOWED_ORIGIN,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Private-Network": "true",
+        },
+    )
+    assert res.headers["Access-Control-Allow-Origin"] == ALLOWED_ORIGIN
+    assert res.headers["Access-Control-Allow-Private-Network"] == "true"
+
+
+@pytest.mark.parametrize("route", ["/health", "/snapshot", "/video_feed"])
+def test_unapproved_origin_receives_no_cors_or_private_network_opt_in(route, cache, client):
+    cache.publish(b"jpeg::frame")
+    res = client.options(
+        route,
+        headers={
+            "Origin": UNAPPROVED_ORIGIN,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Private-Network": "true",
+        },
+    )
+    assert "Access-Control-Allow-Origin" not in res.headers
+    assert "Access-Control-Allow-Private-Network" not in res.headers
+    assert "no-store" in res.headers["Cache-Control"]
+
+
+def test_server_bind_configuration_is_all_interfaces_on_port_8081():
+    assert pi.SERVER_HOST == "0.0.0.0"
+    assert pi.SERVER_PORT == 8081

@@ -51,27 +51,39 @@ export default function DetectionSettings() {
   const [cameraPickerByZone, setCameraPickerByZone] = useState({});
 
   const token = localStorage.getItem('accessToken');
-  const headers = { Authorization: `Bearer ${token}` };
+  const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
   const canEdit = localStorage.getItem('userRole') === ROLES.FM;
 
-  const fetchZones = useCallback(() => {
-    axios.get(ZONES_URL, { headers })
+  const fetchZones = useCallback((signal) => {
+    return axios.get(ZONES_URL, { headers, signal })
       .then((res) => {
+        if (signal?.aborted) return;
         setZones(res.data);
         setNodeOffline(false);
       })
-      .catch(() => setNodeOffline(true));
-  }, []);
+      .catch(() => {
+        if (!signal?.aborted) setNodeOffline(true);
+      });
+  }, [headers]);
 
-  const fetchCameras = useCallback(() => {
-    axios.get(CAMERAS_URL, { headers })
-      .then((res) => setCameras(Array.isArray(res.data) ? res.data : []))
-      .catch(() => setCameras([]));
-  }, []);
+  const fetchCameras = useCallback((signal) => {
+    return axios.get(CAMERAS_URL, { headers, signal })
+      .then((res) => {
+        if (!signal?.aborted) setCameras(Array.isArray(res.data) ? res.data : []);
+      })
+      .catch(() => {
+        if (!signal?.aborted) setCameras([]);
+      });
+  }, [headers]);
 
   useEffect(() => {
-    fetchZones();
-    fetchCameras();
+    const controller = new AbortController();
+    const loadSettings = async () => {
+      await Promise.all([fetchZones(controller.signal), fetchCameras(controller.signal)]);
+    };
+
+    void loadSettings();
+    return () => controller.abort();
   }, [fetchZones, fetchCameras]);
 
   const camerasByZone = useMemo(() => (

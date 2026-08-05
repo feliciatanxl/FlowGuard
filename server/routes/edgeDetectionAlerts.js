@@ -9,6 +9,13 @@ const { DetectionAlert, IncidentLog, MonitoringZone, Camera, sequelize } = requi
 const { Op } = require('sequelize');
 const { resolveIncidentType } = require('../utils/detectionAlertBridge');
 const whatsapp = require('../services/whatsappService');
+const { sendUnexpectedError } = require('../utils/safeHttpError');
+const {
+    ensureSnapshotDirectory,
+    generateSnapshotDestination,
+} = require('../utils/detectionSnapshotStorage');
+
+const PUBLIC_NOTIFICATION_ERROR = 'Notification delivery failed.';
 
 // Mirrors the fallback in detectionAlerts.js so edge and AI alerts get consistent severities
 function severityFromDuration(seconds) {
@@ -56,27 +63,78 @@ const withTransaction = (fn) => {
 
 const SEVERITIES = ['Low', 'Medium', 'High', 'Critical'];
 const VALID_STATUSES = ['Active', 'Acknowledged', 'Investigating', 'Dispatched', 'Escalated', 'Cleared'];
-const SNAPSHOT_MAX_BYTES = Number(process.env.DETECTION_SNAPSHOT_MAX_BYTES || 5 * 1024 * 1024);
-const SNAPSHOT_DIR = path.resolve(
-    process.env.DETECTION_SNAPSHOT_DIR || path.join(__dirname, '..', 'uploads', 'detection-snapshots')
-);
+const configuredSnapshotMaxBytes = Number(process.env.DETECTION_SNAPSHOT_MAX_BYTES);
+const SNAPSHOT_MAX_BYTES = Number.isFinite(configuredSnapshotMaxBytes) && configuredSnapshotMaxBytes > 0
+    ? configuredSnapshotMaxBytes
+    : 5 * 1024 * 1024;
+const JPEG_MIME_TYPES = new Set(['image/jpeg', 'image/jpg']);
 
-fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
+const validateSnapshotFilename = (originalName) => {
+    const raw = String(originalName || '');
+    const decodedNames = [raw];
+    for (let depth = 0; depth < 3; depth += 1) {
+        try {
+            const decoded = decodeURIComponent(decodedNames[decodedNames.length - 1]);
+            if (decoded === decodedNames[decodedNames.length - 1]) break;
+            decodedNames.push(decoded);
+        } catch {
+            return 'snapshot filename is invalid.';
+        }
+    }
+
+    // Multipart filenames are metadata only and never become storage paths. Reject
+    // both literal and encoded path syntax anyway, before the bytes are accepted.
+    if (!raw || decodedNames.some((name) => name.includes('\0') || /[/\\]/.test(name)
+        || path.posix.isAbsolute(name) || path.win32.isAbsolute(name)
+        || name === '.' || name === '..')) {
+        return 'snapshot filename is invalid.';
+    }
+    if (!decodedNames.every((name) => /\.jpe?g$/i.test(name))) {
+        return 'snapshot filename must use a .jpg or .jpeg extension.';
+    }
+    return null;
+};
+
+const isJpegBuffer = (buffer) => Buffer.isBuffer(buffer)
+    && buffer.length >= 4
+    && buffer[0] === 0xff
+    && buffer[1] === 0xd8
+    && buffer[buffer.length - 2] === 0xff
+    && buffer[buffer.length - 1] === 0xd9;
 
 const snapshotUpload = multer({
-    dest: SNAPSHOT_DIR,
+    storage: multer.memoryStorage(),
+    preservePath: true,
     limits: { fileSize: SNAPSHOT_MAX_BYTES },
     fileFilter: (req, file, cb) => {
-        if (/^image\/jpe?g$/i.test(file.mimetype)) return cb(null, true);
-        return cb(new Error('snapshot must be a JPEG image.'));
+        if (!JPEG_MIME_TYPES.has(String(file.mimetype || '').toLowerCase())) {
+            return cb(new Error('snapshot must be a JPEG image.'));
+        }
+        const filenameError = validateSnapshotFilename(file.originalname);
+        if (filenameError) return cb(new Error(filenameError));
+        return cb(null, true);
     }
 });
 
 const handleSnapshotUpload = (req, res, next) => {
     snapshotUpload.single('snapshot')(req, res, (err) => {
-        if (!err) return next();
-        cleanupUploadedSnapshot(req.file);
-        return res.status(400).json({ error: err.message });
+        if (err) {
+            const safeMessages = new Set([
+                'snapshot must be a JPEG image.',
+                'snapshot filename is invalid.',
+                'snapshot filename must use a .jpg or .jpeg extension.'
+            ]);
+            const error = err.code === 'LIMIT_FILE_SIZE'
+                ? 'snapshot exceeds the configured maximum size.'
+                : safeMessages.has(err.message)
+                    ? err.message
+                    : 'snapshot upload is invalid.';
+            return res.status(400).json({ error });
+        }
+        if (req.file && !isJpegBuffer(req.file.buffer)) {
+            return res.status(400).json({ error: 'snapshot content is not a valid JPEG image.' });
+        }
+        return next();
     });
 };
 
@@ -114,24 +172,31 @@ const parseOccurredAt = (value) => {
 const snapshotUrlFor = (alertId, filename) => `/api/detection-alerts/${alertId}/snapshot/${filename}`;
 
 const persistUploadedSnapshot = async (alert, file) => {
-    if (!file || !alert?.id) return null;
-    const ext = path.extname(file.originalname || '').toLowerCase();
-    const safeExt = ['.jpg', '.jpeg'].includes(ext) ? ext : '.jpg';
-    const filename = `alert-${alert.id}-${path.basename(file.filename)}${safeExt}`;
-    const destination = path.join(SNAPSHOT_DIR, filename);
-    await fs.promises.rename(file.path, destination);
+    if (!file?.buffer || !alert?.id) return null;
+    const { filename, destination } = generateSnapshotDestination();
     const snapshotUrl = snapshotUrlFor(alert.id, filename);
-    if (typeof alert.update === 'function') {
-        await alert.update({ snapshot_url: snapshotUrl });
-    } else {
-        alert.snapshot_url = snapshotUrl;
+    let fileHandle = null;
+    let createdFile = false;
+    try {
+        await ensureSnapshotDirectory();
+        fileHandle = await fs.promises.open(destination, 'wx', 0o600);
+        createdFile = true;
+        await fileHandle.writeFile(file.buffer);
+        await fileHandle.close();
+        fileHandle = null;
+        if (typeof alert.update === 'function') {
+            await alert.update({ snapshot_url: snapshotUrl });
+        } else {
+            alert.snapshot_url = snapshotUrl;
+        }
+    } catch (err) {
+        if (fileHandle) await fileHandle.close().catch(() => {});
+        // Only delete when this request successfully created the UUID path. An
+        // astronomically unlikely EEXIST must never remove another alert's file.
+        if (createdFile) await fs.promises.unlink(destination).catch(() => {});
+        throw err;
     }
     return snapshotUrl;
-};
-
-const cleanupUploadedSnapshot = (file) => {
-    if (!file?.path) return;
-    fs.promises.unlink(file.path).catch(() => {});
 };
 
 const verifyEdgeIngestToken = (req, res, next) => {
@@ -227,8 +292,9 @@ async function attemptSecurityWhatsapp(alert, messageAlert) {
     try {
         result = await whatsapp.sendDetectionAlert(messageAlert);
     } catch (err) {
+        console.error('[Edge] WhatsApp delivery failed:', err);
         await safeUpdateWhatsapp(alert, { whatsapp_status: 'Failed', whatsapp_error: String(err.message).slice(0, 500) });
-        return { status: 'Failed', error: err.message, recipientCount: 0 };
+        return { status: 'Failed', error: PUBLIC_NOTIFICATION_ERROR, recipientCount: 0 };
     }
     const sentAt = (result.status === 'Sent' || result.status === 'Simulated') ? new Date() : null;
     await safeUpdateWhatsapp(alert, {
@@ -236,7 +302,12 @@ async function attemptSecurityWhatsapp(alert, messageAlert) {
         whatsapp_sent_at: sentAt,
         whatsapp_error: result.error ? String(result.error).slice(0, 500) : null,
     });
-    return { status: result.status, recipientCount: result.recipientCount, error: result.error || null, sent_at: sentAt };
+    return {
+        status: result.status,
+        recipientCount: result.recipientCount,
+        error: result.error ? PUBLIC_NOTIFICATION_ERROR : null,
+        sent_at: sentAt
+    };
 }
 
 router.post('/detection-alerts', verifyEdgeIngestToken, handleSnapshotUpload, async (req, res) => {
@@ -252,7 +323,6 @@ router.post('/detection-alerts', verifyEdgeIngestToken, handleSnapshotUpload, as
             alert_type,
             severity,
             confidence,
-            snapshot_url,
             snapshot_path,
             device_id,
             track_id,
@@ -400,9 +470,16 @@ router.post('/detection-alerts', verifyEdgeIngestToken, handleSnapshotUpload, as
             throw err;
         }
 
-        const uploadedSnapshotUrl = await persistUploadedSnapshot(alert, req.file);
-        if (uploadedSnapshotUrl) {
-            messageAlert.snapshot_url = uploadedSnapshotUrl;
+        try {
+            const uploadedSnapshotUrl = await persistUploadedSnapshot(alert, req.file);
+            if (uploadedSnapshotUrl) {
+                messageAlert.snapshot_url = uploadedSnapshotUrl;
+            }
+        } catch (snapshotErr) {
+            // The alert and incident already committed. Snapshot persistence is additive,
+            // so report/log its failure without turning a successful idempotent ingest
+            // into a retryable 500 that leaves WhatsApp stuck in Pending.
+            console.error('[Edge] Snapshot persistence failed:', snapshotErr);
         }
 
         // Post-commit WhatsApp. A failure here never rolls back or fails the 201.
@@ -413,8 +490,7 @@ router.post('/detection-alerts', verifyEdgeIngestToken, handleSnapshotUpload, as
 
         return res.status(201).json(serializeAlert(alert, whatsappResult));
     } catch (err) {
-        cleanupUploadedSnapshot(req.file);
-        return res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Edge detection alert ingestion failed:', err);
     }
 });
 

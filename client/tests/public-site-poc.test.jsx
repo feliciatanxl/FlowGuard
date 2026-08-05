@@ -1,4 +1,3 @@
-/* global process */
 import '@testing-library/jest-dom/vitest';
 import { describe, expect, test, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
@@ -24,7 +23,7 @@ describe('public FlowGuard website PoC positioning', () => {
       'Secure Access Management',
       'Asset and Space Monitoring',
       'Smart Logistics',
-      'Incident and Operational Support'
+      'Operational Support'
     ]);
 
     const workflowSteps = screen.getAllByTestId('workflow-step');
@@ -103,7 +102,9 @@ describe('public FlowGuard website PoC positioning', () => {
     expect(screen.getByText(/Secure Access Management/i)).toBeInTheDocument();
     expect(screen.getByText(/Asset and Space Monitoring/i)).toBeInTheDocument();
     expect(screen.getAllByText(/^Smart Logistics$/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Incident and Operational Support/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Operational Support$/i)).toBeInTheDocument();
+    expect(screen.getByText(/^AI Helpdesk$/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Incident Analytics$/i)).toBeInTheDocument();
     expect(screen.getByText(/FlowGuard across the facility/i)).toBeInTheDocument();
     expect(screen.getByText(/How FlowGuard works/i)).toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: /Client Login/i }).some((link) => link.getAttribute('href') === '/login')).toBe(true);
@@ -118,7 +119,7 @@ describe('public FlowGuard website PoC positioning', () => {
     expect(screen.getByRole('heading', { name: /Implemented PoC scope/i })).toBeInTheDocument();
     expect(screen.getByText(/Object and unattended-item monitoring for supported classes/i)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Not implemented in the current PoC/i })).toBeInTheDocument();
-    expect(screen.getByText(/Pest and animal detection/i)).toBeInTheDocument();
+    expect(screen.getByText(/Production pest and rodent detection requires a validated IMX500 model/i)).toBeInTheDocument();
     expect(screen.getByText(/Multi-camera person re-identification/i)).toBeInTheDocument();
     expect(screen.getByText(/support, rather than replace, human operational and security decisions/i)).toBeInTheDocument();
   });
@@ -148,7 +149,8 @@ describe('public FlowGuard website PoC positioning', () => {
     expect(capabilitiesSection.getByText(/Three-angle enrolment/i)).toBeInTheDocument();
     expect(capabilitiesSection.getByText(/SecurePi\/IMX500 input/i)).toBeInTheDocument();
     expect(capabilitiesSection.getByText(/Browser and cloud QR fallback/i)).toBeInTheDocument();
-    expect(capabilitiesSection.getByText(/Security Command Centre/i)).toBeInTheDocument();
+    expect(capabilitiesSection.getByText(/Gemini-assisted helpdesk with deterministic fallback/i)).toBeInTheDocument();
+    expect(capabilitiesSection.getByText(/MTTR, confidence-bucket, and resolution-funnel insights/i)).toBeInTheDocument();
 
     expect(screen.getAllByText(/Illustrative PoC View/i).length).toBe(6);
     expect(capabilitiesSection.getByRole('link', { name: /Launch Facial Recognition Demo/i })).toHaveAttribute('href', '/facial-evaluation');
@@ -195,9 +197,9 @@ describe('public FlowGuard website PoC positioning', () => {
     const scopeSection = within(screen.getByRole('region', { name: /Current PoC and future deployment/i }));
     expect(scopeSection.getByText(/Facial checkpoint recognition/i)).toBeInTheDocument();
     expect(scopeSection.getByText(/Unattended-item detection for supported classes/i)).toBeInTheDocument();
-    expect(scopeSection.getByText(/Google Cloud deployment/i)).toBeInTheDocument();
+    expect(scopeSection.getByText(/Cloud Run and Cloud SQL deployment/i)).toBeInTheDocument();
     expect(scopeSection.getByRole('heading', { name: /Not implemented in the current PoC/i })).toBeInTheDocument();
-    expect(scopeSection.getByText(/Pest and animal detection/i)).toBeInTheDocument();
+    expect(scopeSection.getByText(/Production pest and rodent detection requires a validated IMX500 model/i)).toBeInTheDocument();
     expect(scopeSection.getByText(/Multi-camera person re-identification/i)).toBeInTheDocument();
     expect(scopeSection.getByText(/Physical gate integration/i)).toBeInTheDocument();
 
@@ -238,8 +240,15 @@ describe('public FlowGuard website PoC positioning', () => {
     expect(screen.getByRole('heading', { name: /Platform Overview/i })).toBeInTheDocument();
     expect(screen.getByText(/Facial Recognition Service/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Smart Logistics/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/AI Helpdesk, Knowledge Base & Incident Analytics/i)).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/uptime|Offline|Error|N-0|99\.9|92\.4|View Diagnostics/i);
     expect(document.body.textContent).not.toMatch(forbiddenClaims);
+  });
+
+  test('document metadata describes the implemented AI-assisted operations platform', () => {
+    const html = fs.readFileSync(path.resolve(process.cwd(), 'index.html'), 'utf8');
+    expect(html).toContain('<title>FlowGuard | AI-Assisted Factory Operations</title>');
+    expect(html).toContain('FlowGuard connects secure access, smart logistics, AI-assisted monitoring, incident analytics, and operational support.');
   });
 
   test('contact form is visibly demo-only, does not log personal data, and does not show fake success', () => {
@@ -260,7 +269,7 @@ describe('public FlowGuard website PoC positioning', () => {
   test('authenticated route definitions and private page imports remain present', () => {
     const appSource = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
 
-    ['/dashboard', '/enrollment', '/cameras', '/object-detection', '/vpatrol', '/gate-scanner', '/attendance', '/users', '/security-review', '/incidents', '/support-dashboard'].forEach((route) => {
+    ['/dashboard', '/enrollment', '/cameras', '/object-detection', '/vpatrol', '/gate-scanner', '/attendance', '/users', '/security-review', '/incidents', '/incidents/analytics', '/support-dashboard', '/knowledge-base'].forEach((route) => {
       expect(appSource).toContain(`path="${route}"`);
     });
     expect(appSource).toContain('ProtectedRoute');

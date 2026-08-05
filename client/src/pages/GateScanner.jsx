@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import axios from 'axios';
 import Sidebar from '../components/Sidebar';
 import '../css/Dashboard.css';
@@ -36,6 +36,7 @@ import {
   CHALLENGE_STATE,
   LIVENESS_BASELINE_SAMPLES,
 } from '../constants/liveness';
+import { drawBitmapToCanvasAndClose } from '../utils/cameraSource';
 
 // Pi snapshot failures must persist this long before the page falls back to
 // the laptop webcam (time-based so the fast tracking loop cannot trip it on a
@@ -73,7 +74,12 @@ const GateScanner = () => {
   // { identityLabel, attendanceResult, gateAction }.
   const [lastDecision, setLastDecision] = useState(null);
   const cameraSourceRef = useRef(CAMERA_SOURCES.PI);
+  const mediaStreamRef = useRef(null);
+  const webcamStartPromiseRef = useRef(null);
+  const webcamStartSessionRef = useRef(null);
   const piFailSinceRef = useRef(0);
+  const piRequestControllersRef = useRef(new Set());
+  const piPreviewRef = useRef(null);
   // Bumped on camera-source switch and unmount; responses from an older
   // session are stale and must be ignored.
   const scanSessionRef = useRef(0);
@@ -81,6 +87,7 @@ const GateScanner = () => {
   const scanStatusRef = useRef("SYSTEM_ACTIVE");
   const lockTimerRef = useRef(null);
   const progressIntervalRef = useRef(null);
+  const resetTimerRef = useRef(null);
   const lockPendingRef = useRef(false);
   const candidateUserRef = useRef(null);
 
@@ -110,22 +117,20 @@ const GateScanner = () => {
     if (message) setDisplayMessage(message);
   };
 
-  useEffect(() => {
-    initCameraSource();
-    const trackInterval = setInterval(() => performTrackingScan(), TRACK_INTERVAL_MS);
-    const scanInterval = setInterval(() => performRecognitionScan(), SCAN_INTERVAL_MS);
+  const abortActivePiRequests = () => {
+    piRequestControllersRef.current.forEach((controller) => controller.abort());
+    piRequestControllersRef.current.clear();
+  };
 
-    return () => {
-      scanSessionRef.current += 1; // any in-flight tracking/recognition response is now stale
-      stopGateCamera();
-      clearInterval(trackInterval);
-      clearInterval(scanInterval);
-      if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-    };
-  }, []);
+  const clearPiPreview = () => {
+    try { piPreviewRef.current?.removeAttribute('src'); } catch { /* ignore */ }
+  };
 
   const applyCameraSource = (source, statusMsg) => {
+    if (source !== CAMERA_SOURCES.PI) {
+      abortActivePiRequests();
+      clearPiPreview();
+    }
     cameraSourceRef.current = source;
     setCameraSource(source);
     setCameraStatusMsg(statusMsg);
@@ -141,10 +146,22 @@ const GateScanner = () => {
     setFaceBox(null);
   };
 
+  const probePiReachable = async () => {
+    const controller = new AbortController();
+    piRequestControllersRef.current.add(controller);
+    try {
+      return await isPiCameraReachableCached(Date.now(), { signal: controller.signal });
+    } finally {
+      piRequestControllersRef.current.delete(controller);
+    }
+  };
+
   // Primary source: Raspberry Pi Gate Camera. Probe the snapshot endpoint on
   // load; if unreachable, automatically fall back to the laptop webcam.
   const initCameraSource = async () => {
-    const piReachable = await isPiCameraReachableCached();
+    const scanSession = scanSessionRef.current;
+    const piReachable = await probePiReachable();
+    if (scanSession !== scanSessionRef.current) return;
     if (piReachable) {
       stopGateCamera();
       applyCameraSource(CAMERA_SOURCES.PI, CAMERA_STATUS_MESSAGES.PI_CONNECTED);
@@ -159,10 +176,14 @@ const GateScanner = () => {
   const selectCameraSource = async (source) => {
     if (source === cameraSourceRef.current) return;
     scanSessionRef.current += 1; // invalidate responses captured from the old source
+    abortActivePiRequests();
+    clearPiPreview();
     resetTurnstileKiosk();
     clearTrackingState();
+    const scanSession = scanSessionRef.current;
     if (source === CAMERA_SOURCES.PI) {
-      const piReachable = await isPiCameraReachableCached();
+      const piReachable = await probePiReachable();
+      if (scanSession !== scanSessionRef.current) return;
       if (piReachable) {
         stopGateCamera();
         applyCameraSource(CAMERA_SOURCES.PI, CAMERA_STATUS_MESSAGES.PI_CONNECTED);
@@ -177,36 +198,91 @@ const GateScanner = () => {
   };
 
   const startGateCamera = async () => {
+    const scanSession = scanSessionRef.current;
+    if (
+      webcamStartPromiseRef.current &&
+      webcamStartSessionRef.current === scanSession
+    ) {
+      return webcamStartPromiseRef.current;
+    }
     if (!navigator.mediaDevices?.getUserMedia) {
       changeScanState("HARDWARE_ERR", "NO CAMERA DETECTED ON THIS TERMINAL");
       return;
     }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          frameRate: { ideal: 15, max: 20 },
-          facingMode: "user"
-        },
-        audio: false
-      });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current.play().catch(() => changeScanState("HARDWARE_ERR", "CAMERA STREAM PAUSED"));
-        };
+    const startPromise = (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 15, max: 20 },
+            facingMode: "user"
+          },
+          audio: false
+        });
+
+        // A source switch or unmount may happen while the permission prompt is
+        // open. Never attach that now-stale stream; release it immediately.
+        if (
+          scanSession !== scanSessionRef.current ||
+          cameraSourceRef.current !== CAMERA_SOURCES.WEBCAM
+        ) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        stopGateCamera();
+        mediaStreamRef.current = stream;
+        const video = videoRef.current;
+        if (video) {
+          video.srcObject = stream;
+          video.onloadedmetadata = () => {
+            if (mediaStreamRef.current !== stream) return;
+            video.play().catch(() => {
+              if (mediaStreamRef.current === stream) {
+                changeScanState("HARDWARE_ERR", "CAMERA STREAM PAUSED");
+              }
+            });
+          };
+        }
+        changeScanState("SYSTEM_ACTIVE", "GATE TURNSTILE ONLINE // AWAITING TARGET");
+      } catch {
+        if (scanSession === scanSessionRef.current) {
+          changeScanState("HARDWARE_ERR", "HARDWARE FAILURE: CAMERA NOT DETECTED");
+        }
       }
-      changeScanState("SYSTEM_ACTIVE", "GATE TURNSTILE ONLINE // AWAITING TARGET");
-    } catch (err) {
-      changeScanState("HARDWARE_ERR", "HARDWARE FAILURE: CAMERA NOT DETECTED");
+    })();
+
+    webcamStartPromiseRef.current = startPromise;
+    webcamStartSessionRef.current = scanSession;
+    try {
+      await startPromise;
+    } finally {
+      if (webcamStartPromiseRef.current === startPromise) {
+        webcamStartPromiseRef.current = null;
+        webcamStartSessionRef.current = null;
+      }
     }
   };
 
   const stopGateCamera = () => {
-    if (videoRef.current?.srcObject) {
-      videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+    const stream = mediaStreamRef.current || videoRef.current?.srcObject;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
     }
+    mediaStreamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.onloadedmetadata = null;
+      videoRef.current.srcObject = null;
+    }
+  };
+
+  const scheduleKioskReset = (delayMs) => {
+    if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    resetTimerRef.current = setTimeout(() => {
+      resetTimerRef.current = null;
+      resetTurnstileKiosk();
+    }, delayMs);
   };
 
   const processAttendanceTransaction = async (verifiedUser) => {
@@ -246,7 +322,7 @@ const GateScanner = () => {
       });
     }
 
-    setTimeout(() => { resetTurnstileKiosk(); }, 4000);
+    scheduleKioskReset(4000);
   };
 
   // Capture one frame from the active camera source onto the given hidden
@@ -258,10 +334,14 @@ const GateScanner = () => {
 
     if (cameraSourceRef.current === CAMERA_SOURCES.PI) {
       let bitmap;
+      const scanSession = scanSessionRef.current;
+      const controller = new AbortController();
+      piRequestControllersRef.current.add(controller);
       try {
-        bitmap = await fetchPiSnapshotBitmap();
+        bitmap = await fetchPiSnapshotBitmap({ signal: controller.signal });
         piFailSinceRef.current = 0;
-      } catch {
+      } catch (error) {
+        if (error?.code === 'aborted' || scanSession !== scanSessionRef.current) return null;
         // Pi snapshot failed mid-session - once failures persist past the
         // fallback window, switch to the webcam and cache the failure so the
         // Pi isn't re-probed on every cycle.
@@ -274,12 +354,14 @@ const GateScanner = () => {
           await startGateCamera();
         }
         return null;
+      } finally {
+        piRequestControllersRef.current.delete(controller);
       }
-      const scale = Math.min(1, maxWidth / bitmap.width);
-      canvas.width = Math.round(bitmap.width * scale);
-      canvas.height = Math.round(bitmap.height * scale);
-      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      bitmap.close?.();
+      if (scanSession !== scanSessionRef.current || cameraSourceRef.current !== CAMERA_SOURCES.PI) {
+        try { bitmap?.close?.(); } catch { /* ignore */ }
+        return null;
+      }
+      drawBitmapToCanvasAndClose(bitmap, canvas, { maxWidth });
       return canvas.toDataURL('image/jpeg', quality);
     }
 
@@ -507,7 +589,7 @@ const GateScanner = () => {
         gateAction: 'Turnstile remains locked'
       });
       setScanProgress(0);
-      setTimeout(() => { resetTurnstileKiosk(); }, 3500);
+      scheduleKioskReset(3500);
     } else {
       // Unknown person - server already wrote the intrusion log.
       changeScanState("UNKNOWN_QUERY", "PERIMETER BREACH: ACCESS DENIED");
@@ -517,7 +599,7 @@ const GateScanner = () => {
         gateAction: 'Turnstile remains locked'
       });
       setScanProgress(0);
-      setTimeout(() => { resetTurnstileKiosk(); }, 3500);
+      scheduleKioskReset(3500);
     }
   };
 
@@ -534,7 +616,7 @@ const GateScanner = () => {
       attendanceResult: 'Access denied — head-turn not confirmed in time',
       gateAction: 'Turnstile remains locked'
     });
-    setTimeout(() => { resetTurnstileKiosk(); }, 3500);
+    scheduleKioskReset(3500);
   };
 
   // ------------------------------------------------------------------
@@ -592,12 +674,16 @@ const GateScanner = () => {
       attendanceResult: 'Access denied — final identity confirmation failed',
       gateAction: 'Turnstile remains locked'
     });
-    setTimeout(() => { resetTurnstileKiosk(); }, 3500);
+    scheduleKioskReset(3500);
   };
 
   const resetTurnstileKiosk = () => {
     if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
     if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+    if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    lockTimerRef.current = null;
+    progressIntervalRef.current = null;
+    resetTimerRef.current = null;
     lockPendingRef.current = false;
     setFaceBox(null);
     smoothedBoxRef.current = null;
@@ -620,6 +706,46 @@ const GateScanner = () => {
   // Manual retry: clear the current outcome and return the turnstile to standby.
   const manualRetry = () => resetTurnstileKiosk();
 
+  // These callbacks are owned by the scanner lifecycle effect. Effect Events
+  // let the fixed mount-time intervals always invoke the latest render logic
+  // without tearing down and reopening the webcam on every state update.
+  const initializeCameraSource = useEffectEvent(async () => {
+    await initCameraSource();
+  });
+  const runTrackingScan = useEffectEvent(() => {
+    void performTrackingScan();
+  });
+  const runRecognitionScan = useEffectEvent(() => {
+    void performRecognitionScan();
+  });
+  const releaseCamera = useEffectEvent(() => {
+    stopGateCamera();
+  });
+
+  useEffect(() => {
+    const initialize = async () => {
+      await initializeCameraSource();
+    };
+
+    void initialize();
+    const trackInterval = setInterval(runTrackingScan, TRACK_INTERVAL_MS);
+    const scanInterval = setInterval(runRecognitionScan, SCAN_INTERVAL_MS);
+
+    return () => {
+      // Invalidate late Pi probes, camera permission results, tracking calls,
+      // and recognition calls before releasing all owned resources.
+      scanSessionRef.current += 1;
+      clearInterval(trackInterval);
+      clearInterval(scanInterval);
+      if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+      abortActivePiRequests();
+      clearPiPreview();
+      releaseCamera();
+    };
+  }, []);
+
   return (
     <div className="dashboard-layout">
       <Sidebar />
@@ -631,56 +757,54 @@ const GateScanner = () => {
           </div>
         </header>
 
-        <div className="camera-source-bar" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
-          <span style={{ color: '#94a3b8', fontSize: '0.85rem', fontWeight: 600 }}>Camera Source:</span>
+        <section className="camera-control-panel" aria-label="Gate Scanner camera controls">
+          <div className="camera-control-row">
+          <span className="camera-control-label">Camera Source:</span>
           <button
+            type="button"
+            className={`camera-control-btn ${cameraSource === CAMERA_SOURCES.PI ? 'active' : ''}`}
             onClick={() => selectCameraSource(CAMERA_SOURCES.PI)}
-            style={{
-              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem',
-              border: cameraSource === CAMERA_SOURCES.PI ? '1px solid #3b82f6' : '1px solid #334155',
-              background: cameraSource === CAMERA_SOURCES.PI ? '#1d4ed8' : '#1e293b', color: '#e2e8f0'
-            }}
+            aria-pressed={cameraSource === CAMERA_SOURCES.PI}
           >
             Raspberry Pi Camera Module 3
           </button>
           <button
+            type="button"
+            className={`camera-control-btn ${cameraSource === CAMERA_SOURCES.WEBCAM ? 'active' : ''}`}
             onClick={() => selectCameraSource(CAMERA_SOURCES.WEBCAM)}
-            style={{
-              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem',
-              border: cameraSource === CAMERA_SOURCES.WEBCAM ? '1px solid #3b82f6' : '1px solid #334155',
-              background: cameraSource === CAMERA_SOURCES.WEBCAM ? '#1d4ed8' : '#1e293b', color: '#e2e8f0'
-            }}
+            aria-pressed={cameraSource === CAMERA_SOURCES.WEBCAM}
           >
             Laptop Webcam
           </button>
           <button
             type="button"
+            className="camera-control-btn"
             onClick={manualScanNow}
-            style={{
-              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem',
-              border: '1px solid #334155', background: '#1e293b', color: '#e2e8f0'
-            }}
           >
             Scan Now
           </button>
           <button
             type="button"
+            className="camera-control-btn"
             onClick={manualRetry}
-            style={{
-              padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: '0.85rem',
-              border: '1px solid #334155', background: '#1e293b', color: '#e2e8f0'
-            }}
           >
             Reset
           </button>
-          <span style={{ color: '#38bdf8', fontSize: '0.82rem' }}>{cameraStatusMsg}</span>
-        </div>
+          </div>
+          <p className="camera-status-line">
+            {cameraSource === CAMERA_SOURCES.PI
+              ? 'Active source: Raspberry Pi 4 — Camera Module 3'
+              : 'Active source: Laptop Webcam'}
+          </p>
+          <p className="camera-status-line" role="status">{cameraStatusMsg}</p>
+        </section>
 
         <div className="vpatrol-grid gate-grid">
           <div className="vpatrol-card monitor-section">
             <div ref={containerRef} className={`cctv-container state-theme-${scanStatus.toLowerCase()}`} style={{ width: '100%', height: '100%' }}>
-              {cameraSource === CAMERA_SOURCES.PI && (
+              {cameraSource === CAMERA_SOURCES.PI && PI_CAMERA_STREAM_URL && (
                 <img
+                  ref={piPreviewRef}
                   src={PI_CAMERA_STREAM_URL}
                   alt="Raspberry Pi gate camera live preview"
                   className="video-feed"

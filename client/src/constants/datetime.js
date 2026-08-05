@@ -123,12 +123,91 @@ export const isoToSingaporeLocalInput = (value) => {
   return `${bag.year}-${bag.month}-${bag.day}T${hour}:${bag.minute}`;
 };
 
-/** Booking-slot display in Singapore time: "27 Jul 2026, 6:01 PM". */
-export const formatSingaporeBookingDateTime = (value, fallback = '—') => {
+/** Minute-precision Singapore display: "27 Jul 2026, 6:01 PM". */
+export const formatSingaporeDateTime = (value, fallback = '—') => {
   if (!value) return fallback;
   const date = new Date(value);
   if (isNaN(date.getTime())) return fallback;
   return `${sgDate(date)}, ${sgTime(date)}`;
+};
+
+/** Singapore calendar-date display: "27 Jul 2026". */
+export const formatSingaporeDate = (value, fallback = '—') => {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (isNaN(date.getTime())) return fallback;
+  return sgDate(date);
+};
+
+/** Booking-slot display alias retained for existing logistics callers. */
+export const formatSingaporeBookingDateTime = (value, fallback = '—') =>
+  formatSingaporeDateTime(value, fallback);
+
+// ---------------------------------------------------------------------------
+// 1–2 hour booking-window rule (client mirror of server/utils/bookingDateTime.js).
+// The backend stays authoritative; this only powers inline UI feedback. All maths
+// go through the fixed +08:00 conversion (singaporeLocalInputToIso), never the
+// browser's local timezone, so a deployed kiosk in any zone measures the same window.
+// ---------------------------------------------------------------------------
+export const BOOKING_MIN_MINUTES = 60;
+export const BOOKING_MAX_MINUTES = 120;
+
+/**
+ * Minutes between two <input type="datetime-local"> (Singapore wall-clock) values.
+ * Returns null when either value is missing or unparseable.
+ */
+export const bookingWindowMinutes = (startLocal, endLocal) => {
+  const startIso = singaporeLocalInputToIso(startLocal);
+  const endIso = singaporeLocalInputToIso(endLocal);
+  if (!startIso || !endIso) return null;
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
+  return Number.isNaN(ms) ? null : ms / 60000;
+};
+
+/**
+ * Suggest an end `minutes` after the chosen start (default 60), as a datetime-local
+ * value in Singapore time. Returns '' when start is empty/unparseable.
+ */
+export const addSingaporeMinutesToLocalInput = (startLocal, minutes = 60) => {
+  const startIso = singaporeLocalInputToIso(startLocal);
+  if (!startIso) return '';
+  const end = new Date(new Date(startIso).getTime() + minutes * 60000);
+  return isoToSingaporeLocalInput(end.toISOString());
+};
+
+/**
+ * Client mirror of validateBookingWindow — returns { ok, error, durationMinutes }
+ * using the SAME messages the API returns so the UI and server never disagree.
+ */
+export const validateBookingWindowLocal = (startLocal, endLocal) => {
+  if (!startLocal || !endLocal) {
+    return { ok: false, error: 'slot_start and slot_end are required.', durationMinutes: null };
+  }
+  const durationMinutes = bookingWindowMinutes(startLocal, endLocal);
+  if (durationMinutes === null) {
+    return { ok: false, error: 'Enter a valid slot start and end.', durationMinutes: null };
+  }
+  if (durationMinutes <= 0) {
+    return { ok: false, error: 'slot_end must be after slot_start.', durationMinutes };
+  }
+  if (durationMinutes < BOOKING_MIN_MINUTES) {
+    return { ok: false, error: 'Booking duration must be at least 1 hour.', durationMinutes };
+  }
+  if (durationMinutes > BOOKING_MAX_MINUTES) {
+    return { ok: false, error: 'Booking duration cannot exceed 2 hours.', durationMinutes };
+  }
+  return { ok: true, error: '', durationMinutes };
+};
+
+/** Human duration label: "1 h", "1 h 30 m", "45 m". '—' for missing/invalid. */
+export const formatDurationMinutes = (mins) => {
+  if (mins == null || Number.isNaN(mins)) return '—';
+  const rounded = Math.round(mins);
+  const h = Math.floor(rounded / 60);
+  const m = rounded % 60;
+  if (h && m) return `${h} h ${m} m`;
+  if (h) return `${h} h`;
+  return `${m} m`;
 };
 
 /** YYYY-MM-DD Singapore calendar key for a slot (matches <input type="date">). */

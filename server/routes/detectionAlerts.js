@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const path = require('path');
+const fs = require('fs');
+const { sendUnexpectedError } = require('../utils/safeHttpError');
 const { readLimiter } = require('../middlewares/rateLimit');
 router.use(readLimiter); // route-wide rate limiting (trusted AI service POSTs are skipped)
 const { DetectionAlert, IncidentLog, MonitoringZone, Camera, sequelize } = require('../models');
@@ -12,12 +13,14 @@ function severityFromDuration(seconds) {
   return 'Critical';
 }
 const { Op } = require('sequelize');
+const { createDetectionAlertRetentionTask } = require('../services/detectionAlertRetention');
 const { verifyToken, requireRole, verifyServiceOrRole } = require('../middlewares/auth');
+const {
+    GENERATED_SNAPSHOT_RE,
+    resolveStoredSnapshotPath,
+} = require('../utils/detectionSnapshotStorage');
 const SEVERITIES = ['Low', 'Medium', 'High', 'Critical'];
 const VALID_STATUSES = ['Active', 'Acknowledged', 'Investigating', 'Dispatched', 'Escalated', 'Cleared'];
-const SNAPSHOT_DIR = path.resolve(
-    process.env.DETECTION_SNAPSHOT_DIR || path.join(__dirname, '..', 'uploads', 'detection-snapshots')
-);
 
 // This route is reachable by the AI engine's service key AND by an FM/Staff JWT — never
 // by the SecurePi edge device (that's the dedicated EDGE_INGEST_TOKEN route in
@@ -88,7 +91,7 @@ router.get('/', verifyToken, requireRole('FM', 'Staff'), async (req, res) => {
         });
         res.json(alerts);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert list failed:', err);
     }
 });
 
@@ -100,28 +103,42 @@ router.get('/:id', verifyToken, requireRole('FM', 'Staff'), async (req, res) => 
         if (!alert) return res.sendStatus(404);
         res.json(alert);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert lookup failed:', err);
     }
 });
 
 router.get('/:id/snapshot/:filename', verifyToken, requireRole('FM', 'Staff'), async (req, res) => {
     try {
         if (!/^\d+$/.test(req.params.id)) return res.sendStatus(404);
-        const filename = path.basename(req.params.filename || '');
-        if (!filename || filename !== req.params.filename) return res.sendStatus(404);
+        const requestedFilename = String(req.params.filename || '');
+        if (!GENERATED_SNAPSHOT_RE.test(requestedFilename)) return res.sendStatus(404);
 
         const alert = await DetectionAlert.findByPk(req.params.id);
-        if (!alert || alert.snapshot_url !== `/api/detection-alerts/${req.params.id}/snapshot/${filename}`) {
+        const expectedPrefix = `/api/detection-alerts/${req.params.id}/snapshot/`;
+        if (!alert || typeof alert.snapshot_url !== 'string' || !alert.snapshot_url.startsWith(expectedPrefix)) {
             return res.sendStatus(404);
         }
 
-        const filePath = path.resolve(SNAPSHOT_DIR, filename);
-        if (!filePath.startsWith(`${SNAPSHOT_DIR}${path.sep}`)) return res.sendStatus(404);
-        return res.sendFile(filePath, { headers: { 'Content-Type': 'image/jpeg' } }, (err) => {
-            if (err && !res.headersSent) res.sendStatus(err.statusCode || 404);
-        });
+        // The filesystem component is recovered from the server-generated URL stored
+        // in the database, then independently UUID-validated and containment-checked.
+        // req.params.filename is used only to authorize that exact stored resource.
+        const storedFilename = alert.snapshot_url.slice(expectedPrefix.length);
+        if (storedFilename !== requestedFilename) return res.sendStatus(404);
+        const filePath = resolveStoredSnapshotPath(storedFilename);
+        if (!filePath) return res.sendStatus(404);
+
+        // Cloud Run temporary storage is instance-local and may disappear after a
+        // restart or when another instance handles this request. Treat every local
+        // read failure as an expired snapshot without exposing its path or error.
+        let snapshotBytes;
+        try {
+            snapshotBytes = await fs.promises.readFile(filePath);
+        } catch {
+            return res.sendStatus(404);
+        }
+        return res.type('jpg').send(snapshotBytes);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert snapshot lookup failed:', err);
     }
 });
 
@@ -232,7 +249,7 @@ router.post('/', verifyServiceOrRole('FM', 'Staff'), async (req, res) => {
 
         res.status(201).json(alert);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert creation failed:', err);
     }
 });
 
@@ -289,7 +306,7 @@ router.put('/:id', verifyToken, requireRole('FM', 'Staff'), async (req, res) => 
 
         res.json(alert);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert update failed:', err);
     }
 });
 
@@ -311,24 +328,13 @@ router.delete('/:id', verifyToken, requireRole('FM'), async (req, res) => {
 
         res.sendStatus(200);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        return sendUnexpectedError(res, 'Detection alert deletion failed:', err);
     }
 });
 
 // Purge detection alerts older than 30 days — runs once daily
-function purgeStaleLogs() {
-    if (typeof DetectionAlert.destroy !== 'function') return;
-    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    DetectionAlert.destroy({
-        where: { createdAt: { [Op.lt]: cutoff } },
-        force: true
-    })
-    .then(n => { if (n > 0) console.log(`[Purge] Removed ${n} stale detection alerts.`); })
-    .catch(e => console.error('[Purge] Error:', e));
-}
-
-setInterval(purgeStaleLogs, 24 * 60 * 60 * 1000);
-// Delay the first run by 20s to let Sequelize finish syncing tables on startup
-setTimeout(purgeStaleLogs, 20000);
+// Constructing the route must not start process handles. index.js starts this
+// task only after database initialization succeeds and graceful shutdown stops it.
+router.retentionTask = createDetectionAlertRetentionTask({ DetectionAlert, Op });
 
 module.exports = router;

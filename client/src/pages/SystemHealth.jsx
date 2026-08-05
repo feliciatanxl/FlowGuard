@@ -1,4 +1,3 @@
-import React from 'react';
 import NavBar from '../components/NavBar';
 import Footer from '../components/Footer';
 import NodeCard from '../components/NodeCard';
@@ -11,7 +10,7 @@ const SystemHealth = () => {
     { id: 'FG-03', name: 'Object Detection Service', type: 'Camera-based object analysis for configured monitoring zones.', status: 'Demo Available' },
     { id: 'FG-04', name: 'Access & Attendance', type: 'Gate access decisions, attendance transactions and security audit records.', status: 'Integrated' },
     { id: 'FG-05', name: 'Smart Logistics', type: 'Bookings, Driver Passes, bay status and driver notifications.', status: 'PoC Ready' },
-    { id: 'FG-06', name: 'Helpdesk & Incident Support', type: 'Support-ticket escalation, security review and incident resolution.', status: 'Integrated' }
+    { id: 'FG-06', name: 'AI Helpdesk, Knowledge Base & Incident Analytics', type: 'Gemini-assisted support with deterministic fallback, ticket lifecycle and incident insights.', status: 'Integrated' }
   ];
 
   return (

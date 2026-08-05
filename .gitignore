@@ -430,3 +430,27 @@ C:\Users\Admin\Downloads\FlowGuard\ai-service\.venv
 !.env.example
 server/.env
 client/.env.local
+
+# Cross-platform application outputs and test caches.
+**/node_modules/
+**/dist/
+**/coverage/
+**/.pytest_cache/
+**/__pycache__/
+*.py[cod]
+**/test-results/
+**/playwright-report/
+
+# Local environment files stay private; sanitized examples remain tracked.
+.env.local
+**/.env.local
+!**/.env.example
+
+# AI-assistant session transcripts are generated, private, and may capture
+# terminal output or short-lived credentials. Keep authored reflections and
+# Markdown implementation notes, but never commit raw session JSONL.
+flowguard-ai/**/*.jsonl
+
+# Exception: Gladwin's raw session logs are intentionally tracked as rubric/grading
+# evidence of AI-assisted work, despite the general rule above.
+!flowguard-ai/Ng Ching Heng, Gladwin/ai-logs/*.jsonl

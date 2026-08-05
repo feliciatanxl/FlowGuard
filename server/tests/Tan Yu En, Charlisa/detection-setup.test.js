@@ -71,6 +71,21 @@ describe("GET /api/zones", () => {
     const res = await request(app).get("/api/zones").set("Authorization", `Bearer ${staffToken}`);
     expect(res.status).toBe(200);
   });
+
+  test("zone database errors use the stable public 500 response", async () => {
+    const dbError = new Error('relation monitoring_zones_private does not exist');
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockMonitoringZone.findAll.mockRejectedValue(dbError);
+    try {
+      const res = await request(app).get("/api/zones").set("Authorization", `Bearer ${staffToken}`);
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Unable to process the request.' });
+      expect(JSON.stringify(res.body)).not.toContain('monitoring_zones_private');
+      expect(log).toHaveBeenCalledWith('Zone list failed:', dbError);
+    } finally {
+      log.mockRestore();
+    }
+  });
 });
 
 describe("GET /api/zones/:id", () => {

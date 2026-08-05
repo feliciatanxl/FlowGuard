@@ -59,6 +59,7 @@ export const SCANNER_STATE = Object.freeze({
   CLOUD: 'cloud-trying',               // Trying cloud-assisted scan…
   MANUAL: 'manual-available',          // Manual entry available
   PERMISSION_DENIED: 'permission-denied', // Camera permission denied
+  IN_USE: 'camera-in-use',             // Camera is owned by another app/tab
   UNAVAILABLE: 'camera-unavailable',   // Camera unavailable
 });
 
@@ -152,8 +153,8 @@ export function logQrTimings(metrics) {
 // Start a plain live-preview camera (used by the PoC plate-capture step).
 // Throws a coded Error (code: insecure | unsupported | permission | no-camera |
 // unknown). Returns { stop } to release the camera.
-export async function startCamera(videoElement) {
-  const { stop } = await startWebcamStream(videoElement, QR_WEBCAM_CONSTRAINTS);
+export async function startCamera(videoElement, { signal } = {}) {
+  const { stop } = await startWebcamStream(videoElement, QR_WEBCAM_CONSTRAINTS, { signal });
   return { stop };
 }
 
@@ -183,8 +184,12 @@ export async function startQrScan({
   enableCloud = false,
   cloudFallbackDelayMs = DEFAULT_CLOUD_FALLBACK_DELAY_MS,
   onCloudDecode,
+  signal,
 } = {}) {
-  const state = (s) => { try { onState?.(s); } catch { /* ignore */ } };
+  const state = (s) => {
+    if (signal?.aborted) return;
+    try { onState?.(s); } catch { /* ignore */ }
+  };
 
   if (!isSecureCameraContext()) {
     onError?.({ code: 'insecure', message: cameraErrorMessage('insecure') });
@@ -200,6 +205,7 @@ export async function startQrScan({
   let stopped = false;
   let scanTimer = null;
   let cloudTimer = null;
+  let cloudStartTimer = null;
   let cloudInFlight = false;
   let lastCloudAt = 0;
   let cloudController = null;
@@ -268,17 +274,25 @@ export async function startQrScan({
     stopped = true;
     if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
     if (cloudTimer) { clearInterval(cloudTimer); cloudTimer = null; }
+    if (cloudStartTimer) { clearTimeout(cloudStartTimer); cloudStartTimer = null; }
     if (cloudController) { try { cloudController.abort(); } catch { /* ignore */ } }
     try { zxingControls?.stop(); } catch { /* ignore */ }
     // Release whichever stream is attached (ours or zxing's).
     stopStream(videoElement, ownStream);
+    signal?.removeEventListener?.('abort', cleanup);
   };
+
+  if (signal?.aborted) {
+    cleanup();
+    return cleanup;
+  }
+  signal?.addEventListener?.('abort', cleanup, { once: true });
 
   // ---- Local decoding ---------------------------------------------------
   const runBarcodeDetectorScan = async () => {
     state(SCANNER_STATE.STARTING);
     const camT0 = Date.now();
-    const { stream } = await startWebcamStream(videoElement, QR_WEBCAM_CONSTRAINTS);
+    const { stream } = await startWebcamStream(videoElement, QR_WEBCAM_CONSTRAINTS, { signal });
     ownStream = stream;
     lastDeviceId = stream.getVideoTracks?.()[0]?.getSettings?.().deviceId || lastDeviceId;
     metrics.cameraStartupMs = Date.now() - camT0;
@@ -301,7 +315,7 @@ export async function startQrScan({
       if (!stopped) scanTimer = setTimeout(tick, BARCODE_SCAN_INTERVAL_MS);
     };
     scanTimer = setTimeout(tick, BARCODE_SCAN_INTERVAL_MS);
-    if (enableCloud) setTimeout(startCloudFallback, cloudFallbackDelayMs);
+    if (enableCloud) cloudStartTimer = setTimeout(startCloudFallback, cloudFallbackDelayMs);
   };
 
   const runZxingScan = async () => {
@@ -321,11 +335,15 @@ export async function startQrScan({
     });
     // If a valid QR decoded on the very first (synchronous) callback, cleanup()
     // already ran before controls existed — stop the reader we just got back.
-    if (stopped) { try { zxingControls?.stop(); } catch { /* ignore */ } return; }
+    if (stopped || signal?.aborted) {
+      try { zxingControls?.stop(); } catch { /* ignore */ }
+      stopStream(videoElement);
+      return;
+    }
     metrics.cameraStartupMs = Date.now() - camT0;
     logTrackSettings(videoElement.srcObject, 'webcam-zxing');
     state(SCANNER_STATE.CAMERA_READY);
-    if (enableCloud) setTimeout(startCloudFallback, cloudFallbackDelayMs);
+    if (enableCloud) cloudStartTimer = setTimeout(startCloudFallback, cloudFallbackDelayMs);
   };
 
   try {
@@ -335,9 +353,17 @@ export async function startQrScan({
       await runZxingScan();
     }
   } catch (e) {
+    if (signal?.aborted || e?.code === 'aborted') {
+      cleanup();
+      return cleanup;
+    }
     const mapped = e?.code ? e : mapGetUserMediaError(e);
     onError?.({ code: mapped.code, message: mapped.message });
-    state(mapped.code === 'permission' ? SCANNER_STATE.PERMISSION_DENIED : SCANNER_STATE.UNAVAILABLE);
+    state(
+      mapped.code === 'permission' ? SCANNER_STATE.PERMISSION_DENIED
+        : mapped.code === 'in-use' ? SCANNER_STATE.IN_USE
+          : SCANNER_STATE.UNAVAILABLE
+    );
     cleanup();
     return () => {};
   }
