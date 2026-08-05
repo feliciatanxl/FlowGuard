@@ -199,6 +199,80 @@ describe("Entry rules", () => {
   });
 });
 
+describe("OCR quality gate (server-authoritative)", () => {
+  test("automatic OCR garbage (YWERETANCLPPEMYY) is OCR_UNREADABLE, not a mismatch", async () => {
+    const b = bookingWith("Confirmed", { license_plate: "SKL9081A" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "YWERETANCLPPEMYY" });
+    expect(res.body.access).toBe("DENIED");
+    expect(res.body.reasonCode).toBe("OCR_UNREADABLE");
+    // Never claims a detected plate that differs — it simply could not be read.
+    expect(res.body.plateMatched).toBeNull();
+    expect(res.body.observedPlate).toBeNull();
+    expect(b.update).not.toHaveBeenCalled();
+  });
+
+  test("OCR_UNREADABLE requires manual review", async () => {
+    const b = bookingWith("Confirmed", { license_plate: "SKL9081A" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "TOYOTA" });
+    expect(res.body.reasonCode).toBe("OCR_UNREADABLE");
+    expect(res.body.manualReviewRequired).toBe(true);
+  });
+
+  test("automatic OCR with SKL9081A against an SKL9081A booking is GRANTED", async () => {
+    const b = bookingWith("Confirmed", { license_plate: "SKL9081A" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", plateConfidence: 90, observedPlate: "SKL9081A" });
+    expect(res.body.access).toBe("GRANTED");
+    expect(res.body.reasonCode).toBe("VERIFIED");
+    expect(res.body.plateMatched).toBe(true);
+  });
+
+  test("automatic OCR with a plausible DIFFERENT plate (SBA5678Z) is PLATE_MISMATCH", async () => {
+    const b = bookingWith("Confirmed", { license_plate: "SKL9081A" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "SBA5678Z" });
+    expect(res.body.access).toBe("DENIED");
+    expect(res.body.reasonCode).toBe("PLATE_MISMATCH");
+    expect(res.body.observedPlate).toBe("SBA5678Z");
+    expect(b.update).not.toHaveBeenCalled();
+  });
+
+  test("automatic OCR 'GBG 1234 M' still matches a GBG1234M booking", async () => {
+    const b = bookingWith("Confirmed"); // booked "GBG 1234M"
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "GBG 1234 M" });
+    expect(res.body.access).toBe("GRANTED");
+    expect(res.body.plateMatched).toBe(true);
+  });
+
+  test("a plausible plate with clearly-unusable confidence is OCR_UNREADABLE", async () => {
+    const b = bookingWith("Confirmed"); // booked "GBG 1234M"
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", plateConfidence: 2, observedPlate: "GBG1234M" });
+    expect(res.body.reasonCode).toBe("OCR_UNREADABLE");
+    expect(b.update).not.toHaveBeenCalled();
+  });
+
+  test("a plausible matching plate with NO confidence is still GRANTED (absence never rejects)", async () => {
+    const b = bookingWith("Confirmed"); // booked "GBG 1234M"
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "GBG1234M" });
+    expect(res.body.access).toBe("GRANTED");
+    expect(res.body.plateMatched).toBe(true);
+  });
+
+  test("manual mode is unaffected by the OCR plausibility gate", async () => {
+    // A manual observed value that is not a "plausible" auto-plate is still compared
+    // as the FM typed it (mismatch here), never silently turned into OCR_UNREADABLE.
+    const b = bookingWith("Confirmed", { license_plate: "SKL9081A" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "manual", plateSource: "manual", observedPlate: "SBA5678Z" });
+    expect(res.body.reasonCode).toBe("PLATE_MISMATCH");
+  });
+});
+
 describe("Manual mode + override", () => {
   test("9. Manual mode with matching plate is GRANTED", async () => {
     const b = bookingWith("Confirmed");

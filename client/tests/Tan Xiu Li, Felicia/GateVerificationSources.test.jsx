@@ -317,6 +317,27 @@ describe("Raspberry Pi Camera Module 3 snapshot path", () => {
     expect(screen.queryByAltText(/Raspberry Pi Camera Module 3 live preview/i)).toBeNull();
   });
 
+  test("Pi plate capture uses the same readable validation (unreadable → Not detected)", async () => {
+    h.fetchPiSnapshotBitmap.mockResolvedValue({ width: 200, height: 150, close: vi.fn() });
+    h.recognizePlate.mockResolvedValueOnce({ raw: "YWERETANCLPPEMYY", normalized: "", confidence: 4, readable: false });
+    const realCreate = document.createElement.bind(document);
+    vi.spyOn(document, "createElement").mockImplementation((tag) =>
+      tag === "canvas"
+        ? { width: 0, height: 0, getContext: () => ({ drawImage: vi.fn() }) }
+        : realCreate(tag)
+    );
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: /Plate camera source: Raspberry Pi Camera Module 3/i }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Capture Plate from Raspberry Pi Camera Module 3/i }));
+    });
+
+    expect(await screen.findByText("Not detected")).toBeTruthy();
+    expect(screen.getByText(/No valid vehicle plate could be read/i)).toBeTruthy();
+    expect(screen.queryByText(/Mismatch/i)).toBeNull();
+  });
+
   test("Pi plate bitmap closes even when OCR throws", async () => {
     const close = vi.fn();
     h.fetchPiSnapshotBitmap.mockResolvedValue({ width: 200, height: 150, close });

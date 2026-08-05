@@ -17,7 +17,7 @@
 const models = require('../models');
 const whatsapp = require('./whatsappService');
 const { writeGateAccessLog } = require('./gateAudit');
-const { normalizePlate } = require('../utils/plate');
+const { normalizePlate, isPlausiblePlate } = require('../utils/plate');
 
 const { Op } = require('sequelize');
 
@@ -69,6 +69,15 @@ const MESSAGES = {
   [REASON.AUDIT_FAILED]: 'The decision could not be safely recorded — access was not granted.',
 };
 
+// Conservative confidence floor for AUTOMATIC OCR. Deliberately LOW so a clear
+// plate is never rejected just for a modest score; it only screens out obviously
+// unusable reads. A plate with NO confidence reported is not rejected on that
+// basis. Read per call so tests/deploys pick up changes.
+function ocrMinConfidence() {
+  const min = Number(process.env.GATE_OCR_MIN_CONFIDENCE);
+  return Number.isFinite(min) ? min : 10;
+}
+
 // Env-configurable arrival grace (minutes). Read per call so tests/deploys pick up changes.
 function graceWindow() {
   const early = Number(process.env.GATE_EARLY_MINUTES);
@@ -116,15 +125,20 @@ function checkArrivalWindow(booking, now) {
 // Pure decision core. Given the loaded booking + normalised inputs, decide the
 // base outcome WITHOUT touching the DB. Returns a plain decision descriptor.
 function decide(booking, input, now) {
-  const { action, verificationMode, observedPlate, plateSource } = input;
+  const { action, verificationMode, observedPlate, plateSource, plateConfidence } = input;
   const expectedPlate = normalizePlate(booking.license_plate);
   const observed = normalizePlate(observedPlate);
-  const hasPlate = observed.length > 0;
-  const plateMatched = hasPlate ? observed === expectedPlate : null;
+  // Server-authoritative quality gate: for AUTOMATIC OCR the observed value must
+  // independently look like a real plate (and clear a conservative confidence
+  // floor). The server never trusts the browser's "readable" flag — noisy/low
+  // confidence OCR is "unreadable" (rescan), never a mismatch. Manual and
+  // simulation keep the original "any non-empty plate" behaviour.
+  const usable = isPlateUsable({ observed, verificationMode, plateSource, plateConfidence });
+  const plateMatched = usable ? observed === expectedPlate : null;
 
   const base = {
     expectedPlate,
-    observedPlate: observed || null,
+    observedPlate: usable ? observed : null,
     plateMatched,
     warning: null,
   };
@@ -140,7 +154,7 @@ function decide(booking, input, now) {
     if (window.code) return { ...base, grant: false, code: window.code };
     base.warning = window.warning || null;
 
-    const plate = evaluatePlate({ hasPlate, plateMatched, verificationMode, plateSource });
+    const plate = evaluatePlate({ usable, plateMatched, verificationMode, plateSource });
     if (plate) return { ...base, grant: false, code: plate };
     return { ...base, grant: true, code: REASON.VERIFIED, transitionTo: 'Arrived' };
   }
@@ -150,16 +164,31 @@ function decide(booking, input, now) {
   if (booking.status === 'Completed') return { ...base, grant: true, code: REASON.ALREADY_COMPLETED, idempotent: true };
   if (booking.status !== 'Arrived') return { ...base, grant: false, code: REASON.NOT_ARRIVED };
 
-  const plate = evaluatePlate({ hasPlate, plateMatched, verificationMode, plateSource });
+  const plate = evaluatePlate({ usable, plateMatched, verificationMode, plateSource });
   if (plate) return { ...base, grant: false, code: plate };
   return { ...base, grant: true, code: REASON.VERIFIED, transitionTo: 'Completed' };
 }
 
+// Is the observed plate good enough to make a MATCH/MISMATCH decision on? For
+// automatic OCR this demands a plausible plate that clears the confidence floor,
+// so garbage OCR (e.g. "YWERETANCLPPEMYY") is treated as unreadable rather than
+// silently compared. Manual/simulation only require a non-empty value.
+function isPlateUsable({ observed, verificationMode, plateSource, plateConfidence }) {
+  if (!observed) return false;
+  if (verificationMode === 'automatic' && plateSource === 'ocr') {
+    if (!isPlausiblePlate(observed)) return false;
+    if (plateConfidence != null && Number.isFinite(plateConfidence) && plateConfidence < ocrMinConfidence()) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Plate gate shared by entry & exit. Returns a deny reason code, or null to pass.
-function evaluatePlate({ hasPlate, plateMatched, verificationMode, plateSource }) {
-  if (!hasPlate) {
-    // Automatic OCR that came back empty is a reviewable "unreadable"; anything
-    // else missing a plate is a hard PLATE_REQUIRED.
+function evaluatePlate({ usable, plateMatched, verificationMode, plateSource }) {
+  if (!usable) {
+    // Automatic OCR that was empty/unreadable/low-confidence is a reviewable
+    // "unreadable"; anything else missing a plate is a hard PLATE_REQUIRED.
     if (verificationMode === 'automatic' && plateSource === 'ocr') return REASON.OCR_UNREADABLE;
     if (verificationMode === 'automatic' && plateSource === 'simulation') return REASON.OCR_UNREADABLE;
     return REASON.PLATE_REQUIRED;
@@ -245,7 +274,7 @@ async function verifyGate(input, actor, opts = {}) {
     fmId: actor?.id ?? null,
     fmEmail: actor?.email ?? null,
   };
-  const normalizedInput = { action, verificationMode, observedPlate, plateSource };
+  const normalizedInput = { action, verificationMode, observedPlate, plateSource, plateConfidence };
 
   // Everything that touches the booking row runs inside a transaction with a row
   // lock when the DB supports it; unit tests mock the models (no sequelize) and

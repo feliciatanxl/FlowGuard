@@ -9,7 +9,11 @@
 // with lighting, glare, angle and plate condition — manual verification remains
 // available in the UI.
 
-import { normalizePlate } from './plate';
+import { extractPlateCandidate } from './plate';
+
+// Lower-centre region where a vehicle plate usually sits in a straight-on capture.
+// Used only for the bounded second OCR pass (normalised {x,y,w,h} in 0–1 units).
+const PLATE_FALLBACK_CROP = { x: 0.15, y: 0.5, w: 0.7, h: 0.45 };
 
 // Draw a source image/video/canvas onto an offscreen canvas with light
 // preprocessing (grayscale + contrast) to give OCR a cleaner signal. Optionally
@@ -49,19 +53,55 @@ export function preprocessToCanvas(source, { crop } = {}) {
   return canvas;
 }
 
-// Run OCR on an image source (canvas/image/video/blob URL). Returns
-// { raw, normalized, confidence }. Throws on OCR failure.
-export async function recognizePlate(source, { crop } = {}) {
-  const input = (typeof HTMLCanvasElement !== 'undefined' && source instanceof HTMLCanvasElement)
+// One OCR pass over a source, with optional crop. Returns { raw, confidence }.
+async function runOcrPass(recognize, source, { crop } = {}) {
+  // A pre-built canvas is used as-is ONLY when no crop is requested; a crop always
+  // goes through preprocessToCanvas so the region (and grayscale/contrast) apply.
+  const input = (!crop && typeof HTMLCanvasElement !== 'undefined' && source instanceof HTMLCanvasElement)
     ? source
     : preprocessToCanvas(source, { crop });
-
-  const mod = await import('tesseract.js');
-  const recognize = mod.recognize || mod.default?.recognize || mod.default;
   const result = await recognize(input, 'eng');
   const data = result?.data || {};
   const raw = String(data.text || '').trim();
   const confidence = typeof data.confidence === 'number' ? Math.round(data.confidence * 10) / 10 : null;
+  return { raw, confidence };
+}
 
-  return { raw, normalized: normalizePlate(raw), confidence };
+// Run OCR on an image source (canvas/image/video/blob URL) and return only a
+// PLAUSIBLE plate — never the whole OCR paragraph collapsed into one string.
+//   { raw, normalized, confidence, readable }
+//   - raw:        full OCR text, kept for FM troubleshooting only
+//   - normalized: the extracted plausible plate, or "" when none was found
+//   - readable:   true only when a plausible plate was extracted
+// Bounded improvement: the full image is read first; only if that yields no
+// plausible plate is ONE extra pass run on a lower-centre crop. At most two OCR
+// passes per capture — no continuous scanning, no unbounded retries. Throws on
+// OCR failure. The image is processed in memory and never persisted or uploaded.
+export async function recognizePlate(source, { crop } = {}) {
+  const mod = await import('tesseract.js');
+  const recognize = mod.recognize || mod.default?.recognize || mod.default;
+
+  const first = await runOcrPass(recognize, source, { crop });
+  let best = first;
+  let candidate = extractPlateCandidate(first.raw);
+
+  // Second, bounded pass on a lower-centre crop when the full frame gave no
+  // plausible plate and the caller didn't already constrain the region.
+  if (!candidate && !crop) {
+    try {
+      const second = await runOcrPass(recognize, source, { crop: PLATE_FALLBACK_CROP });
+      const secondCandidate = extractPlateCandidate(second.raw);
+      if (secondCandidate) {
+        best = second;
+        candidate = secondCandidate;
+      }
+    } catch { /* the fallback crop is best-effort — keep the first pass result */ }
+  }
+
+  return {
+    raw: best.raw,
+    normalized: candidate,
+    confidence: best.confidence,
+    readable: candidate.length > 0,
+  };
 }
