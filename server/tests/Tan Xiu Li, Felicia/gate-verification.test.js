@@ -273,6 +273,52 @@ describe("OCR quality gate (server-authoritative)", () => {
   });
 });
 
+// The controlled OCR character-repair happens CLIENT-side on the grammar alone
+// (SBA56787 → SBA5678Z), so the server receives the already-repaired plate. These
+// assert the server's authoritative decision on that repaired value end-to-end.
+describe("Controlled OCR repair — decision behaviour (server receives repaired plate)", () => {
+  test("repaired SBA5678Z against an SBA5678Z booking is VERIFIED", async () => {
+    const b = bookingWith("Confirmed", { license_plate: "SBA5678Z" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", plateConfidence: 47, observedPlate: "SBA5678Z" });
+    expect(res.body.access).toBe("GRANTED");
+    expect(res.body.reasonCode).toBe("VERIFIED");
+    expect(res.body.plateMatched).toBe(true);
+    expect(b.update.mock.calls[0][0]).toEqual(expect.objectContaining({ status: "Arrived" }));
+  });
+
+  test("repaired SBA5678Z against an SKL9081A booking is PLATE_MISMATCH", async () => {
+    const b = bookingWith("Confirmed", { license_plate: "SKL9081A" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "SBA5678Z" });
+    expect(res.body.access).toBe("DENIED");
+    expect(res.body.reasonCode).toBe("PLATE_MISMATCH");
+    expect(res.body.observedPlate).toBe("SBA5678Z");
+    expect(b.update).not.toHaveBeenCalled();
+  });
+
+  test("an OCR value with NO unique repair reaches the server as unreadable → OCR_UNREADABLE", async () => {
+    // The client could not produce a plausible plate; the server independently
+    // treats the leftover raw value as unreadable (rescan), never a mismatch.
+    const b = bookingWith("Confirmed", { license_plate: "SBA5678Z" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "SSSA" });
+    expect(res.body.access).toBe("DENIED");
+    expect(res.body.reasonCode).toBe("OCR_UNREADABLE");
+    expect(res.body.plateMatched).toBeNull();
+    expect(res.body.observedPlate).toBeNull();
+  });
+
+  test("simulated-LPR behaviour is unchanged by the repair work", async () => {
+    const b = bookingWith("Confirmed", { license_plate: "SBA5678Z" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "simulation", observedPlate: "SBA5678Z" });
+    expect(res.body.access).toBe("GRANTED");
+    expect(res.body.reasonCode).toBe("VERIFIED");
+    expect(res.body.plateMatched).toBe(true);
+  });
+});
+
 describe("Manual mode + override", () => {
   test("9. Manual mode with matching plate is GRANTED", async () => {
     const b = bookingWith("Confirmed");

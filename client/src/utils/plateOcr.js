@@ -15,6 +15,15 @@ import { extractPlateCandidate } from './plate';
 // Used only for the bounded second OCR pass (normalised {x,y,w,h} in 0–1 units).
 const PLATE_FALLBACK_CROP = { x: 0.15, y: 0.5, w: 0.7, h: 0.45 };
 
+// Tesseract tuning applied ONLY to the bounded lower-centre crop retry: within the
+// crop a plate is a single line of uppercase letters and digits, so constrain the
+// character set and page-segmentation to that shape. Kept OFF the full-frame first
+// pass, which may legitimately contain surrounding text used to locate the plate.
+const PLATE_CROP_PARAMS = Object.freeze({
+  tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+  tessedit_pageseg_mode: '7', // PSM.SINGLE_LINE — treat the crop as one text line
+});
+
 // Draw a source image/video/canvas onto an offscreen canvas with light
 // preprocessing (grayscale + contrast) to give OCR a cleaner signal. Optionally
 // crop to a normalised guide rectangle {x,y,w,h} in 0–1 units.
@@ -53,14 +62,17 @@ export function preprocessToCanvas(source, { crop } = {}) {
   return canvas;
 }
 
-// One OCR pass over a source, with optional crop. Returns { raw, confidence }.
-async function runOcrPass(recognize, source, { crop } = {}) {
+// One OCR pass over a source, with optional crop and per-pass Tesseract params
+// (whitelist / page-seg mode). Returns { raw, confidence }.
+async function runOcrPass(worker, source, { crop, params } = {}) {
   // A pre-built canvas is used as-is ONLY when no crop is requested; a crop always
   // goes through preprocessToCanvas so the region (and grayscale/contrast) apply.
   const input = (!crop && typeof HTMLCanvasElement !== 'undefined' && source instanceof HTMLCanvasElement)
     ? source
     : preprocessToCanvas(source, { crop });
-  const result = await recognize(input, 'eng');
+  // Params are forwarded to worker.recognize, which SetVariable's non-tessjs keys
+  // (tessedit_char_whitelist / tessedit_pageseg_mode) for THIS pass only.
+  const result = await worker.recognize(input, params ? { ...params } : {});
   const data = result?.data || {};
   const raw = String(data.text || '').trim();
   const confidence = typeof data.confidence === 'number' ? Math.round(data.confidence * 10) / 10 : null;
@@ -79,29 +91,39 @@ async function runOcrPass(recognize, source, { crop } = {}) {
 // OCR failure. The image is processed in memory and never persisted or uploaded.
 export async function recognizePlate(source, { crop } = {}) {
   const mod = await import('tesseract.js');
-  const recognize = mod.recognize || mod.default?.recognize || mod.default;
+  const createWorker = mod.createWorker || mod.default?.createWorker;
 
-  const first = await runOcrPass(recognize, source, { crop });
-  let best = first;
-  let candidate = extractPlateCandidate(first.raw);
+  // ONE transient worker per capture (spun up here, torn down in finally) — same
+  // spin-up/tear-down-per-capture model as before, but reused across the (at most
+  // two) passes so the whitelist/PSM can be applied to the crop retry alone.
+  const worker = await createWorker('eng');
+  try {
+    const first = await runOcrPass(worker, source, { crop });
+    let best = first;
+    let candidate = extractPlateCandidate(first.raw);
 
-  // Second, bounded pass on a lower-centre crop when the full frame gave no
-  // plausible plate and the caller didn't already constrain the region.
-  if (!candidate && !crop) {
-    try {
-      const second = await runOcrPass(recognize, source, { crop: PLATE_FALLBACK_CROP });
-      const secondCandidate = extractPlateCandidate(second.raw);
-      if (secondCandidate) {
-        best = second;
-        candidate = secondCandidate;
-      }
-    } catch { /* the fallback crop is best-effort — keep the first pass result */ }
+    // Second, bounded pass on a lower-centre crop when the full frame gave no
+    // plausible plate and the caller didn't already constrain the region. This
+    // pass additionally constrains Tesseract to the plate character set + a
+    // single-line page-segmentation mode.
+    if (!candidate && !crop) {
+      try {
+        const second = await runOcrPass(worker, source, { crop: PLATE_FALLBACK_CROP, params: PLATE_CROP_PARAMS });
+        const secondCandidate = extractPlateCandidate(second.raw);
+        if (secondCandidate) {
+          best = second;
+          candidate = secondCandidate;
+        }
+      } catch { /* the fallback crop is best-effort — keep the first pass result */ }
+    }
+
+    return {
+      raw: best.raw,
+      normalized: candidate,
+      confidence: best.confidence,
+      readable: candidate.length > 0,
+    };
+  } finally {
+    try { await worker.terminate(); } catch { /* worker teardown is best-effort */ }
   }
-
-  return {
-    raw: best.raw,
-    normalized: candidate,
-    confidence: best.confidence,
-    readable: candidate.length > 0,
-  };
 }

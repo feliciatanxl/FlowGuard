@@ -4,8 +4,14 @@
 // plate, keeps the raw text for troubleshooting, and runs at most two OCR passes.
 import { describe, test, expect, vi, beforeEach } from "vitest";
 
+// recognizePlate spins up ONE transient worker (createWorker) and reuses it across
+// the passes; the mock exposes that worker's recognize/terminate as spies. The
+// crop retry forwards a whitelist + single-line PSM as the recognize options.
 const recognize = vi.fn();
-vi.mock("tesseract.js", () => ({ recognize: (...args) => recognize(...args) }));
+const setParameters = vi.fn();
+const terminate = vi.fn().mockResolvedValue(undefined);
+const createWorker = vi.fn(async () => ({ recognize, setParameters, terminate }));
+vi.mock("tesseract.js", () => ({ createWorker: (...args) => createWorker(...args) }));
 
 import { recognizePlate } from "../../src/utils/plateOcr";
 
@@ -41,6 +47,19 @@ describe("recognizePlate", () => {
     expect(res.raw).toBe("SKL 9081 A");
     expect(res.confidence).toBe(91);
     expect(recognize).toHaveBeenCalledTimes(1); // no second pass needed
+    // First pass is unconstrained (may contain surrounding text); no whitelist/PSM.
+    expect(recognize.mock.calls[0][1]).toEqual({});
+    expect(terminate).toHaveBeenCalledTimes(1); // transient worker torn down
+  });
+
+  test("a raw OCR value with a mis-read checksum letter is repaired to the true plate", async () => {
+    // Physically-observed staging failure: SBA5678Z read as SBA56787 (Z→7).
+    recognize.mockResolvedValue(ocr("SBA56787", 47));
+    const res = await recognizePlate(source);
+    expect(res.normalized).toBe("SBA5678Z"); // grammar-repaired, no booking involved
+    expect(res.readable).toBe(true);
+    expect(res.raw).toBe("SBA56787"); // raw kept verbatim for FM troubleshooting
+    expect(recognize).toHaveBeenCalledTimes(1); // repaired on the first pass — no retry
   });
 
   test("garbage first pass triggers ONE bounded crop pass that recovers the plate", async () => {
@@ -53,6 +72,11 @@ describe("recognizePlate", () => {
     expect(res.raw).toBe("SKL 9081 A");
     expect(res.confidence).toBe(80);
     expect(recognize).toHaveBeenCalledTimes(2); // at most two passes
+    // The crop retry constrains Tesseract to the plate charset + single-line PSM.
+    expect(recognize.mock.calls[1][1]).toEqual({
+      tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+      tessedit_pageseg_mode: "7",
+    });
   });
 
   test("noise in both passes is unreadable, retains raw, and never collapses to a plate", async () => {
