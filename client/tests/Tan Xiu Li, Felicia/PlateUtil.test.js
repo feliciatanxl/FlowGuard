@@ -1,7 +1,7 @@
 // Frontend unit test — shared Singapore-plate normalisation (browser copy).
 import { describe, test, expect } from "vitest";
 import {
-  normalizePlate, platesMatch, isPlausiblePlate, extractPlateCandidate,
+  normalizePlate, platesMatch, isPlausiblePlate, repairPlateCandidate, extractPlateCandidate,
 } from "../../src/utils/plate";
 import { isValidBookingRef, normalizeBookingRef } from "../../src/utils/gateCamera";
 
@@ -62,6 +62,38 @@ describe("extractPlateCandidate (client)", () => {
   test("6. an invalid OCR paragraph is never collapsed into one detected plate", () => {
     const raw = "TOYOTA\nVEHICLE ENTRANCE\n123456789";
     expect(extractPlateCandidate(raw)).toBe("");
+  });
+  test("7. a mis-read checksum letter (SBA56787) is grammar-repaired to SBA5678Z", () => {
+    expect(extractPlateCandidate("SBA56787")).toBe("SBA5678Z");
+  });
+  test("8. the repaired plate is recovered from among surrounding noise words", () => {
+    expect(extractPlateCandidate("Noise SBA56787 extra words")).toBe("SBA5678Z");
+  });
+  test("9. an already-valid plate is returned exactly, never re-substituted", () => {
+    expect(extractPlateCandidate("SBA5678Z")).toBe("SBA5678Z");
+  });
+});
+
+describe("repairPlateCandidate (client)", () => {
+  test("repairs the physically-observed Z→7 checksum mis-read uniquely", () => {
+    expect(repairPlateCandidate("SBA56787")).toBe("SBA5678Z");
+  });
+  test("leaves an already-plausible plate unchanged (no substitution)", () => {
+    expect(repairPlateCandidate("SBA5678Z")).toBe("SBA5678Z");
+    expect(repairPlateCandidate("SKL 9081 A")).toBe("SKL9081A");
+  });
+  test("returns '' for pure noise or words (nothing to repair)", () => {
+    expect(repairPlateCandidate("YWERETANCLPPEMYY")).toBe("");
+    expect(repairPlateCandidate("TOYOTA")).toBe("");
+  });
+  test("returns '' when the grammar admits MORE than one plausible plate (ambiguous)", () => {
+    // "SSSA": (2,1)→"SS5A" and (1,2)→"S55A" are both valid → refuse to guess.
+    expect(repairPlateCandidate("SSSA")).toBe("");
+  });
+  test("takes ONLY the raw value — the expected booking plate is never an input", () => {
+    expect(repairPlateCandidate.length).toBe(1);
+    // Same input → same output regardless of any external/booking context.
+    expect(repairPlateCandidate("SBA56787", "SKL9081A")).toBe("SBA5678Z");
   });
 });
 

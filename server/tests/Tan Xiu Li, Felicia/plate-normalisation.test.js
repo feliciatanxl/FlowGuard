@@ -1,6 +1,6 @@
 // Backend unit test — shared Singapore-plate normalisation helper (server side).
 const {
-  normalizePlate, platesMatch, isPlausiblePlate, extractPlateCandidate,
+  normalizePlate, platesMatch, isPlausiblePlate, repairPlateCandidate, extractPlateCandidate,
 } = require("../../utils/plate");
 
 describe("normalizePlate", () => {
@@ -59,5 +59,28 @@ describe("extractPlateCandidate", () => {
     expect(extractPlateCandidate("YWERETANCLPPEMYY")).toBe("");
     expect(extractPlateCandidate("TOYOTA\nVEHICLE ENTRANCE\n123456789")).toBe("");
     expect(extractPlateCandidate("")).toBe("");
+  });
+  test("grammar-repairs a mis-read checksum letter (SBA56787 → SBA5678Z)", () => {
+    expect(extractPlateCandidate("SBA56787")).toBe("SBA5678Z");
+    expect(extractPlateCandidate("Noise SBA56787 extra words")).toBe("SBA5678Z");
+    expect(extractPlateCandidate("SBA 5678 Z")).toBe("SBA5678Z");
+  });
+});
+
+describe("repairPlateCandidate (mirrors the client)", () => {
+  test("uniquely repairs the physically-observed Z→7 checksum mis-read", () => {
+    expect(repairPlateCandidate("SBA56787")).toBe("SBA5678Z");
+  });
+  test("leaves an already-plausible plate unchanged", () => {
+    expect(repairPlateCandidate("SBA5678Z")).toBe("SBA5678Z");
+    expect(repairPlateCandidate("GBG 1234 M")).toBe("GBG1234M");
+  });
+  test("returns '' for noise, words and ambiguous reconstructions", () => {
+    expect(repairPlateCandidate("YWERETANCLPPEMYY")).toBe("");
+    expect(repairPlateCandidate("TOYOTA")).toBe("");
+    expect(repairPlateCandidate("SSSA")).toBe(""); // (2,1)→SS5A vs (1,2)→S55A → ambiguous
+  });
+  test("depends ONLY on the raw value — never on any expected/booking plate", () => {
+    expect(repairPlateCandidate.length).toBe(1);
   });
 });
