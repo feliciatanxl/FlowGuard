@@ -64,13 +64,13 @@ describe('Incident Deep Analytics page', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' }).disabled).toBe(false));
   });
 
-  test('renders all four panels with fixture-derived numbers', async () => {
+  test('renders all five panels with fixture-derived numbers', async () => {
     mockGet.mockResolvedValueOnce({
       data: [
-        incident({ id: 1, resolutionStatus: 'Cleared', confidence_score: 0.95 }),
-        incident({ id: 2, resolutionStatus: 'False Positive', confidence_score: 0.72, resolvedAt: '2026-08-01T09:05:00Z' }),
-        incident({ id: 3, source: 'Manual', resolutionStatus: 'Active', confidence_score: null, resolvedAt: null }),
-        incident({ id: 4, resolutionStatus: 'Investigating', confidence_score: null, resolvedAt: null }),
+        incident({ id: 1, resolutionStatus: 'Cleared', confidence_score: 0.95, status: 'UNAUTHORIZED_ACCESS' }),
+        incident({ id: 2, resolutionStatus: 'False Positive', confidence_score: 0.72, resolvedAt: '2026-08-01T09:05:00Z', status: 'TAILGATING' }),
+        incident({ id: 3, source: 'Manual', resolutionStatus: 'Active', confidence_score: null, resolvedAt: null, status: 'Water Leakage' }),
+        incident({ id: 4, resolutionStatus: 'Investigating', confidence_score: null, resolvedAt: null, status: 'UNAUTHORIZED_ACCESS' }),
       ],
     });
 
@@ -84,6 +84,13 @@ describe('Incident Deep Analytics page', () => {
     expect(screen.getByLabelText('Active: 1')).toBeTruthy();
     expect(screen.getByLabelText('Investigating: 1')).toBeTruthy();
     expect(screen.getByLabelText('Cleared: 1')).toBeTruthy();
+
+    // New: Detection Type Breakdown panel, including the custom type — rendered
+    // in Title Case and grouped/counted alongside the built-in types.
+    expect(screen.getByText('Detection Type Breakdown')).toBeTruthy();
+    expect(screen.getByLabelText('Unauthorized Access: 2')).toBeTruthy();
+    expect(screen.getByLabelText('Tailgating: 1')).toBeTruthy();
+    expect(screen.getByLabelText('Water Leakage: 1')).toBeTruthy();
   });
 
   test('shows empty analytics without crashing', async () => {
@@ -93,6 +100,7 @@ describe('Incident Deep Analytics page', () => {
     expect(await screen.findByText('Avg. Resolution Time')).toBeTruthy();
     expect(screen.getByText(/No adjudicated AI incidents/i)).toBeTruthy();
     expect(screen.getByText('0 resolved incidents')).toBeTruthy();
+    expect(screen.getByText('No incidents logged yet.')).toBeTruthy();
   });
 
   test('keeps loading until a failed request settles and then shows the error state', async () => {
