@@ -89,23 +89,27 @@ export function repairPlateCandidate(value) {
 
 // Pull the single most plausible plate out of raw OCR text instead of collapsing
 // the whole paragraph into one string. Spaces and hyphens inside a plate are
-// tolerated ("SKL 9081 A" → "SKL9081A"); unrelated words/lines are ignored.
+// tolerated ("SKL 9081 A", "gbg-1234-m"); unrelated words/lines are ignored.
 // Returns the normalised candidate, or "" when nothing plausible is present.
 export function extractPlateCandidate(rawText) {
   const text = String(rawText ?? '');
   if (!text.trim()) return '';
   const lines = text.split(/[\r\n]+/);
 
-  // Prefer a line that IS a plate once spacing/hyphens are stripped
-  // ("SKL 9081 A", "gbg-1234-m") over a windowed reconstruction of a noisy line.
+  // 1. First priority: Any line that IS an exact plausible plate once spacing/hyphens are stripped.
   for (const line of lines) {
     const whole = normalizePlate(line);
     if (isPlausiblePlate(whole)) return whole;
   }
 
-  // Otherwise scan each line for a run of adjacent tokens that forms a plate,
-  // so a plate embedded among other words is still found ("Vehicle SKL 9081 A").
-  // The strict pattern bounds the result to a real plate; this is exact, not fuzzy.
+  // 2. Second priority: Any line that uniquely repairs as a whole line ("6BG1234M" -> "GBG1234M").
+  for (const line of lines) {
+    const whole = normalizePlate(line);
+    const repairedWhole = repairPlateCandidate(whole);
+    if (repairedWhole) return repairedWhole;
+  }
+
+  // 3. Third priority: Scan each line for a run of adjacent tokens forming an exact plausible plate.
   for (const line of lines) {
     const tokens = line.split(/[^A-Za-z0-9]+/).filter(Boolean);
     for (let i = 0; i < tokens.length; i += 1) {
@@ -118,11 +122,7 @@ export function extractPlateCandidate(rawText) {
     }
   }
 
-  // No EXACT plate anywhere → attempt controlled syntax repair (step 2). Collect
-  // every uniquely-repairable token window; a repair is accepted only when exactly
-  // ONE distinct plausible plate results across the whole OCR text, so noise words
-  // that could each repair differently cancel out to "unreadable" rather than
-  // guessing. The repair depends only on plate grammar, never on any booking.
+  // 4. Fallback priority: Token-windowed controlled syntax repair.
   const repaired = new Set();
   for (const line of lines) {
     const tokens = line.split(/[^A-Za-z0-9]+/).filter(Boolean);

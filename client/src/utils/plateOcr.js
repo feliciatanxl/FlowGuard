@@ -7,19 +7,34 @@
 
 import { extractPlateCandidate } from './plate';
 
-// Lower-centre region where a vehicle plate usually sits in a straight-on capture.
-const PLATE_FALLBACK_CROP = { x: 0.15, y: 0.5, w: 0.7, h: 0.45 };
+// Broad lower-centre region where a vehicle plate usually sits in a full car capture.
+export const PLATE_FALLBACK_CROP = Object.freeze({ x: 0.15, y: 0.5, w: 0.7, h: 0.45, relativeTo: 'full_source' });
+
+// Tighter nested plate-region crop within the vehicle region for full car scenes.
+export const PLATE_TIGHT_CROP = Object.freeze({ x: 0.20, y: 0.55, w: 0.60, h: 0.35, relativeTo: 'full_source' });
 
 // Unconstrained parameters for full camera scene captures (PSM.AUTO).
-const DEFAULT_OCR_PARAMS = Object.freeze({
+export const DEFAULT_OCR_PARAMS = Object.freeze({
   tessedit_char_whitelist: '',
   tessedit_pageseg_mode: '3',
 });
 
-// Tesseract tuning applied to plate-focused passes (PSM.SINGLE_LINE + whitelist).
-const PLATE_OCR_PARAMS = Object.freeze({
+// Primary plate-focused parameters using PSM.RAW_LINE (13) with uppercase alphanumeric whitelist.
+export const PLATE_RAW_LINE_PARAMS = Object.freeze({
   tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-  tessedit_pageseg_mode: '7',
+  tessedit_pageseg_mode: '13',
+});
+
+// Bounded fallback plate parameters using PSM.SINGLE_WORD (8) with whitelist.
+export const PLATE_SINGLE_WORD_PARAMS = Object.freeze({
+  tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+  tessedit_pageseg_mode: '8',
+});
+
+// Bounded block parameters using PSM.SINGLE_BLOCK (6) with whitelist for cropped vehicle scenes.
+export const PLATE_SINGLE_BLOCK_PARAMS = Object.freeze({
+  tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+  tessedit_pageseg_mode: '6',
 });
 
 const DECODE_ERROR_MSG = 'The uploaded image could not be processed. Please select a valid PNG or JPEG.';
@@ -248,8 +263,10 @@ export function classifyOcrFailure({
     }
   }
 
+  const hasAnyPassText = passes.some((p) => p?.raw && String(p.raw).trim() !== '' && String(p.raw).trim() !== '(none)');
   const trimmedRaw = String(rawText || '').trim();
-  if (!trimmedRaw || trimmedRaw === '(none)') {
+
+  if (!hasAnyPassText && (!trimmedRaw || trimmedRaw === '(none)')) {
     return 'TESSERACT_EMPTY_RESULT';
   }
 
@@ -352,7 +369,17 @@ export async function decodeFileToCanvas(file) {
   }
 }
 
-export function preprocessToCanvas(source, { crop, contrastVariant = 1.4 } = {}) {
+/**
+ * Bounded image preprocessing: crops region, optionally scales, adds white border padding,
+ * and adjusts contrast/grayscale to optimize Tesseract line/word detection.
+ */
+export function preprocessToCanvas(source, {
+  crop,
+  contrastVariant = 1.4,
+  padPx = 25,
+  targetWidth = 800,
+  grayscale = false,
+} = {}) {
   const srcW = source.videoWidth || source.naturalWidth || source.width;
   const srcH = source.videoHeight || source.naturalHeight || source.height;
   if (!srcW || !srcH) throw new Error('The captured image was empty. Please retake.');
@@ -362,25 +389,49 @@ export function preprocessToCanvas(source, { crop, contrastVariant = 1.4 } = {})
   const sw = crop ? Math.round(crop.w * srcW) : srcW;
   const sh = crop ? Math.round(crop.h * srcH) : srcH;
 
-  const canvas = document.createElement('canvas');
-  canvas.width = sw;
-  canvas.height = sh;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
+  let scaledW = sw;
+  let scaledH = sh;
+  if (targetWidth && targetWidth > 0 && sw > targetWidth) {
+    const scale = targetWidth / sw;
+    scaledW = Math.round(sw * scale);
+    scaledH = Math.round(sh * scale);
+  }
 
-  try {
-    const img = ctx.getImageData(0, 0, sw, sh);
-    const d = img.data;
-    const contrast = contrastVariant;
-    const intercept = 128 * (1 - contrast);
-    for (let i = 0; i < d.length; i += 4) {
-      let g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-      g = g * contrast + intercept;
-      g = g < 0 ? 0 : g > 255 ? 255 : g;
-      d[i] = d[i + 1] = d[i + 2] = g;
-    }
-    ctx.putImageData(img, 0, 0);
-  } catch { /* preprocessing is best-effort */ }
+  const padding = padPx > 0 ? padPx : 0;
+  const finalW = scaledW + padding * 2;
+  const finalH = scaledH + padding * 2;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = finalW;
+  canvas.height = finalH;
+  const ctx = canvas.getContext('2d');
+
+  // Fill background white for border padding
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, finalW, finalH);
+
+  // Draw image in centered area
+  ctx.drawImage(source, sx, sy, sw, sh, padding, padding, scaledW, scaledH);
+
+  if (grayscale || (contrastVariant && contrastVariant !== 1.0)) {
+    try {
+      const img = ctx.getImageData(0, 0, finalW, finalH);
+      const d = img.data;
+      const contrast = contrastVariant || 1.0;
+      const intercept = 128 * (1 - contrast);
+      for (let i = 0; i < d.length; i += 4) {
+        let g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        if (contrastVariant && contrastVariant !== 1.0) {
+          g = g * contrast + intercept;
+          g = g < 0 ? 0 : g > 255 ? 255 : g;
+        }
+        if (grayscale) {
+          d[i] = d[i + 1] = d[i + 2] = g;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    } catch { /* best effort */ }
+  }
 
   return canvas;
 }
@@ -419,6 +470,7 @@ async function runOcrPass(worker, inputCanvas, { passName, crop, params } = {}) 
     confidence,
     wordsCount,
     symbolsCount,
+    isSelected: false,
   };
 }
 
@@ -480,8 +532,6 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
   let workerCreated = false;
   let workerTerminated = false;
 
-
-
   try {
     const mod = await import('tesseract.js');
     const createWorker = mod.createWorker || mod.default?.createWorker;
@@ -489,91 +539,89 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
     workerCreated = true;
 
     if (isUploadMode) {
-      const pass1Canvas = crop ? preprocessToCanvas(decodedSource, { crop }) : preprocessToCanvas(decodedSource);
-      const first = await runOcrPass(worker, pass1Canvas, {
-        passName: 'Pass 1 (Whole image, plate-focused)',
-        crop,
-        params: PLATE_OCR_PARAMS,
-      });
-      passes.push(first);
-      let best = first;
-      let candidate = extractPlateCandidate(first.raw);
+      if (isPlateOnly) {
+        // PASS 1: Resized + White Padding + PSM.RAW_LINE (13) + Whitelist
+        const pass1Canvas = preprocessToCanvas(decodedSource, { padPx: 25, targetWidth: 800 });
+        const first = await runOcrPass(worker, pass1Canvas, {
+          passName: 'Pass 1 (Plate-focused RAW_LINE with padding)',
+          crop: null,
+          params: PLATE_RAW_LINE_PARAMS,
+        });
+        passes.push(first);
 
-      if (!candidate && !crop) {
-        try {
-          const pass2Canvas = preprocessToCanvas(decodedSource, { contrastVariant: 1.8 });
-          const second = await runOcrPass(worker, pass2Canvas, {
-            passName: 'Pass 2 (Alternative contrast 1.8)',
-            crop: null,
-            params: PLATE_OCR_PARAMS,
-          });
-          passes.push(second);
-          const secondCandidate = extractPlateCandidate(second.raw);
-          if (secondCandidate) {
-            best = second;
-            candidate = secondCandidate;
-          }
-        } catch { /* pass 2 best-effort */ }
+        let candidate = extractPlateCandidate(first.raw);
+
+        // PASS 2: Alternative contrast 1.8 & grayscale (if no candidate yet)
+        if (!candidate && !crop) {
+          try {
+            const pass2Canvas = preprocessToCanvas(decodedSource, { padPx: 25, targetWidth: 800, contrastVariant: 1.8, grayscale: true });
+            const second = await runOcrPass(worker, pass2Canvas, {
+              passName: 'Pass 2 (Alternative contrast 1.8 & grayscale)',
+              crop: null,
+              params: PLATE_RAW_LINE_PARAMS,
+            });
+            passes.push(second);
+            candidate = extractPlateCandidate(second.raw);
+          } catch { /* pass 2 best-effort */ }
+        }
+
+        // PASS 3: SINGLE_WORD fallback (if no candidate yet)
+        if (!candidate && !crop) {
+          try {
+            const pass3Canvas = preprocessToCanvas(decodedSource, { padPx: 25, targetWidth: 800 });
+            const third = await runOcrPass(worker, pass3Canvas, {
+              passName: 'Pass 3 (Plate-focused SINGLE_WORD fallback)',
+              crop: null,
+              params: PLATE_SINGLE_WORD_PARAMS,
+            });
+            passes.push(third);
+            candidate = extractPlateCandidate(third.raw);
+          } catch { /* pass 3 best-effort */ }
+        }
+      } else {
+        // Full car upload (aspectRatio < 2.2)
+        // PASS 1: Full scene unconstrained PSM.AUTO (3)
+        const pass1Canvas = crop ? preprocessToCanvas(decodedSource, { crop }) : preprocessToCanvas(decodedSource);
+        const first = await runOcrPass(worker, pass1Canvas, {
+          passName: 'Pass 1 (Full scene, unconstrained PSM.AUTO)',
+          crop,
+          params: DEFAULT_OCR_PARAMS,
+        });
+        passes.push(first);
+
+        let candidate = extractPlateCandidate(first.raw);
+
+        // PASS 2: Broad lower-centre crop (if no candidate yet)
+        if (!candidate && !crop) {
+          try {
+            const pass2Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_FALLBACK_CROP, padPx: 25, targetWidth: 800 });
+            const second = await runOcrPass(worker, pass2Canvas, {
+              passName: 'Pass 2 (Broad lower-centre crop, SINGLE_BLOCK)',
+              crop: PLATE_FALLBACK_CROP,
+              params: PLATE_SINGLE_BLOCK_PARAMS,
+            });
+            passes.push(second);
+            candidate = extractPlateCandidate(second.raw);
+          } catch { /* pass 2 best-effort */ }
+        }
+
+        // PASS 3: Tighter plate-region crop (if no candidate yet)
+        if (!candidate && !crop) {
+          try {
+            const pass3Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_TIGHT_CROP, padPx: 30, targetWidth: 800 });
+            const third = await runOcrPass(worker, pass3Canvas, {
+              passName: 'Pass 3 (Tighter plate crop, upscaled with padding)',
+              crop: PLATE_TIGHT_CROP,
+              params: PLATE_SINGLE_BLOCK_PARAMS,
+            });
+            passes.push(third);
+            candidate = extractPlateCandidate(third.raw);
+          } catch { /* pass 3 best-effort */ }
+        }
       }
-
-      if (!candidate && !crop && !isPlateOnly) {
-        try {
-          const pass3Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_FALLBACK_CROP, contrastVariant: 1.4 });
-          const third = await runOcrPass(worker, pass3Canvas, {
-            passName: 'Pass 3 (Lower-centre crop)',
-            crop: PLATE_FALLBACK_CROP,
-            params: PLATE_OCR_PARAMS,
-          });
-          passes.push(third);
-          const thirdCandidate = extractPlateCandidate(third.raw);
-          if (thirdCandidate) {
-            best = third;
-            candidate = thirdCandidate;
-          }
-        } catch { /* pass 3 best-effort */ }
-      }
-
-      const endOpTime = Date.now();
-      const classification = candidate.length > 0
-        ? 'OK'
-        : classifyOcrFailure({
-            sourceInfo,
-            pixelStats,
-            passes,
-            rawText: best.raw,
-            extractedCandidate: candidate,
-          });
-
-      const isDebugActive = debug || (
-        typeof window !== 'undefined' &&
-        new URLSearchParams(window.location.search).get('ocrDebug') === '1'
-      );
-
-      if (isDebugActive && typeof console !== 'undefined' && console.groupCollapsed) {
-        console.groupCollapsed(`🔍 FlowGuard OCR Diagnostics [Upload] — ${candidate ? 'VALID (' + candidate + ')' : classification}`);
-        console.log('Source Metadata:', sourceInfo);
-        console.log('Canvas Pixel Stats:', pixelStats);
-        passes.forEach((p, i) => console.log(`Pass ${i + 1} [${p.passName}]:`, p));
-        console.log('Classification:', classification);
-        console.groupEnd();
-      }
-
-      return {
-        raw: best.raw,
-        normalized: candidate,
-        confidence: best.confidence,
-        readable: candidate.length > 0,
-        diagnostics: {
-          sourceInfo,
-          pixelStats,
-          passes,
-          classification,
-          timing: { startTime: startOpTime, endTime: endOpTime, totalMs: endOpTime - startOpTime },
-          workerStatus: { created: workerCreated, terminated: false },
-          error: null,
-        },
-      };
     } else {
+      // Camera / Pi 4 Live Capture
+      // PASS 1: Full frame unconstrained PSM.AUTO (3)
       const pass1Canvas = crop ? preprocessToCanvas(decodedSource, { crop }) : preprocessToCanvas(decodedSource);
       const first = await runOcrPass(worker, pass1Canvas, {
         passName: 'Pass 1 (Full frame, unconstrained PSM.AUTO)',
@@ -581,67 +629,114 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
         params: DEFAULT_OCR_PARAMS,
       });
       passes.push(first);
-      let best = first;
+
       let candidate = extractPlateCandidate(first.raw);
 
+      // PASS 2: Broad lower-centre crop (if no candidate yet & no user crop)
       if (!candidate && !crop) {
         try {
-          const pass2Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_FALLBACK_CROP, contrastVariant: 1.4 });
+          const pass2Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_FALLBACK_CROP, padPx: 25, targetWidth: 800 });
           const second = await runOcrPass(worker, pass2Canvas, {
-            passName: 'Pass 2 (Lower-centre crop, SINGLE_LINE)',
+            passName: 'Pass 2 (Lower-centre crop, RAW_LINE)',
             crop: PLATE_FALLBACK_CROP,
-            params: PLATE_OCR_PARAMS,
+            params: PLATE_RAW_LINE_PARAMS,
           });
           passes.push(second);
-          const secondCandidate = extractPlateCandidate(second.raw);
-          if (secondCandidate) {
-            best = second;
-            candidate = secondCandidate;
-          }
-        } catch { /* pass 2 crop retry best-effort */ }
+          candidate = extractPlateCandidate(second.raw);
+        } catch { /* pass 2 best-effort */ }
       }
 
-      const endOpTime = Date.now();
-      const classification = candidate.length > 0
-        ? 'OK'
-        : classifyOcrFailure({
-            sourceInfo,
-            pixelStats,
-            passes,
-            rawText: best.raw,
-            extractedCandidate: candidate,
+      // PASS 3: Tighter plate crop (if no candidate yet & no user crop)
+      if (!candidate && !crop) {
+        try {
+          const pass3Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_TIGHT_CROP, padPx: 30, targetWidth: 800 });
+          const third = await runOcrPass(worker, pass3Canvas, {
+            passName: 'Pass 3 (Tighter plate crop, upscaled with padding)',
+            crop: PLATE_TIGHT_CROP,
+            params: PLATE_SINGLE_BLOCK_PARAMS,
           });
-
-      const isDebugActive = debug || (
-        typeof window !== 'undefined' &&
-        new URLSearchParams(window.location.search).get('ocrDebug') === '1'
-      );
-
-      if (isDebugActive && typeof console !== 'undefined' && console.groupCollapsed) {
-        console.groupCollapsed(`🔍 FlowGuard OCR Diagnostics [${sourceInfo.sourceType}] — ${candidate ? 'VALID (' + candidate + ')' : classification}`);
-        console.log('Source Metadata:', sourceInfo);
-        console.log('Canvas Pixel Stats:', pixelStats);
-        passes.forEach((p, i) => console.log(`Pass ${i + 1} [${p.passName}]:`, p));
-        console.log('Classification:', classification);
-        console.groupEnd();
+          passes.push(third);
+          candidate = extractPlateCandidate(third.raw);
+        } catch { /* pass 3 best-effort */ }
       }
+    }
 
-      return {
-        raw: best.raw,
-        normalized: candidate,
-        confidence: best.confidence,
-        readable: candidate.length > 0,
-        diagnostics: {
+    // Result selection logic:
+    // 1. A pass yielding a valid candidate wins immediately.
+    // 2. Otherwise retain the best non-empty pass for diagnostics (confidence / text length).
+    let bestPass = passes[0];
+    let selectedCandidate = '';
+
+    // Check for winning valid candidate pass
+    for (const p of passes) {
+      const cand = extractPlateCandidate(p.raw);
+      if (cand) {
+        bestPass = p;
+        selectedCandidate = cand;
+        break;
+      }
+    }
+
+    // If no candidate, pick best non-empty pass for diagnostic reporting
+    if (!selectedCandidate) {
+      let bestScore = -1;
+      for (const p of passes) {
+        const text = String(p.raw || '').trim();
+        if (!text || text === '(none)') continue;
+        const conf = typeof p.confidence === 'number' ? p.confidence : 0;
+        const score = conf * 10 + text.length;
+        if (score > bestScore) {
+          bestScore = score;
+          bestPass = p;
+        }
+      }
+    }
+
+    // Mark the selected pass in pass metadata
+    if (bestPass) {
+      bestPass.isSelected = true;
+    }
+
+    const endOpTime = Date.now();
+    const classification = selectedCandidate.length > 0
+      ? 'OK'
+      : classifyOcrFailure({
           sourceInfo,
           pixelStats,
           passes,
-          classification,
-          timing: { startTime: startOpTime, endTime: endOpTime, totalMs: endOpTime - startOpTime },
-          workerStatus: { created: workerCreated, terminated: false },
-          error: null,
-        },
-      };
+          rawText: bestPass?.raw || '',
+          extractedCandidate: selectedCandidate,
+        });
+
+    const isDebugActive = debug || (
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).get('ocrDebug') === '1'
+    );
+
+    if (isDebugActive && typeof console !== 'undefined' && console.groupCollapsed) {
+      console.groupCollapsed(`🔍 FlowGuard OCR Diagnostics [${sourceInfo.sourceType}] — ${selectedCandidate ? 'VALID (' + selectedCandidate + ')' : classification}`);
+      console.log('Source Metadata:', sourceInfo);
+      console.log('Canvas Pixel Stats:', pixelStats);
+      passes.forEach((p, i) => console.log(`Pass ${i + 1} [${p.passName}]${p.isSelected ? ' (SELECTED)' : ''}:`, p));
+      console.log('Classification:', classification);
+      console.groupEnd();
     }
+
+    return {
+      raw: bestPass?.raw || '',
+      normalized: selectedCandidate,
+      confidence: bestPass?.confidence ?? null,
+      readable: selectedCandidate.length > 0,
+      diagnostics: {
+        sourceInfo,
+        pixelStats,
+        passes,
+        classification,
+        timing: { startTime: startOpTime, endTime: endOpTime, totalMs: endOpTime - startOpTime },
+        workerStatus: { created: workerCreated, terminated: false },
+        error: null,
+      },
+    };
   } catch (caughtErr) {
     const endOpTime = Date.now();
     const classification = classifyOcrFailure({ sourceInfo, pixelStats, passes, error: caughtErr });
@@ -661,7 +756,6 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
         error: { message: caughtErr.message, stack: caughtErr.stack },
       },
     };
-
   } finally {
     if (worker) {
       try {
