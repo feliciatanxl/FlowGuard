@@ -7,37 +7,103 @@
 
 import { extractPlateCandidate } from './plate';
 
+// Server-authoritative minimum OCR confidence floor.
+// Aligns with server/services/gateVerification.js `ocrMinConfidence()` default of 10%.
+export const MIN_ACCEPTED_CONFIDENCE = 10;
+
 // Broad lower-centre region where a vehicle plate usually sits in a full car capture.
 export const PLATE_FALLBACK_CROP = Object.freeze({ x: 0.15, y: 0.5, w: 0.7, h: 0.45, relativeTo: 'full_source' });
 
 // Tighter nested plate-region crop within the vehicle region for full car scenes.
 export const PLATE_TIGHT_CROP = Object.freeze({ x: 0.20, y: 0.55, w: 0.60, h: 0.35, relativeTo: 'full_source' });
 
-// Unconstrained parameters for full camera scene captures (PSM.AUTO).
+// Unconstrained parameters for full camera scene captures (PSM.AUTO + DPI 300).
 export const DEFAULT_OCR_PARAMS = Object.freeze({
   tessedit_char_whitelist: '',
   tessedit_pageseg_mode: '3',
+  user_defined_dpi: '300',
 });
 
-// Primary plate-focused parameters using PSM.RAW_LINE (13) with uppercase alphanumeric whitelist.
+// Primary plate parameters using PSM.AUTO (3) with uppercase alphanumeric whitelist & DPI 300.
+export const PLATE_AUTO_PARAMS = Object.freeze({
+  tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+  tessedit_pageseg_mode: '3',
+  user_defined_dpi: '300',
+});
+
+// Primary plate-focused parameters using PSM.RAW_LINE (13) with uppercase alphanumeric whitelist & DPI 300.
 export const PLATE_RAW_LINE_PARAMS = Object.freeze({
   tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
   tessedit_pageseg_mode: '13',
+  user_defined_dpi: '300',
 });
 
-// Bounded fallback plate parameters using PSM.SINGLE_WORD (8) with whitelist.
+// Bounded fallback plate parameters using PSM.SINGLE_WORD (8) with whitelist & DPI 300.
 export const PLATE_SINGLE_WORD_PARAMS = Object.freeze({
   tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
   tessedit_pageseg_mode: '8',
-});
-
-// Bounded block parameters using PSM.SINGLE_BLOCK (6) with whitelist for cropped vehicle scenes.
-export const PLATE_SINGLE_BLOCK_PARAMS = Object.freeze({
-  tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-  tessedit_pageseg_mode: '6',
+  user_defined_dpi: '300',
 });
 
 const DECODE_ERROR_MSG = 'The uploaded image could not be processed. Please select a valid PNG or JPEG.';
+
+/**
+ * Calculate deterministic effective confidence for Tesseract OCR result.
+ * Prevents empty layout blocks from reporting fake non-zero confidence (e.g. 95% on blank text)
+ * and evaluates word/symbol confidence for non-empty text.
+ */
+export function calculateEffectiveConfidence(data, rawText) {
+  const trimmed = String(rawText || '').trim();
+
+  // 1. Empty raw text ALWAYS has effective confidence 0.
+  if (!trimmed || trimmed === '(none)') {
+    return 0;
+  }
+
+  // Priority 1: data.words (if present and non-empty)
+  if (Array.isArray(data?.words) && data.words.length > 0) {
+    const validWordConfs = data.words
+      .filter((w) => w && String(w.text || '').trim().length > 0 && typeof w.confidence === 'number' && w.confidence > 0)
+      .map((w) => w.confidence);
+    if (validWordConfs.length > 0) {
+      const avg = validWordConfs.reduce((a, b) => a + b, 0) / validWordConfs.length;
+      return Math.round(avg * 10) / 10;
+    }
+  }
+
+  // Priority 2: Non-empty TSV level-5 token confidences
+  if (typeof data?.tsv === 'string' && data.tsv.includes('\t')) {
+    try {
+      const tsvLines = data.tsv.split('\n').filter(Boolean).map((line) => line.split('\t'));
+      const validTsvConfs = tsvLines
+        .filter((cols) => cols[0] === '5' && cols[11] && cols[11].trim().length > 0 && !isNaN(parseFloat(cols[10])) && parseFloat(cols[10]) > 0)
+        .map((cols) => parseFloat(cols[10]));
+      if (validTsvConfs.length > 0) {
+        const avg = validTsvConfs.reduce((a, b) => a + b, 0) / validTsvConfs.length;
+        return Math.round(avg * 10) / 10;
+      }
+    } catch { /* best effort TSV parsing */ }
+  }
+
+  // Priority 3: Non-empty symbol confidences
+  if (Array.isArray(data?.symbols) && data.symbols.length > 0) {
+    const validSymbolConfs = data.symbols
+      .filter((s) => s && String(s.text || '').trim().length > 0 && typeof s.confidence === 'number' && s.confidence > 0)
+      .map((s) => s.confidence);
+    if (validSymbolConfs.length > 0) {
+      const avg = validSymbolConfs.reduce((a, b) => a + b, 0) / validSymbolConfs.length;
+      return Math.round(avg * 10) / 10;
+    }
+  }
+
+  // Priority 4: Engine data.confidence ONLY when raw text is non-empty and confidence > 0
+  const engineConf = typeof data?.confidence === 'number' && !isNaN(data.confidence) ? data.confidence : 0;
+  if (engineConf > 0) {
+    return Math.round(engineConf * 10) / 10;
+  }
+
+  return 0;
+}
 
 /**
  * Inspect JavaScript image/video/file source object and extract diagnostic metadata.
@@ -229,6 +295,7 @@ export function classifyOcrFailure({
   error = null,
   rawText = '',
   extractedCandidate = '',
+  effectiveConfidence = 0,
 }) {
   if (error) {
     const msg = String(error.message || error).toLowerCase();
@@ -268,6 +335,10 @@ export function classifyOcrFailure({
 
   if (!hasAnyPassText && (!trimmedRaw || trimmedRaw === '(none)')) {
     return 'TESSERACT_EMPTY_RESULT';
+  }
+
+  if (extractedCandidate && effectiveConfidence < MIN_ACCEPTED_CONFIDENCE) {
+    return 'LOW_CONFIDENCE_CANDIDATE';
   }
 
   if (!extractedCandidate) {
@@ -441,11 +512,13 @@ async function runOcrPass(worker, inputCanvas, { passName, crop, params } = {}) 
   if (params && typeof worker.setParameters === 'function') {
     await worker.setParameters(params);
   }
-  const result = await worker.recognize(inputCanvas);
+  const result = await worker.recognize(inputCanvas, {}, { tsv: true });
   const endTime = Date.now();
   const data = result?.data || {};
   const raw = String(data.text || '').trim();
-  const confidence = typeof data.confidence === 'number' ? Math.round(data.confidence * 10) / 10 : null;
+
+  const engineConfidence = typeof data.confidence === 'number' ? Math.round(data.confidence * 10) / 10 : 0;
+  const effectiveConfidence = calculateEffectiveConfidence(data, raw);
 
   let previewUrl = '';
   try {
@@ -467,7 +540,9 @@ async function runOcrPass(worker, inputCanvas, { passName, crop, params } = {}) 
     endTime,
     durationMs: endTime - startTime,
     raw,
-    confidence,
+    confidence: effectiveConfidence,
+    engineConfidence,
+    effectiveConfidence,
     wordsCount,
     symbolsCount,
     isSelected: false,
@@ -540,42 +615,43 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
 
     if (isUploadMode) {
       if (isPlateOnly) {
-        // PASS 1: Resized + White Padding + PSM.RAW_LINE (13) + Whitelist
+        // PASS 1: Resized + White Padding + PSM.AUTO (3) + Whitelist + DPI 300
         const pass1Canvas = preprocessToCanvas(decodedSource, { padPx: 25, targetWidth: 800 });
         const first = await runOcrPass(worker, pass1Canvas, {
-          passName: 'Pass 1 (Plate-focused RAW_LINE with padding)',
+          passName: 'Pass 1 (Plate-focused PSM.AUTO with padding)',
           crop: null,
-          params: PLATE_RAW_LINE_PARAMS,
+          params: PLATE_AUTO_PARAMS,
         });
         passes.push(first);
 
         let candidate = extractPlateCandidate(first.raw);
+        const pass1Accepted = Boolean(candidate && first.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
 
-        // PASS 2: Alternative contrast 1.8 & grayscale (if no candidate yet)
-        if (!candidate && !crop) {
+        // PASS 2: Alternative contrast 1.8 & grayscale (if Pass 1 did not reach MIN_ACCEPTED_CONFIDENCE)
+        if (!pass1Accepted && !crop) {
           try {
             const pass2Canvas = preprocessToCanvas(decodedSource, { padPx: 25, targetWidth: 800, contrastVariant: 1.8, grayscale: true });
             const second = await runOcrPass(worker, pass2Canvas, {
               passName: 'Pass 2 (Alternative contrast 1.8 & grayscale)',
               crop: null,
-              params: PLATE_RAW_LINE_PARAMS,
+              params: PLATE_AUTO_PARAMS,
             });
             passes.push(second);
-            candidate = extractPlateCandidate(second.raw);
           } catch { /* pass 2 best-effort */ }
         }
 
-        // PASS 3: SINGLE_WORD fallback (if no candidate yet)
-        if (!candidate && !crop) {
+        // PASS 3: RAW_LINE fallback (if still no pass reached MIN_ACCEPTED_CONFIDENCE)
+        const pass2Candidate = passes[1] ? extractPlateCandidate(passes[1].raw) : '';
+        const pass2Accepted = Boolean(pass2Candidate && passes[1]?.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
+        if (!pass1Accepted && !pass2Accepted && !crop) {
           try {
             const pass3Canvas = preprocessToCanvas(decodedSource, { padPx: 25, targetWidth: 800 });
             const third = await runOcrPass(worker, pass3Canvas, {
-              passName: 'Pass 3 (Plate-focused SINGLE_WORD fallback)',
+              passName: 'Pass 3 (Plate-focused RAW_LINE fallback)',
               crop: null,
-              params: PLATE_SINGLE_WORD_PARAMS,
+              params: PLATE_RAW_LINE_PARAMS,
             });
             passes.push(third);
-            candidate = extractPlateCandidate(third.raw);
           } catch { /* pass 3 best-effort */ }
         }
       } else {
@@ -590,32 +666,33 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
         passes.push(first);
 
         let candidate = extractPlateCandidate(first.raw);
+        const pass1Accepted = Boolean(candidate && first.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
 
-        // PASS 2: Broad lower-centre crop (if no candidate yet)
-        if (!candidate && !crop) {
+        // PASS 2: Broad lower-centre crop (if Pass 1 did not reach MIN_ACCEPTED_CONFIDENCE)
+        if (!pass1Accepted && !crop) {
           try {
             const pass2Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_FALLBACK_CROP, padPx: 25, targetWidth: 800 });
             const second = await runOcrPass(worker, pass2Canvas, {
-              passName: 'Pass 2 (Broad lower-centre crop, SINGLE_BLOCK)',
+              passName: 'Pass 2 (Broad lower-centre crop, AUTO)',
               crop: PLATE_FALLBACK_CROP,
-              params: PLATE_SINGLE_BLOCK_PARAMS,
+              params: PLATE_AUTO_PARAMS,
             });
             passes.push(second);
-            candidate = extractPlateCandidate(second.raw);
           } catch { /* pass 2 best-effort */ }
         }
 
-        // PASS 3: Tighter plate-region crop (if no candidate yet)
-        if (!candidate && !crop) {
+        // PASS 3: Tighter plate-region crop (if still no pass reached MIN_ACCEPTED_CONFIDENCE)
+        const pass2Candidate = passes[1] ? extractPlateCandidate(passes[1].raw) : '';
+        const pass2Accepted = Boolean(pass2Candidate && passes[1]?.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
+        if (!pass1Accepted && !pass2Accepted && !crop) {
           try {
             const pass3Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_TIGHT_CROP, padPx: 30, targetWidth: 800 });
             const third = await runOcrPass(worker, pass3Canvas, {
-              passName: 'Pass 3 (Tighter plate crop, upscaled with padding)',
+              passName: 'Pass 3 (Tighter plate crop, upscaled AUTO)',
               crop: PLATE_TIGHT_CROP,
-              params: PLATE_SINGLE_BLOCK_PARAMS,
+              params: PLATE_AUTO_PARAMS,
             });
             passes.push(third);
-            candidate = extractPlateCandidate(third.raw);
           } catch { /* pass 3 best-effort */ }
         }
       }
@@ -631,60 +708,75 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
       passes.push(first);
 
       let candidate = extractPlateCandidate(first.raw);
+      const pass1Accepted = Boolean(candidate && first.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
 
-      // PASS 2: Broad lower-centre crop (if no candidate yet & no user crop)
-      if (!candidate && !crop) {
+      // PASS 2: Broad lower-centre crop (if no candidate & no user crop)
+      if (!pass1Accepted && !crop) {
         try {
           const pass2Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_FALLBACK_CROP, padPx: 25, targetWidth: 800 });
           const second = await runOcrPass(worker, pass2Canvas, {
-            passName: 'Pass 2 (Lower-centre crop, RAW_LINE)',
+            passName: 'Pass 2 (Lower-centre crop, AUTO)',
             crop: PLATE_FALLBACK_CROP,
-            params: PLATE_RAW_LINE_PARAMS,
+            params: PLATE_AUTO_PARAMS,
           });
           passes.push(second);
-          candidate = extractPlateCandidate(second.raw);
         } catch { /* pass 2 best-effort */ }
       }
 
-      // PASS 3: Tighter plate crop (if no candidate yet & no user crop)
-      if (!candidate && !crop) {
+      // PASS 3: Tighter plate crop (if still no pass reached MIN_ACCEPTED_CONFIDENCE & no user crop)
+      const pass2Candidate = passes[1] ? extractPlateCandidate(passes[1].raw) : '';
+      const pass2Accepted = Boolean(pass2Candidate && passes[1]?.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
+      if (!pass1Accepted && !pass2Accepted && !crop) {
         try {
           const pass3Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_TIGHT_CROP, padPx: 30, targetWidth: 800 });
           const third = await runOcrPass(worker, pass3Canvas, {
-            passName: 'Pass 3 (Tighter plate crop, upscaled with padding)',
+            passName: 'Pass 3 (Tighter plate crop, upscaled AUTO)',
             crop: PLATE_TIGHT_CROP,
-            params: PLATE_SINGLE_BLOCK_PARAMS,
+            params: PLATE_AUTO_PARAMS,
           });
           passes.push(third);
-          candidate = extractPlateCandidate(third.raw);
         } catch { /* pass 3 best-effort */ }
       }
     }
 
     // Result selection logic:
-    // 1. A pass yielding a valid candidate wins immediately.
-    // 2. Otherwise retain the best non-empty pass for diagnostics (confidence / text length).
-    let bestPass = passes[0];
+    // 1st Priority: The first pass with a candidate AND effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE wins as ACCEPTED_OCR_CANDIDATE.
+    let bestPass = null;
     let selectedCandidate = '';
 
-    // Check for winning valid candidate pass
     for (const p of passes) {
       const cand = extractPlateCandidate(p.raw);
-      if (cand) {
+      if (cand && p.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE) {
         bestPass = p;
         selectedCandidate = cand;
         break;
       }
     }
 
-    // If no candidate, pick best non-empty pass for diagnostic reporting
+    // 2nd Priority: If no pass reached MIN_ACCEPTED_CONFIDENCE, select best provisional candidate across passes.
     if (!selectedCandidate) {
       let bestScore = -1;
       for (const p of passes) {
+        const cand = extractPlateCandidate(p.raw);
+        if (cand) {
+          const score = p.effectiveConfidence * 100 + cand.length;
+          if (score > bestScore) {
+            bestScore = score;
+            bestPass = p;
+            selectedCandidate = cand;
+          }
+        }
+      }
+    }
+
+    // 3rd Priority: If no syntax-plausible candidate, select pass with best non-empty raw text.
+    if (!bestPass) {
+      let bestScore = -1;
+      bestPass = passes[0];
+      for (const p of passes) {
         const text = String(p.raw || '').trim();
         if (!text || text === '(none)') continue;
-        const conf = typeof p.confidence === 'number' ? p.confidence : 0;
-        const score = conf * 10 + text.length;
+        const score = p.effectiveConfidence * 10 + text.length;
         if (score > bestScore) {
           bestScore = score;
           bestPass = p;
@@ -692,20 +784,23 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
       }
     }
 
-    // Mark the selected pass in pass metadata
     if (bestPass) {
       bestPass.isSelected = true;
     }
 
     const endOpTime = Date.now();
-    const classification = selectedCandidate.length > 0
-      ? 'OK'
+    const effectiveConfidence = bestPass?.effectiveConfidence ?? 0;
+    const isAccepted = Boolean(selectedCandidate && effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
+
+    const classification = isAccepted
+      ? 'ACCEPTED_OCR_CANDIDATE'
       : classifyOcrFailure({
           sourceInfo,
           pixelStats,
           passes,
           rawText: bestPass?.raw || '',
           extractedCandidate: selectedCandidate,
+          effectiveConfidence,
         });
 
     const isDebugActive = debug || (
@@ -714,10 +809,14 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
     );
 
     if (isDebugActive && typeof console !== 'undefined' && console.groupCollapsed) {
-      console.groupCollapsed(`🔍 FlowGuard OCR Diagnostics [${sourceInfo.sourceType}] — ${selectedCandidate ? 'VALID (' + selectedCandidate + ')' : classification}`);
+      console.groupCollapsed(`🔍 FlowGuard OCR Diagnostics [${sourceInfo.sourceType}] — ${selectedCandidate ? classification + ' (' + selectedCandidate + ', conf: ' + effectiveConfidence + '%)' : classification}`);
       console.log('Source Metadata:', sourceInfo);
       console.log('Canvas Pixel Stats:', pixelStats);
-      passes.forEach((p, i) => console.log(`Pass ${i + 1} [${p.passName}]${p.isSelected ? ' (SELECTED)' : ''}:`, p));
+      passes.forEach((p, i) => console.log(`Pass ${i + 1} [${p.passName}]${p.isSelected ? ' (SELECTED)' : ''}:`, {
+        ...p,
+        engineConfidence: p.engineConfidence,
+        effectiveConfidence: p.effectiveConfidence,
+      }));
       console.log('Classification:', classification);
       console.groupEnd();
     }
@@ -725,8 +824,8 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
     return {
       raw: bestPass?.raw || '',
       normalized: selectedCandidate,
-      confidence: bestPass?.confidence ?? null,
-      readable: selectedCandidate.length > 0,
+      confidence: effectiveConfidence,
+      readable: isAccepted,
       diagnostics: {
         sourceInfo,
         pixelStats,

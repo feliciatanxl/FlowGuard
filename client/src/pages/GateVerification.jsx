@@ -1049,7 +1049,7 @@ const GateVerification = () => {
                         <span>Normalised plate</span>
                         {ocrReadable
                           ? <strong>{ocr.normalized}</strong>
-                          : <strong className="gate-ocr-unreadable">Not detected</strong>}
+                          : (ocr?.normalized ? <strong className="gate-ocr-unreadable">{ocr.normalized} (Low Confidence / Unverified)</strong> : <strong className="gate-ocr-unreadable">Not detected</strong>)}
                       </div>
                       <div className="gate-ocr-row">
                         <span>OCR confidence</span>
@@ -1062,8 +1062,8 @@ const GateVerification = () => {
                     <section className="gate-ocr-debug-card" aria-label="OCR Diagnostics">
                       <div className="gate-debug-header">
                         <h3>🔍 OCR Runtime Diagnostics <code>(?ocrDebug=1)</code></h3>
-                        <span className={`gate-debug-badge ${ocr.readable ? 'ok' : 'fail'}`}>
-                          {ocr.readable ? 'VALID_PLATE' : (ocr.diagnostics.classification || 'UNKNOWN')}
+                        <span className={`gate-debug-badge ${ocr.readable ? 'ok' : (ocr.diagnostics?.classification === 'LOW_CONFIDENCE_CANDIDATE' ? 'warn' : 'fail')}`}>
+                          {ocr.diagnostics?.classification || (ocr.readable ? 'ACCEPTED_OCR_CANDIDATE' : 'UNKNOWN')}
                         </span>
                       </div>
 
@@ -1100,7 +1100,7 @@ const GateVerification = () => {
                           <h4>Bounded OCR Pass Previews ({ocr.diagnostics.passes.length} pass{ocr.diagnostics.passes.length > 1 ? 'es' : ''})</h4>
                           <div className="gate-debug-pass-list">
                             {ocr.diagnostics.passes.map((p, idx) => (
-                              <div key={idx} className="gate-debug-pass-item">
+                              <div key={idx} className={`gate-debug-pass-item${p.isSelected ? ' selected-pass' : ''}`}>
                                 <div className="gate-debug-pass-thumb">
                                   {p.previewUrl ? (
                                     <img src={p.previewUrl} alt={p.passName} />
@@ -1109,10 +1109,10 @@ const GateVerification = () => {
                                   )}
                                 </div>
                                 <div className="gate-debug-pass-info">
-                                  <p className="pass-title"><strong>Pass {idx + 1}: {p.passName}</strong> ({p.durationMs}ms)</p>
+                                  <p className="pass-title"><strong>Pass {idx + 1}: {p.passName}</strong> ({p.durationMs}ms){p.isSelected ? ' [SELECTED]' : ''}</p>
                                   <p>Dimensions: <code>{p.dimensions?.w} × {p.dimensions?.h}</code> | Crop: <code>{p.crop ? `${p.crop.x},${p.crop.y},${p.crop.w},${p.crop.h}` : 'None'}</code></p>
                                   <p>Params: <code>PSM {p.params?.tessedit_pageseg_mode || '3'}</code> | Whitelist: <code>{p.params?.tessedit_char_whitelist ? 'A-Z,0-9' : 'None'}</code></p>
-                                  <p>Raw OCR: <strong>{p.raw ? `"${p.raw}"` : '(none)'}</strong> ({p.confidence !== null ? `${p.confidence}%` : 'N/A'})</p>
+                                  <p>Raw OCR: <strong>{p.raw ? `"${p.raw}"` : '(none)'}</strong> (Eff: {p.effectiveConfidence !== undefined ? `${p.effectiveConfidence}%` : (p.confidence !== null ? `${p.confidence}%` : 'N/A')}, Eng: {p.engineConfidence !== undefined ? `${p.engineConfidence}%` : 'N/A'})</p>
                                 </div>
                               </div>
                             ))}

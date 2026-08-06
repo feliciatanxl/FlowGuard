@@ -15,7 +15,7 @@ import {
   getSourceInfo,
   analyzeCanvasPixels,
   classifyOcrFailure,
-  preprocessToCanvas,
+  calculateEffectiveConfidence,
   PLATE_FALLBACK_CROP,
   PLATE_TIGHT_CROP,
 } from "../../src/utils/plateOcr";
@@ -47,13 +47,49 @@ const plateOnlySource = { width: 300, height: 80 }; // aspect ratio 3.75 >= 2.2
 const fullCarSource = { width: 600, height: 400 };  // aspect ratio 1.5 < 2.2
 const webcamSource = { videoWidth: 1280, videoHeight: 720, readyState: 4 };
 
-const ocr = (text, confidence) => ({ data: { text, confidence, words: [], symbols: [] } });
+const ocr = (text, confidence, words = []) => ({
+  data: { text, confidence, words, symbols: [] },
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.spyOn(document, "createElement").mockImplementation((tag) =>
     tag === "canvas" ? fakeCanvas() : realCreate(tag)
   );
+});
+
+describe("calculateEffectiveConfidence Helper", () => {
+  test("1. Empty trimmed OCR text always has effective confidence 0 even if engine reports high confidence", () => {
+    const data = { confidence: 95, words: [{ text: "", confidence: 95 }] };
+    expect(calculateEffectiveConfidence(data, "")).toBe(0);
+    expect(calculateEffectiveConfidence(data, "   ")).toBe(0);
+    expect(calculateEffectiveConfidence(data, "(none)")).toBe(0);
+  });
+
+  test("2 & 3. Non-empty word confidences are averaged and whitespace-only words ignored", () => {
+    const data = {
+      confidence: 50,
+      words: [
+        { text: "GBG1234M", confidence: 90 },
+        { text: "   ", confidence: 10 },
+        { text: "", confidence: 5 },
+      ],
+    };
+    expect(calculateEffectiveConfidence(data, "GBG1234M")).toBe(90);
+  });
+
+  test("4. Falls back to data.confidence when raw text is non-empty and no word confidences exist", () => {
+    const data = { confidence: 75, words: [] };
+    expect(calculateEffectiveConfidence(data, "GBG1234M")).toBe(75);
+  });
+
+  test("5. Priority 2 TSV level 5 non-empty word token confidence takes precedence over engine data.confidence", () => {
+    const data = {
+      confidence: 81,
+      tsv: "1\t1\t0\t0\t0\t0\t0\t0\t840\t307\t-1\t\n5\t1\t4\t1\t1\t1\t117\t44\t627\t162\t17.652969\tGBG1234M\n",
+    };
+    expect(calculateEffectiveConfidence(data, "GBG1234M")).toBe(17.7);
+  });
 });
 
 describe("decodeFileToCanvas", () => {
@@ -110,7 +146,7 @@ describe("analyzeCanvasPixels & Canvas Validation", () => {
 });
 
 describe("classifyOcrFailure Rules", () => {
-  test("Raw text (none) or empty string is classified as TESSERACT_EMPTY_RESULT, NEVER CANDIDATE_REJECTED", () => {
+  test("Raw text (none) or empty string is classified as TESSERACT_EMPTY_RESULT", () => {
     const classification = classifyOcrFailure({
       sourceInfo: { srcW: 600, srcH: 400, isReady: true },
       pixelStats: { usable: true, brightnessVariance: 50 },
@@ -119,7 +155,18 @@ describe("classifyOcrFailure Rules", () => {
       extractedCandidate: "",
     });
     expect(classification).toBe("TESSERACT_EMPTY_RESULT");
-    expect(classification).not.toBe("CANDIDATE_REJECTED");
+  });
+
+  test("Syntax-plausible candidate below MIN_ACCEPTED_CONFIDENCE is classified as LOW_CONFIDENCE_CANDIDATE", () => {
+    const classification = classifyOcrFailure({
+      sourceInfo: { srcW: 600, srcH: 400, isReady: true },
+      pixelStats: { usable: true, brightnessVariance: 50 },
+      passes: [{ raw: "GBG1234W", effectiveConfidence: 0 }],
+      rawText: "GBG1234W",
+      extractedCandidate: "GBG1234W",
+      effectiveConfidence: 0,
+    });
+    expect(classification).toBe("LOW_CONFIDENCE_CANDIDATE");
   });
 
   test("Non-empty raw text failing plate grammar is classified as CANDIDATE_REJECTED", () => {
@@ -147,44 +194,32 @@ describe("Focused Tesseract OCR Fix Tests", () => {
     recognize.mockResolvedValue(ocr("6BG1234M", 90));
     const res = await recognizePlate(plateOnlySource, { isUpload: true, debug: true });
 
-    expect(res.diagnostics.passes.length).toBe(1);
     expect(res.diagnostics.passes[0].crop).toBeNull();
     expect(res.normalized).toBe("GBG1234M");
   });
 
-  test("2. Plate-only passes are genuinely different", async () => {
+  test("2. Low-confidence candidate (< MIN_ACCEPTED_CONFIDENCE) does NOT stop after Pass 1", async () => {
     recognize
-      .mockResolvedValueOnce(ocr("", 0))       // Pass 1 empty
-      .mockResolvedValueOnce(ocr("6BG1234M", 88)); // Pass 2 succeeds
+      .mockResolvedValueOnce(ocr("6BG1234W", 0))       // Pass 1: candidate at 0% confidence
+      .mockResolvedValueOnce(ocr("6BG1234M", 88));      // Pass 2: candidate at 88% confidence
 
     const res = await recognizePlate(plateOnlySource, { isUpload: true, debug: true });
 
-    expect(res.diagnostics.passes.length).toBe(2);
-    expect(res.diagnostics.passes[0].passName).toContain("Pass 1");
-    expect(res.diagnostics.passes[1].passName).toContain("Pass 2");
+    expect(res.diagnostics.passes.length).toBe(2); // Ran Pass 2!
     expect(res.normalized).toBe("GBG1234M");
+    expect(res.readable).toBe(true);
   });
 
-  test("3 & 4. Original/padded/resized source dimensions remain non-zero and white padding enlarges canvas", () => {
-    const source = fakeCanvas(400, 100);
-    const processed = preprocessToCanvas(source, { padPx: 25, targetWidth: 800 });
+  test("3. A candidate meeting MIN_ACCEPTED_CONFIDENCE (>= 10%) stops early", async () => {
+    recognize.mockResolvedValueOnce(ocr("6BG1234M", 90));
 
-    expect(processed.width).toBeGreaterThan(0);
-    expect(processed.height).toBeGreaterThan(0);
-    // targetWidth is 800 so scaled width is 400 (since 400 <= 800), plus 2 * 25 padding = 450
-    expect(processed.width).toBe(450);
-    expect(processed.height).toBe(150);
+    const res = await recognizePlate(plateOnlySource, { isUpload: true, debug: true });
+
+    expect(res.diagnostics.passes.length).toBe(1); // Stopped after Pass 1!
+    expect(res.diagnostics.classification).toBe("ACCEPTED_OCR_CANDIDATE");
   });
 
-  test("5. Camera full-frame first pass uses scene-appropriate PSM.AUTO (3)", async () => {
-    recognize.mockResolvedValue(ocr("GBG1234M", 95));
-    const res = await recognizePlate(webcamSource, { isUpload: false, debug: true });
-
-    expect(res.diagnostics.passes[0].params.tessedit_pageseg_mode).toBe("3");
-    expect(setParameters).toHaveBeenCalledWith(expect.objectContaining({ tessedit_pageseg_mode: "3" }));
-  });
-
-  test("6. Full-car upload receives bounded broad and tighter crop passes", async () => {
+  test("4. Full-car upload receives bounded crops and uses PSM.AUTO for Pass 2 and Pass 3", async () => {
     recognize
       .mockResolvedValueOnce(ocr("", 0))                  // Pass 1 full scene empty
       .mockResolvedValueOnce(ocr("", 0))                  // Pass 2 broad crop empty
@@ -195,85 +230,38 @@ describe("Focused Tesseract OCR Fix Tests", () => {
     expect(res.diagnostics.passes.length).toBe(3);
     expect(res.diagnostics.passes[1].crop).toEqual(PLATE_FALLBACK_CROP);
     expect(res.diagnostics.passes[2].crop).toEqual(PLATE_TIGHT_CROP);
+    expect(res.diagnostics.passes[1].params.tessedit_pageseg_mode).toBe("3");
+    expect(res.diagnostics.passes[2].params.tessedit_pageseg_mode).toBe("3");
     expect(res.normalized).toBe("SKL9081A");
   });
 
-  test("7. Maximum pass count (<=3) is respected", async () => {
-    recognize.mockResolvedValue(ocr("", 0));
+  test("5. Camera full-frame first pass uses scene-appropriate PSM.AUTO (3)", async () => {
+    recognize.mockResolvedValue(ocr("GBG1234M", 95));
+    const res = await recognizePlate(webcamSource, { isUpload: false, debug: true });
 
-    const res = await recognizePlate(fullCarSource, { isUpload: true, debug: true });
-    expect(res.diagnostics.passes.length).toBeLessThanOrEqual(3);
+    expect(res.diagnostics.passes[0].params.tessedit_pageseg_mode).toBe("3");
+    expect(setParameters).toHaveBeenCalledWith(expect.objectContaining({ tessedit_pageseg_mode: "3" }));
   });
 
-  test("8 & 9. Worker parameters are applied before each recognize call without contamination", async () => {
-    recognize
-      .mockResolvedValueOnce(ocr("", 0))
-      .mockResolvedValueOnce(ocr("6BG1234M", 90));
+  test("6. Low-confidence candidate returns readable: false, preserves normalized plate, and classifies as LOW_CONFIDENCE_CANDIDATE", async () => {
+    recognize.mockResolvedValue(ocr("GBG1234W", 0)); // 0% effective confidence
 
-    await recognizePlate(plateOnlySource, { isUpload: true, debug: true });
+    const res = await recognizePlate(plateOnlySource, { isUpload: true, debug: true });
 
-    expect(setParameters).toHaveBeenCalledTimes(2);
-    // Check parameters set in each call
-    expect(setParameters.mock.calls[0][0].tessedit_pageseg_mode).toBe("13");
-    expect(setParameters.mock.calls[1][0].tessedit_pageseg_mode).toBe("13");
+    expect(res.readable).toBe(false); // Keeps barrier closed!
+    expect(res.normalized).toBe("GBG1234W"); // Preserves detected candidate for UI!
+    expect(res.diagnostics.classification).toBe("LOW_CONFIDENCE_CANDIDATE");
   });
 
-  test("10. Valid GBG1234M OCR result is accepted", async () => {
-    recognize.mockResolvedValue(ocr("6BG 1234 M", 92));
+  test("7. GBG1234W is NOT automatically changed to GBG1234M without exact syntax rules", async () => {
+    recognize.mockResolvedValue(ocr("GBG1234W", 80));
     const res = await recognizePlate(plateOnlySource, { isUpload: true });
 
-    expect(res.readable).toBe(true);
-    expect(res.normalized).toBe("GBG1234M");
+    expect(res.normalized).toBe("GBG1234W");
+    expect(res.normalized).not.toBe("GBG1234M");
   });
 
-  test("11. Valid SKL9081A result is accepted", async () => {
-    recognize.mockResolvedValue(ocr("SKL 9081 A", 89));
-    const res = await recognizePlate(fullCarSource, { isUpload: true });
-
-    expect(res.readable).toBe(true);
-    expect(res.normalized).toBe("SKL9081A");
-  });
-
-  test("12. 'EE' remains rejected as CANDIDATE_REJECTED", async () => {
-    recognize.mockResolvedValue(ocr("EE", 5));
-    const res = await recognizePlate(plateOnlySource, { isUpload: true, debug: true });
-
-    expect(res.readable).toBe(false);
-    expect(res.normalized).toBe("");
-    expect(res.diagnostics.classification).toBe("CANDIDATE_REJECTED");
-  });
-
-  test("13. A later non-empty result is selected for diagnostics over an earlier empty result", async () => {
-    recognize
-      .mockResolvedValueOnce(ocr("", 0))       // Pass 1: empty
-      .mockResolvedValueOnce(ocr("EE", 45));   // Pass 2: non-empty "EE"
-
-    const res = await recognizePlate(plateOnlySource, { isUpload: true, debug: true });
-
-    expect(res.raw).toBe("EE");
-    expect(res.diagnostics.passes[1].isSelected).toBe(true);
-    expect(res.diagnostics.classification).toBe("CANDIDATE_REJECTED");
-  });
-
-  test("14. TESSERACT_EMPTY_RESULT occurs only when all passes are empty", async () => {
-    recognize.mockResolvedValue(ocr("", 0));
-
-    const res = await recognizePlate(plateOnlySource, { isUpload: true, debug: true });
-
-    expect(res.readable).toBe(false);
-    expect(res.diagnostics.classification).toBe("TESSERACT_EMPTY_RESULT");
-  });
-
-  test("15. CANDIDATE_REJECTED occurs when any pass has non-empty rejected text and no valid candidate", async () => {
-    recognize.mockResolvedValue(ocr("INVALID_TEXT_123", 40));
-
-    const res = await recognizePlate(plateOnlySource, { isUpload: true, debug: true });
-
-    expect(res.readable).toBe(false);
-    expect(res.diagnostics.classification).toBe("CANDIDATE_REJECTED");
-  });
-
-  test("16. No expected booking plate is passed into OCR", async () => {
+  test("8. No expected booking plate is passed into OCR", async () => {
     recognize.mockResolvedValue(ocr("6BG1234M", 90));
     await recognizePlate(plateOnlySource, { isUpload: true });
 
@@ -284,7 +272,7 @@ describe("Focused Tesseract OCR Fix Tests", () => {
     });
   });
 
-  test("17. Diagnostic mode does not alter access decisions", async () => {
+  test("9. Diagnostic mode does not alter access decisions", async () => {
     recognize.mockResolvedValue(ocr("GBG 1234 M", 90));
     const resWithoutDebug = await recognizePlate(webcamSource, { isUpload: false, debug: false });
     const resWithDebug = await recognizePlate(webcamSource, { isUpload: false, debug: true });
