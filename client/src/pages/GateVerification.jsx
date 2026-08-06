@@ -30,6 +30,10 @@ const CLOUD_QR_ENABLED =
   String(import.meta.env?.VITE_ENABLE_CLOUD_QR_FALLBACK ?? '').toLowerCase() !== 'false';
 const CLOUD_QR_DELAY_MS = Number(import.meta.env?.VITE_QR_CLOUD_FALLBACK_DELAY_MS) || 2500;
 const CAMERA_DEBUG = String(import.meta.env?.VITE_CAMERA_DEBUG ?? '').toLowerCase() === 'true';
+const isOcrDebug = Boolean(
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).get('ocrDebug') === '1'
+);
 
 // Scanner service states → short inline status copy (Phase 2 scanner states).
 const SCANNER_STATE_TEXT = {
@@ -524,7 +528,7 @@ const GateVerification = () => {
     setOcrError('');
     try {
       const isUpload = capturedFrom === CAMERA_SOURCE.UPLOAD;
-      const result = await recognizePlate(source, { isUpload });
+      const result = await recognizePlate(source, { isUpload, debug: isOcrDebug });
       if (!isCameraWorkCurrent(generation)) return null;
       setOcr({ ...result, simulated: false });
       if (!result.readable) {
@@ -1053,7 +1057,72 @@ const GateVerification = () => {
                       </div>
                     </div>
                   )}
+
+                  {isOcrDebug && ocr?.diagnostics && (
+                    <section className="gate-ocr-debug-card" aria-label="OCR Diagnostics">
+                      <div className="gate-debug-header">
+                        <h3>🔍 OCR Runtime Diagnostics <code>(?ocrDebug=1)</code></h3>
+                        <span className={`gate-debug-badge ${ocr.readable ? 'ok' : 'fail'}`}>
+                          {ocr.readable ? 'VALID_PLATE' : (ocr.diagnostics.classification || 'UNKNOWN')}
+                        </span>
+                      </div>
+
+                      <div className="gate-debug-grid">
+                        <div className="gate-debug-box">
+                          <h4>Source Metadata</h4>
+                          <ul>
+                            <li>Source Type: <strong>{ocr.diagnostics.sourceInfo?.sourceType}</strong></li>
+                            <li>JS Object: <code>{ocr.diagnostics.sourceInfo?.jsObjectType}</code></li>
+                            <li>Dimensions: <strong>{ocr.diagnostics.sourceInfo?.srcW} × {ocr.diagnostics.sourceInfo?.srcH}</strong></li>
+                            {ocr.diagnostics.sourceInfo?.readyState !== undefined && (
+                              <li>Video readyState: <code>{ocr.diagnostics.sourceInfo.readyState}</code></li>
+                            )}
+                            {ocr.diagnostics.sourceInfo?.mimeType && (
+                              <li>File: <code>{ocr.diagnostics.sourceInfo.mimeType}</code> ({Math.round((ocr.diagnostics.sourceInfo.fileSize || 0) / 1024)} KB)</li>
+                            )}
+                          </ul>
+                        </div>
+
+                        <div className="gate-debug-box">
+                          <h4>Canvas Validation</h4>
+                          <ul>
+                            <li>Canvas Size: <strong>{ocr.diagnostics.pixelStats?.width} × {ocr.diagnostics.pixelStats?.height}</strong></li>
+                            <li>Usability: <strong className={ocr.diagnostics.pixelStats?.usable ? 'gate-ok' : 'gate-ocr-unreadable'}>{ocr.diagnostics.pixelStats?.usable ? 'Usable' : `Unusable (${ocr.diagnostics.pixelStats?.reason})`}</strong></li>
+                            <li>Brightness: <code>{ocr.diagnostics.pixelStats?.minBrightness}</code> – <code>{ocr.diagnostics.pixelStats?.maxBrightness}</code> (Avg: <code>{ocr.diagnostics.pixelStats?.avgBrightness}</code>)</li>
+                            <li>StdDev / Variance: <code>{ocr.diagnostics.pixelStats?.brightnessStdDev}</code> / <code>{ocr.diagnostics.pixelStats?.brightnessVariance}</code></li>
+                            <li>Pixels: <code>{ocr.diagnostics.pixelStats?.pctTransparent}% transparent</code>, <code>{ocr.diagnostics.pixelStats?.pctNearBlack}% black</code>, <code>{ocr.diagnostics.pixelStats?.pctNearWhite}% white</code></li>
+                          </ul>
+                        </div>
+                      </div>
+
+                      {Array.isArray(ocr.diagnostics.passes) && ocr.diagnostics.passes.length > 0 && (
+                        <div className="gate-debug-passes">
+                          <h4>Bounded OCR Pass Previews ({ocr.diagnostics.passes.length} pass{ocr.diagnostics.passes.length > 1 ? 'es' : ''})</h4>
+                          <div className="gate-debug-pass-list">
+                            {ocr.diagnostics.passes.map((p, idx) => (
+                              <div key={idx} className="gate-debug-pass-item">
+                                <div className="gate-debug-pass-thumb">
+                                  {p.previewUrl ? (
+                                    <img src={p.previewUrl} alt={p.passName} />
+                                  ) : (
+                                    <div className="gate-debug-no-thumb">No Preview</div>
+                                  )}
+                                </div>
+                                <div className="gate-debug-pass-info">
+                                  <p className="pass-title"><strong>Pass {idx + 1}: {p.passName}</strong> ({p.durationMs}ms)</p>
+                                  <p>Dimensions: <code>{p.dimensions?.w} × {p.dimensions?.h}</code> | Crop: <code>{p.crop ? `${p.crop.x},${p.crop.y},${p.crop.w},${p.crop.h}` : 'None'}</code></p>
+                                  <p>Params: <code>PSM {p.params?.tessedit_pageseg_mode || '3'}</code> | Whitelist: <code>{p.params?.tessedit_char_whitelist ? 'A-Z,0-9' : 'None'}</code></p>
+                                  <p>Raw OCR: <strong>{p.raw ? `"${p.raw}"` : '(none)'}</strong> ({p.confidence !== null ? `${p.confidence}%` : 'N/A'})</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </section>
+                  )}
                 </div>
+
 
                 {/* Step 3: Verify */}
                 <div className="gate-block">
