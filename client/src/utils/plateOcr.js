@@ -12,22 +12,122 @@
 import { extractPlateCandidate } from './plate';
 
 // Lower-centre region where a vehicle plate usually sits in a straight-on capture.
-// Used only for the bounded second OCR pass (normalised {x,y,w,h} in 0–1 units).
+// Used only for the bounded fallback OCR pass on full vehicle photos (normalised {x,y,w,h} in 0–1 units).
 const PLATE_FALLBACK_CROP = { x: 0.15, y: 0.5, w: 0.7, h: 0.45 };
 
-// Tesseract tuning applied ONLY to the bounded lower-centre crop retry: within the
-// crop a plate is a single line of uppercase letters and digits, so constrain the
-// character set and page-segmentation to that shape. Kept OFF the full-frame first
-// pass, which may legitimately contain surrounding text used to locate the plate.
-const PLATE_CROP_PARAMS = Object.freeze({
+// Tesseract tuning applied to plate-focused passes: letters and digits only, single text line.
+const PLATE_OCR_PARAMS = Object.freeze({
   tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
-  tessedit_pageseg_mode: '7', // PSM.SINGLE_LINE — treat the crop as one text line
+  tessedit_pageseg_mode: '7', // PSM.SINGLE_LINE — treat as one text line
 });
+
+const DECODE_ERROR_MSG = 'The uploaded image could not be processed. Please select a valid PNG or JPEG.';
+
+/**
+ * Decode an uploaded image File/Blob into a stable, non-zero canvas before OCR.
+ * Supports PNG and JPEG (and safe web image formats). Uses createImageBitmap with
+ * an HTMLImageElement fallback. Automatically closes ImageBitmap and revokes object URLs in finally.
+ * Throws a specific user-friendly error message if decoding fails or dimensions are zero.
+ */
+export async function decodeFileToCanvas(file) {
+  if (!file || typeof file !== 'object') {
+    throw new Error(DECODE_ERROR_MSG);
+  }
+
+  if (file.type) {
+    const type = String(file.type).toLowerCase();
+    const isSupported = type.startsWith('image/png') || type.startsWith('image/jpeg') || type.startsWith('image/jpg') || type.startsWith('image/webp');
+    if (!isSupported) {
+      throw new Error(DECODE_ERROR_MSG);
+    }
+  }
+
+  let bitmap = null;
+  let objectUrl = null;
+  let drawSource = null;
+  let srcW = 0;
+  let srcH = 0;
+
+  try {
+    // 1. Preferred strategy: createImageBitmap
+    if (typeof createImageBitmap === 'function') {
+      try {
+        bitmap = await createImageBitmap(file);
+        if (bitmap) {
+          if (bitmap.width <= 0 || bitmap.height <= 0) {
+            throw new Error(DECODE_ERROR_MSG);
+          }
+          drawSource = bitmap;
+          srcW = bitmap.width;
+          srcH = bitmap.height;
+        }
+      } catch (err) {
+        if (err?.message === DECODE_ERROR_MSG) {
+          throw err;
+        }
+        bitmap = null;
+      }
+    }
+
+    // 2. Fallback strategy: HTMLImageElement + URL.createObjectURL
+    if (!drawSource && typeof URL !== 'undefined' && URL.createObjectURL && typeof Image !== 'undefined') {
+      objectUrl = URL.createObjectURL(file);
+      const img = new Image();
+      const loaded = new Promise((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('Image load failed'));
+      });
+      img.src = objectUrl;
+      await loaded;
+      if (img.decode) {
+        try { await img.decode(); } catch { /* best effort */ }
+      }
+      srcW = img.naturalWidth || img.width || 0;
+      srcH = img.naturalHeight || img.height || 0;
+      if (srcW > 0 && srcH > 0) {
+        drawSource = img;
+      }
+    }
+
+    if (!drawSource || srcW <= 0 || srcH <= 0) {
+      throw new Error(DECODE_ERROR_MSG);
+    }
+
+    // Cap extremely large dimensions while preserving aspect ratio
+    const MAX_DIM = 2400;
+    let targetW = srcW;
+    let targetH = srcH;
+    if (targetW > MAX_DIM || targetH > MAX_DIM) {
+      const scale = Math.min(MAX_DIM / targetW, MAX_DIM / targetH);
+      targetW = Math.round(targetW * scale);
+      targetH = Math.round(targetH * scale);
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(drawSource, 0, 0, srcW, srcH, 0, 0, targetW, targetH);
+    return canvas;
+  } catch (err) {
+    if (err?.message === DECODE_ERROR_MSG) {
+      throw err;
+    }
+    throw new Error(DECODE_ERROR_MSG, { cause: err });
+  } finally {
+    if (bitmap && typeof bitmap.close === 'function') {
+      try { bitmap.close(); } catch { /* ignore */ }
+    }
+    if (objectUrl && typeof URL !== 'undefined' && URL.revokeObjectURL) {
+      try { URL.revokeObjectURL(objectUrl); } catch { /* ignore */ }
+    }
+  }
+}
 
 // Draw a source image/video/canvas onto an offscreen canvas with light
 // preprocessing (grayscale + contrast) to give OCR a cleaner signal. Optionally
 // crop to a normalised guide rectangle {x,y,w,h} in 0–1 units.
-export function preprocessToCanvas(source, { crop } = {}) {
+export function preprocessToCanvas(source, { crop, contrastVariant = 1.4 } = {}) {
   const srcW = source.videoWidth || source.naturalWidth || source.width;
   const srcH = source.videoHeight || source.naturalHeight || source.height;
   if (!srcW || !srcH) throw new Error('The captured image was empty. Please retake.');
@@ -43,12 +143,12 @@ export function preprocessToCanvas(source, { crop } = {}) {
   const ctx = canvas.getContext('2d');
   ctx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
 
-  // Grayscale + simple contrast stretch. Wrapped in try/catch because some test
-  // environments (jsdom) do not implement getImageData.
+  // Grayscale + simple contrast stretch. Wrapped in try/catch because jsdom
+  // does not implement getImageData.
   try {
     const img = ctx.getImageData(0, 0, sw, sh);
     const d = img.data;
-    const contrast = 1.4;
+    const contrast = contrastVariant;
     const intercept = 128 * (1 - contrast);
     for (let i = 0; i < d.length; i += 4) {
       let g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
@@ -62,59 +162,82 @@ export function preprocessToCanvas(source, { crop } = {}) {
   return canvas;
 }
 
-// One OCR pass over a source, with optional crop and per-pass Tesseract params
-// (whitelist / page-seg mode). Returns { raw, confidence }.
-async function runOcrPass(worker, source, { crop, params } = {}) {
-  // A pre-built canvas is used as-is ONLY when no crop is requested; a crop always
-  // goes through preprocessToCanvas so the region (and grayscale/contrast) apply.
-  const input = (!crop && typeof HTMLCanvasElement !== 'undefined' && source instanceof HTMLCanvasElement)
-    ? source
-    : preprocessToCanvas(source, { crop });
-  // Params are forwarded to worker.recognize, which SetVariable's non-tessjs keys
-  // (tessedit_char_whitelist / tessedit_pageseg_mode) for THIS pass only.
-  const result = await worker.recognize(input, params ? { ...params } : {});
+// One OCR pass over a source canvas with per-pass Tesseract parameters applied
+// through worker.setParameters. Returns { raw, confidence }.
+async function runOcrPass(worker, inputCanvas, { params } = {}) {
+  if (params && typeof worker.setParameters === 'function') {
+    await worker.setParameters(params);
+  }
+  const result = await worker.recognize(inputCanvas);
   const data = result?.data || {};
   const raw = String(data.text || '').trim();
   const confidence = typeof data.confidence === 'number' ? Math.round(data.confidence * 10) / 10 : null;
   return { raw, confidence };
 }
 
-// Run OCR on an image source (canvas/image/video/blob URL) and return only a
+// Run OCR on an image source (File/Blob, canvas, image, video) and return only a
 // PLAUSIBLE plate — never the whole OCR paragraph collapsed into one string.
 //   { raw, normalized, confidence, readable }
-//   - raw:        full OCR text, kept for FM troubleshooting only
-//   - normalized: the extracted plausible plate, or "" when none was found
-//   - readable:   true only when a plausible plate was extracted
-// Bounded improvement: the full image is read first; only if that yields no
-// plausible plate is ONE extra pass run on a lower-centre crop. At most two OCR
-// passes per capture — no continuous scanning, no unbounded retries. Throws on
-// OCR failure. The image is processed in memory and never persisted or uploaded.
+// Bounded passes (at most 3 passes):
+// Pass 1: Whole decoded image, plate-focused (whitelist + single-line mode)
+// Pass 2: Whole decoded image, alternative contrast variant
+// Pass 3: Lower-centre crop (only when image is a wider vehicle photo, not a plate-only image)
 export async function recognizePlate(source, { crop } = {}) {
+  let decodedSource = source;
+
+  // If source is a raw File or Blob, decode it into a stable canvas first
+  if (
+    (typeof Blob !== 'undefined' && source instanceof Blob) ||
+    (typeof File !== 'undefined' && source instanceof File)
+  ) {
+    decodedSource = await decodeFileToCanvas(source);
+  }
+
+  const srcW = decodedSource.videoWidth || decodedSource.naturalWidth || decodedSource.width;
+  const srcH = decodedSource.videoHeight || decodedSource.naturalHeight || decodedSource.height;
+  if (!srcW || !srcH) {
+    throw new Error('The captured image was empty. Please retake.');
+  }
+
+  const aspectRatio = srcH > 0 ? srcW / srcH : 1;
+  // A wide aspect ratio (>= 2.2) indicates a plate-only cropped image.
+  const isPlateOnly = aspectRatio >= 2.2;
+
   const mod = await import('tesseract.js');
   const createWorker = mod.createWorker || mod.default?.createWorker;
-
-  // ONE transient worker per capture (spun up here, torn down in finally) — same
-  // spin-up/tear-down-per-capture model as before, but reused across the (at most
-  // two) passes so the whitelist/PSM can be applied to the crop retry alone.
   const worker = await createWorker('eng');
+
   try {
-    const first = await runOcrPass(worker, source, { crop });
+    // Pass 1: Whole decoded image, plate-focused
+    const pass1Canvas = crop ? preprocessToCanvas(decodedSource, { crop }) : preprocessToCanvas(decodedSource);
+    const first = await runOcrPass(worker, pass1Canvas, { params: PLATE_OCR_PARAMS });
     let best = first;
     let candidate = extractPlateCandidate(first.raw);
 
-    // Second, bounded pass on a lower-centre crop when the full frame gave no
-    // plausible plate and the caller didn't already constrain the region. This
-    // pass additionally constrains Tesseract to the plate character set + a
-    // single-line page-segmentation mode.
+    // Pass 2: Whole decoded image with an alternative contrast variant
     if (!candidate && !crop) {
       try {
-        const second = await runOcrPass(worker, source, { crop: PLATE_FALLBACK_CROP, params: PLATE_CROP_PARAMS });
+        const pass2Canvas = preprocessToCanvas(decodedSource, { contrastVariant: 1.8 });
+        const second = await runOcrPass(worker, pass2Canvas, { params: PLATE_OCR_PARAMS });
         const secondCandidate = extractPlateCandidate(second.raw);
         if (secondCandidate) {
           best = second;
           candidate = secondCandidate;
         }
-      } catch { /* the fallback crop is best-effort — keep the first pass result */ }
+      } catch { /* pass 2 is best-effort */ }
+    }
+
+    // Pass 3: Lower-centre crop only when the image resembles a wider vehicle photograph (not plate-only)
+    if (!candidate && !crop && !isPlateOnly) {
+      try {
+        const pass3Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_FALLBACK_CROP, contrastVariant: 1.4 });
+        const third = await runOcrPass(worker, pass3Canvas, { params: PLATE_OCR_PARAMS });
+        const thirdCandidate = extractPlateCandidate(third.raw);
+        if (thirdCandidate) {
+          best = third;
+          candidate = thirdCandidate;
+        }
+      } catch { /* pass 3 is best-effort */ }
     }
 
     return {

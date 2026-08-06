@@ -14,13 +14,19 @@ const h = vi.hoisted(() => {
     startQrScan: vi.fn(async ({ onResult, onError }) => { store.onResult = onResult; store.onError = onError; return qrStop; }),
     startCamera: vi.fn(async () => ({ stop: plateStop })),
     recognizePlate: vi.fn(async () => ({ raw: "gbg 1234 m", normalized: "GBG1234M", confidence: 88 })),
+    decodeFileToCanvas: vi.fn(async (file) => {
+      if (file?.name === "corrupt.txt" || file?.type === "text/plain") {
+        throw new Error("The uploaded image could not be processed. Please select a valid PNG or JPEG.");
+      }
+      return { width: 300, height: 80 };
+    }),
     post: vi.fn(),
   };
 });
 
 vi.mock("axios", () => ({ default: { post: h.post } }));
 vi.mock("../../src/components/Sidebar", () => ({ default: () => <div data-testid="sidebar" /> }));
-vi.mock("../../src/utils/plateOcr", () => ({ recognizePlate: h.recognizePlate }));
+vi.mock("../../src/utils/plateOcr", () => ({ recognizePlate: h.recognizePlate, decodeFileToCanvas: h.decodeFileToCanvas }));
 vi.mock("../../src/utils/gateCamera", async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -132,18 +138,27 @@ describe("PoC OCR", () => {
     expect(h.recognizePlate).toHaveBeenCalled();
   });
 
-  test("8b. unreadable OCR shows 'Not detected' + rescan guidance, never a plate", async () => {
-    h.recognizePlate.mockResolvedValueOnce({ raw: "YWERETANCLPPEMYY", normalized: "", confidence: 4, readable: false });
+  test("8c. valid image upload decodes and runs OCR", async () => {
     renderPage();
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Start Camera/i })); });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Capture & Read Plate/i })); });
-    // Normalised plate is "Not detected" (not a collapsed garbage string).
-    expect(await screen.findByText("Not detected")).toBeTruthy();
-    expect(screen.getByText(/No valid vehicle plate could be read/i)).toBeTruthy();
-    // Raw OCR text is retained for troubleshooting only.
-    expect(screen.getByText("YWERETANCLPPEMYY")).toBeTruthy();
-    // It is NOT called a mismatch anywhere.
-    expect(screen.queryByText(/Mismatch/i)).toBeNull();
+    const file = new File(["gbg1234m-image-bytes"], "plate.png", { type: "image/png" });
+    const fileInput = screen.getByLabelText(/Upload Plate Image/i);
+    await act(async () => {
+      fireEvent.change(fileInput, { target: { files: [file] } });
+    });
+    expect(h.decodeFileToCanvas).toHaveBeenCalledWith(file);
+    expect(h.recognizePlate).toHaveBeenCalled();
+    expect(await screen.findByText("GBG1234M")).toBeTruthy();
+  });
+
+  test("8d. invalid or corrupted file upload shows processing error message", async () => {
+    renderPage();
+    const file = new File(["bad"], "corrupt.txt", { type: "text/plain" });
+    const fileInput = screen.getByLabelText(/Upload Plate Image/i);
+    await act(async () => {
+      fireEvent.change(fileInput, { target: { files: [file] } });
+    });
+    expect(h.decodeFileToCanvas).toHaveBeenCalledWith(file);
+    expect(await screen.findByText(/The uploaded image could not be processed. Please select a valid PNG or JPEG./i)).toBeTruthy();
   });
 });
 

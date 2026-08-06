@@ -17,7 +17,7 @@ import {
   CAMERA_STATUS, resolvePreferredCameraSource, fetchPiSnapshotBitmap,
   PI_CAMERA_STREAM_URL, PI_CONNECTION_STATUS, stopStream, drawBitmapToCanvasAndClose,
 } from '../utils/cameraSource';
-import { recognizePlate } from '../utils/plateOcr';
+import { recognizePlate, decodeFileToCanvas } from '../utils/plateOcr';
 import { formatSingaporeBookingDateTime } from '../constants/datetime';
 import '../css/Dashboard.css';
 import '../css/Booking.css';
@@ -587,21 +587,14 @@ const GateVerification = () => {
     e.target.value = ''; // allow re-selecting the same file; nothing is persisted
     if (!file) return;
     const { generation } = beginCameraWork();
-    const url = URL.createObjectURL(file);
     try {
-      const img = new Image();
-      const loaded = new Promise((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error('Could not read that image.'));
-      });
-      img.src = url;
-      await loaded;
+      const decodedCanvas = await decodeFileToCanvas(file);
       if (!isCameraWorkCurrent(generation)) return;
-      await runOcrOn(img, CAMERA_SOURCE.UPLOAD, generation);
+      await runOcrOn(decodedCanvas, CAMERA_SOURCE.UPLOAD, generation);
     } catch (err) {
-      if (isCameraWorkCurrent(generation)) setOcrError(err.message || 'Could not read that image.');
-    } finally {
-      URL.revokeObjectURL(url); // never keep the image around
+      if (isCameraWorkCurrent(generation)) {
+        setOcrError(err.message || 'The uploaded image could not be processed. Please select a valid PNG or JPEG.');
+      }
     }
   };
 
