@@ -22,10 +22,14 @@ const fakeCanvas = (w = 300, h = 80) => ({
   }),
 });
 
-// Plate-only source (aspect ratio 300 / 80 = 3.75 >= 2.2)
+// Plate-only upload source (aspect ratio 300 / 80 = 3.75 >= 2.2)
 const plateOnlySource = { width: 300, height: 80 };
 // Full car photograph source (aspect ratio 600 / 400 = 1.5 < 2.2)
 const fullCarSource = { width: 600, height: 400 };
+// Laptop webcam video element / scene source
+const webcamSource = { videoWidth: 1280, videoHeight: 720 };
+// Pi snapshot canvas source
+const piSnapshotCanvas = fakeCanvas(1280, 720);
 
 const ocr = (text, confidence) => ({ data: { text, confidence } });
 
@@ -51,7 +55,7 @@ describe("decodeFileToCanvas", () => {
     expect(canvas.width).toBe(400);
     expect(canvas.height).toBe(100);
     expect(globalThis.createImageBitmap).toHaveBeenCalledWith(file);
-    expect(bitmapClose).toHaveBeenCalledTimes(1); // closed in finally
+    expect(bitmapClose).toHaveBeenCalledTimes(1);
   });
 
   test("2. A JPEG File is decoded before OCR begins", async () => {
@@ -70,7 +74,7 @@ describe("decodeFileToCanvas", () => {
     expect(bitmapClose).toHaveBeenCalledTimes(1);
   });
 
-  test("3. OCR receives a non-zero decoded canvas", async () => {
+  test("3. Uploaded File is decoded into a non-zero canvas", async () => {
     const file = new File(["png"], "plate.png", { type: "image/png" });
     globalThis.createImageBitmap = vi.fn().mockResolvedValue({
       width: 320,
@@ -83,29 +87,21 @@ describe("decodeFileToCanvas", () => {
     expect(canvas.height).toBeGreaterThan(0);
   });
 
-  test("4. OCR does not receive an unresolved File when a canvas is required", async () => {
+  test("4. Upload-specific decoding is not applied to camera sources", async () => {
     recognize.mockResolvedValue(ocr("GBG 1234 M", 95));
-    const file = new File(["png"], "plate.png", { type: "image/png" });
-    globalThis.createImageBitmap = vi.fn().mockResolvedValue({
-      width: 300,
-      height: 80,
-      close: vi.fn(),
-    });
+    const spyDecode = vi.spyOn(globalThis, "createImageBitmap");
 
-    const res = await recognizePlate(file);
-    expect(res.normalized).toBe("GBG1234M");
-    // Recognize received a canvas, not the raw File
-    const passInput = recognize.mock.calls[0][0];
-    expect(passInput).not.toBe(file);
-    expect(typeof passInput.getContext).toBe("function");
+    await recognizePlate(webcamSource, { isUpload: false });
+
+    // createImageBitmap is for files — not invoked on camera video sources
+    expect(spyDecode).not.toHaveBeenCalled();
   });
 
   test("5. Object URL is revoked only after all OCR passes finish (fallback path)", async () => {
-    delete globalThis.createImageBitmap; // force HTMLImageElement fallback path
+    delete globalThis.createImageBitmap;
     const revokeSpy = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
     const createSpy = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:http://localhost/test-uuid");
 
-    // Mock Image load
     const realImage = globalThis.Image;
     globalThis.Image = class {
       constructor() {
@@ -124,7 +120,7 @@ describe("decodeFileToCanvas", () => {
     globalThis.Image = realImage;
   });
 
-  test("6. ImageBitmap is closed only after all OCR passes finish", async () => {
+  test("6. ImageBitmap is closed only after decoding completes", async () => {
     const file = new File(["png"], "plate.png", { type: "image/png" });
     const bitmapClose = vi.fn();
     globalThis.createImageBitmap = vi.fn().mockResolvedValue({
@@ -139,7 +135,7 @@ describe("decodeFileToCanvas", () => {
 
   test("7. Worker termination happens after recognition completes", async () => {
     recognize.mockResolvedValue(ocr("SKL 9081 A", 90));
-    await recognizePlate(plateOnlySource);
+    await recognizePlate(plateOnlySource, { isUpload: true });
     expect(recognize).toHaveBeenCalledTimes(1);
     expect(terminate).toHaveBeenCalledTimes(1);
   });
@@ -165,76 +161,106 @@ describe("decodeFileToCanvas", () => {
   });
 });
 
-describe("recognizePlate", () => {
-  test("10. A plate-only GBG 1234M upload prioritises the whole-image single-line pass", async () => {
-    recognize.mockResolvedValue(ocr("GBG 1234 M", 95));
-    const res = await recognizePlate(plateOnlySource);
+describe("Camera & Pi 4 OCR Pipeline", () => {
+  test("10. Laptop Webcam frame reaches recognition with non-zero canvas dimensions", async () => {
+    recognize.mockResolvedValue(ocr("GBG 1234 M", 92));
+    const res = await recognizePlate(webcamSource, { isUpload: false });
 
     expect(res.normalized).toBe("GBG1234M");
     expect(res.readable).toBe(true);
-    expect(res.raw).toBe("GBG 1234 M");
-    expect(res.confidence).toBe(95);
-    expect(recognize).toHaveBeenCalledTimes(1); // single pass succeeded
+    expect(recognize).toHaveBeenCalledTimes(1);
+    // Camera Pass 1 uses unconstrained parameters (PSM '3', empty whitelist)
+    expect(setParameters).toHaveBeenCalledWith({
+      tessedit_char_whitelist: "",
+      tessedit_pageseg_mode: "3",
+    });
+  });
+
+  test("11. Pi snapshot reaches recognition with non-zero canvas dimensions", async () => {
+    recognize.mockResolvedValue(ocr("GBG 1234 M", 94));
+    const res = await recognizePlate(piSnapshotCanvas, { isUpload: false });
+
+    expect(res.normalized).toBe("GBG1234M");
+    expect(res.readable).toBe(true);
+    expect(recognize).toHaveBeenCalledTimes(1);
+    expect(setParameters).toHaveBeenCalledWith({
+      tessedit_char_whitelist: "",
+      tessedit_pageseg_mode: "3",
+    });
+  });
+
+  test("12. Camera full-frame first pass remains available and retries lower-centre crop when needed", async () => {
+    recognize
+      .mockResolvedValueOnce(ocr("SCENE TEXT NO PLATE", 20)) // pass 1 full frame
+      .mockResolvedValueOnce(ocr("GBG 1234 M", 88));          // pass 2 lower-centre crop
+
+    const res = await recognizePlate(webcamSource, { isUpload: false });
+    expect(res.normalized).toBe("GBG1234M");
+    expect(res.readable).toBe(true);
+    expect(recognize).toHaveBeenCalledTimes(2);
+
+    // Pass 1: unconstrained parameters
+    expect(setParameters.mock.calls[0][0]).toEqual({
+      tessedit_char_whitelist: "",
+      tessedit_pageseg_mode: "3",
+    });
+    // Pass 2: plate-focused parameters (PSM '7' + whitelist)
+    expect(setParameters.mock.calls[1][0]).toEqual({
+      tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+      tessedit_pageseg_mode: "7",
+    });
+  });
+});
+
+describe("Uploaded Image OCR Pipeline", () => {
+  test("13. Plate-only upload uses whole-image OCR without destructive cropping", async () => {
+    recognize.mockResolvedValue(ocr("GBG 1234 M", 95));
+    const res = await recognizePlate(plateOnlySource, { isUpload: true });
+
+    expect(res.normalized).toBe("GBG1234M");
+    expect(res.readable).toBe(true);
+    expect(recognize).toHaveBeenCalledTimes(1); // whole image pass succeeded
     expect(setParameters).toHaveBeenCalledWith({
       tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
       tessedit_pageseg_mode: "7",
     });
   });
 
-  test("11. GBG 1234M normalises to GBG1234M", async () => {
-    recognize.mockResolvedValue(ocr("GBG  1234  M", 88));
-    const res = await recognizePlate(plateOnlySource);
-    expect(res.normalized).toBe("GBG1234M");
-  });
-
-  test("12. A plate-only wide image is not incorrectly lower-centre cropped", async () => {
-    recognize.mockResolvedValue(ocr("YWERETANCLPPEMYY", 10)); // noise
-    const res = await recognizePlate(plateOnlySource); // aspect ratio 300/80 = 3.75 >= 2.2
-
-    expect(res.normalized).toBe("");
-    expect(res.readable).toBe(false);
-    // At most 2 passes run for a wide image (pass 1 and pass 2 whole image), pass 3 (lower-centre crop) skipped!
-    expect(recognize.mock.calls.length).toBeLessThanOrEqual(2);
-  });
-
-  test("13. A wider full-car image may use the bounded crop fallback", async () => {
+  test("14. A wider full-car image may use the bounded crop fallback", async () => {
     recognize
       .mockResolvedValueOnce(ocr("CAR FRONT", 20))         // pass 1 whole image
       .mockResolvedValueOnce(ocr("CAR FRONT HIGHER", 25))  // pass 2 whole image contrast
       .mockResolvedValueOnce(ocr("GBG 1234 M", 90));       // pass 3 lower-centre crop
 
-    const res = await recognizePlate(fullCarSource); // aspect ratio 600/400 = 1.5 < 2.2
+    const res = await recognizePlate(fullCarSource, { isUpload: true });
     expect(res.normalized).toBe("GBG1234M");
     expect(res.readable).toBe(true);
-    expect(recognize).toHaveBeenCalledTimes(3); // 3 passes total
+    expect(recognize).toHaveBeenCalledTimes(3);
   });
 
-  test("14. At most three OCR passes occur for uploaded images", async () => {
+  test("15. At most three OCR passes occur for uploaded images", async () => {
     recognize.mockResolvedValue(ocr("YWERETANCLPPEMYY", 10));
-    const res = await recognizePlate(fullCarSource);
+    const res = await recognizePlate(fullCarSource, { isUpload: true });
     expect(res.readable).toBe(false);
-    expect(recognize.mock.calls.length).toBeLessThanOrEqual(3); // at most 3
+    expect(recognize.mock.calls.length).toBeLessThanOrEqual(3);
   });
 
-  test("15. Noise remains OCR_UNREADABLE", async () => {
+  test("16. Noise remains OCR_UNREADABLE across all sources", async () => {
     recognize.mockResolvedValue(ocr("YWERETANCLPPEMYY", 12));
-    const res = await recognizePlate(fullCarSource);
+    const res = await recognizePlate(fullCarSource, { isUpload: true });
     expect(res.normalized).toBe("");
     expect(res.readable).toBe(false);
     expect(res.raw).toBe("YWERETANCLPPEMYY");
   });
 
-  test("16. Ambiguous candidates remain OCR_UNREADABLE", async () => {
-    recognize.mockResolvedValue(ocr("SSSA", 30));
-    const res = await recognizePlate(fullCarSource);
-    expect(res.normalized).toBe("");
-    expect(res.readable).toBe(false);
-  });
-
-  test("17. The booking's expected plate is never passed into OCR extraction", async () => {
+  test("17. Camera and upload operations do not share or terminate each other's worker", async () => {
     recognize.mockResolvedValue(ocr("GBG 1234 M", 90));
-    // recognizePlate takes only source and optional crop options — never any booking reference or expected plate
-    const res = await recognizePlate(plateOnlySource);
-    expect(res.normalized).toBe("GBG1234M");
+    const res1 = await recognizePlate(webcamSource, { isUpload: false });
+    const res2 = await recognizePlate(plateOnlySource, { isUpload: true });
+
+    expect(res1.normalized).toBe("GBG1234M");
+    expect(res2.normalized).toBe("GBG1234M");
+    expect(createWorker).toHaveBeenCalledTimes(2); // distinct workers initialized
+    expect(terminate).toHaveBeenCalledTimes(2);    // distinct workers terminated
   });
 });

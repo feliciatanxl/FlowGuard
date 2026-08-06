@@ -12,8 +12,14 @@
 import { extractPlateCandidate } from './plate';
 
 // Lower-centre region where a vehicle plate usually sits in a straight-on capture.
-// Used only for the bounded fallback OCR pass on full vehicle photos (normalised {x,y,w,h} in 0–1 units).
+// Used for the bounded fallback OCR pass on vehicle scenes (normalised {x,y,w,h} in 0–1 units).
 const PLATE_FALLBACK_CROP = { x: 0.15, y: 0.5, w: 0.7, h: 0.45 };
+
+// Unconstrained parameters for full camera scene captures (allows Tesseract to detect text anywhere).
+const DEFAULT_OCR_PARAMS = Object.freeze({
+  tessedit_char_whitelist: '',
+  tessedit_pageseg_mode: '3', // PSM.AUTO — default page segmentation for camera scenes
+});
 
 // Tesseract tuning applied to plate-focused passes: letters and digits only, single text line.
 const PLATE_OCR_PARAMS = Object.freeze({
@@ -178,12 +184,22 @@ async function runOcrPass(worker, inputCanvas, { params } = {}) {
 // Run OCR on an image source (File/Blob, canvas, image, video) and return only a
 // PLAUSIBLE plate — never the whole OCR paragraph collapsed into one string.
 //   { raw, normalized, confidence, readable }
-// Bounded passes (at most 3 passes):
-// Pass 1: Whole decoded image, plate-focused (whitelist + single-line mode)
-// Pass 2: Whole decoded image, alternative contrast variant
-// Pass 3: Lower-centre crop (only when image is a wider vehicle photo, not a plate-only image)
-export async function recognizePlate(source, { crop } = {}) {
+// Bounded passes per source type:
+// Camera/Pi 4:
+//   Pass 1: Full frame, unconstrained configuration (previous working behavior)
+//   Pass 2: Bounded lower-centre crop retry with plate whitelist + SINGLE_LINE mode
+// Uploaded image:
+//   Pass 1: Whole decoded image, plate-focused (whitelist + SINGLE_LINE mode)
+//   Pass 2: Whole decoded image, alternative contrast variant
+//   Pass 3: Lower-centre crop (only when image is a wider vehicle photo, not a plate-only image)
+export async function recognizePlate(source, { crop, isUpload } = {}) {
   let decodedSource = source;
+
+  const isUploadMode = Boolean(
+    isUpload ||
+    (typeof Blob !== 'undefined' && source instanceof Blob) ||
+    (typeof File !== 'undefined' && source instanceof File)
+  );
 
   // If source is a raw File or Blob, decode it into a stable canvas first
   if (
@@ -208,44 +224,74 @@ export async function recognizePlate(source, { crop } = {}) {
   const worker = await createWorker('eng');
 
   try {
-    // Pass 1: Whole decoded image, plate-focused
-    const pass1Canvas = crop ? preprocessToCanvas(decodedSource, { crop }) : preprocessToCanvas(decodedSource);
-    const first = await runOcrPass(worker, pass1Canvas, { params: PLATE_OCR_PARAMS });
-    let best = first;
-    let candidate = extractPlateCandidate(first.raw);
+    if (isUploadMode) {
+      // --- Upload Pipeline (at most 3 passes) ---
+      // Pass 1: Whole decoded image, plate-focused
+      const pass1Canvas = crop ? preprocessToCanvas(decodedSource, { crop }) : preprocessToCanvas(decodedSource);
+      const first = await runOcrPass(worker, pass1Canvas, { params: PLATE_OCR_PARAMS });
+      let best = first;
+      let candidate = extractPlateCandidate(first.raw);
 
-    // Pass 2: Whole decoded image with an alternative contrast variant
-    if (!candidate && !crop) {
-      try {
-        const pass2Canvas = preprocessToCanvas(decodedSource, { contrastVariant: 1.8 });
-        const second = await runOcrPass(worker, pass2Canvas, { params: PLATE_OCR_PARAMS });
-        const secondCandidate = extractPlateCandidate(second.raw);
-        if (secondCandidate) {
-          best = second;
-          candidate = secondCandidate;
-        }
-      } catch { /* pass 2 is best-effort */ }
+      // Pass 2: Whole decoded image with an alternative contrast variant
+      if (!candidate && !crop) {
+        try {
+          const pass2Canvas = preprocessToCanvas(decodedSource, { contrastVariant: 1.8 });
+          const second = await runOcrPass(worker, pass2Canvas, { params: PLATE_OCR_PARAMS });
+          const secondCandidate = extractPlateCandidate(second.raw);
+          if (secondCandidate) {
+            best = second;
+            candidate = secondCandidate;
+          }
+        } catch { /* pass 2 is best-effort */ }
+      }
+
+      // Pass 3: Lower-centre crop only when the image resembles a wider vehicle photograph (not plate-only)
+      if (!candidate && !crop && !isPlateOnly) {
+        try {
+          const pass3Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_FALLBACK_CROP, contrastVariant: 1.4 });
+          const third = await runOcrPass(worker, pass3Canvas, { params: PLATE_OCR_PARAMS });
+          const thirdCandidate = extractPlateCandidate(third.raw);
+          if (thirdCandidate) {
+            best = third;
+            candidate = thirdCandidate;
+          }
+        } catch { /* pass 3 is best-effort */ }
+      }
+
+      return {
+        raw: best.raw,
+        normalized: candidate,
+        confidence: best.confidence,
+        readable: candidate.length > 0,
+      };
+    } else {
+      // --- Camera / Pi 4 Pipeline (at most 2 passes) ---
+      // Pass 1: Full frame, unconstrained configuration (previous working behavior)
+      const pass1Canvas = crop ? preprocessToCanvas(decodedSource, { crop }) : preprocessToCanvas(decodedSource);
+      const first = await runOcrPass(worker, pass1Canvas, { params: DEFAULT_OCR_PARAMS });
+      let best = first;
+      let candidate = extractPlateCandidate(first.raw);
+
+      // Pass 2: Bounded lower-centre crop retry with whitelist + SINGLE_LINE mode
+      if (!candidate && !crop) {
+        try {
+          const pass2Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_FALLBACK_CROP, contrastVariant: 1.4 });
+          const second = await runOcrPass(worker, pass2Canvas, { params: PLATE_OCR_PARAMS });
+          const secondCandidate = extractPlateCandidate(second.raw);
+          if (secondCandidate) {
+            best = second;
+            candidate = secondCandidate;
+          }
+        } catch { /* crop retry is best-effort */ }
+      }
+
+      return {
+        raw: best.raw,
+        normalized: candidate,
+        confidence: best.confidence,
+        readable: candidate.length > 0,
+      };
     }
-
-    // Pass 3: Lower-centre crop only when the image resembles a wider vehicle photograph (not plate-only)
-    if (!candidate && !crop && !isPlateOnly) {
-      try {
-        const pass3Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_FALLBACK_CROP, contrastVariant: 1.4 });
-        const third = await runOcrPass(worker, pass3Canvas, { params: PLATE_OCR_PARAMS });
-        const thirdCandidate = extractPlateCandidate(third.raw);
-        if (thirdCandidate) {
-          best = third;
-          candidate = thirdCandidate;
-        }
-      } catch { /* pass 3 is best-effort */ }
-    }
-
-    return {
-      raw: best.raw,
-      normalized: candidate,
-      confidence: best.confidence,
-      readable: candidate.length > 0,
-    };
   } finally {
     try { await worker.terminate(); } catch { /* worker teardown is best-effort */ }
   }

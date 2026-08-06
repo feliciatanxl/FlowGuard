@@ -523,7 +523,8 @@ const GateVerification = () => {
     setOcrBusy(true);
     setOcrError('');
     try {
-      const result = await recognizePlate(source);
+      const isUpload = capturedFrom === CAMERA_SOURCE.UPLOAD;
+      const result = await recognizePlate(source, { isUpload });
       if (!isCameraWorkCurrent(generation)) return null;
       setOcr({ ...result, simulated: false });
       if (!result.readable) {
