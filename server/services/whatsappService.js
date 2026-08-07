@@ -237,7 +237,7 @@ function sendBookingCompleted(booking) {
 function sendNextInLine(booking) {
   return sendBookingMessage(
     booking,
-    `FlowGuard — Harrison Food Factory: Previous vehicle has left ${booking.loading_bay}. You may proceed to the loading bay if you are ready (booking ${booking.booking_ref}).`
+    `FlowGuard — Harrison Food Factory: Previous vehicle has left ${booking.loading_bay}. Your confirmed booking (${booking.booking_ref}) is next in line. Proceed only within your approved arrival window. Final access still requires your booking QR and an exact vehicle-plate match.`
   );
 }
 

@@ -77,6 +77,7 @@ const REASON_TEXT = {
   NOT_ARRIVED: 'No arrival is recorded for this booking — exit cannot be completed.',
   TOO_EARLY: 'The vehicle is earlier than the approved arrival window.',
   TOO_LATE: 'The vehicle is later than the approved arrival window.',
+  BAY_OCCUPIED: 'The loading bay is still occupied by the previous vehicle. Wait until it has left before admitting the next booking.',
   PLATE_REQUIRED: 'A vehicle plate is required to verify this booking.',
   PLATE_MISMATCH: 'Detected plate does not match the approved booking.',
   OCR_UNREADABLE: 'No valid vehicle plate could be read — rescan required. Align the plate and retake, upload a clearer image, or use manual verification.',

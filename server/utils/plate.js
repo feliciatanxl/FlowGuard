@@ -68,6 +68,7 @@ function repairPlateCandidate(value) {
   const s = normalizePlate(value);
   if (!s) return '';
   if (isPlausiblePlate(s)) return s; // already valid → never substitute
+  if (!/\d/.test(s) || /^\d+$/.test(s)) return ''; // pure letter words and pure digit strings are never repaired into fake plates
 
   const results = new Set();
   for (let prefixLen = 1; prefixLen <= 3; prefixLen += 1) {
@@ -91,24 +92,23 @@ function repairPlateCandidate(value) {
   return results.size === 1 ? [...results][0] : '';
 }
 
-// Pull the single most plausible plate out of raw OCR text instead of collapsing
-// the whole paragraph into one string. Spaces and hyphens inside a plate are
-// tolerated ("SKL 9081 A" → "SKL9081A"); unrelated words/lines are ignored.
-// Returns the normalised candidate, or "" when nothing plausible is present.
-function extractPlateCandidate(rawText) {
+// Collect all plausible candidates (exact or position-repaired) from raw text
+// without receiving, reading or comparing against any expected booking plate.
+function extractPlateCandidatesInfo(rawText) {
   const text = String(rawText ?? '');
-  if (!text.trim()) return '';
+  if (!text.trim()) return { candidate: '', isAmbiguous: false, candidates: [] };
   const lines = text.split(/[\r\n]+/);
 
-  // Prefer a line that IS a plate once spacing/hyphens are stripped over a
-  // windowed reconstruction of a noisy line.
+  const exactCandidatesSet = new Set();
+  const repairedCandidatesSet = new Set();
+
+  // 1. Check whole lines (with spaces/hyphens stripped)
   for (const line of lines) {
-    const whole = normalizePlate(line);
-    if (isPlausiblePlate(whole)) return whole;
+    const stripped = normalizePlate(line);
+    if (isPlausiblePlate(stripped)) exactCandidatesSet.add(stripped);
   }
 
-  // Otherwise scan each line for a run of adjacent tokens that forms a plate.
-  // The strict pattern bounds the result to a real plate; this is exact, not fuzzy.
+  // 2. Check spaced-out tokens on the same line that form an exact plausible plate when joined
   for (const line of lines) {
     const tokens = line.split(/[^A-Za-z0-9]+/).filter(Boolean);
     for (let i = 0; i < tokens.length; i += 1) {
@@ -116,31 +116,70 @@ function extractPlateCandidate(rawText) {
       for (let j = i; j < tokens.length && j < i + 4; j += 1) {
         joined += tokens[j];
         const norm = normalizePlate(joined);
-        if (isPlausiblePlate(norm)) return norm;
+        if (isPlausiblePlate(norm)) exactCandidatesSet.add(norm);
       }
     }
   }
 
-  // No EXACT plate anywhere → attempt controlled syntax repair. Collect every
-  // uniquely-repairable token window; accept a repair only when exactly ONE
-  // distinct plausible plate results across the whole OCR text, so noise words
-  // that could each repair differently cancel out to "unreadable". The repair
-  // depends only on plate grammar, never on any booking.
-  const repaired = new Set();
+  // Collect clean tokens per line
+  const allTokens = [];
   for (const line of lines) {
     const tokens = line.split(/[^A-Za-z0-9]+/).filter(Boolean);
-    for (let i = 0; i < tokens.length; i += 1) {
-      let joined = '';
-      for (let j = i; j < tokens.length && j < i + 4; j += 1) {
-        joined += tokens[j];
-        const r = repairPlateCandidate(joined);
-        if (r) repaired.add(r);
+    allTokens.push(...tokens);
+  }
+
+  // 3. Process individual tokens
+  for (const tok of allTokens) {
+    const norm = normalizePlate(tok);
+    if (isPlausiblePlate(norm)) {
+      exactCandidatesSet.add(norm);
+    } else {
+      // Check full token repair
+      const fullRepair = repairPlateCandidate(norm);
+      if (fullRepair) {
+        repairedCandidatesSet.add(fullRepair);
+      } else {
+        // If full token doesn't repair, check substrings of length 8 down to 7
+        for (let len = Math.min(8, norm.length); len >= 7; len -= 1) {
+          for (let k = 0; k <= norm.length - len; k += 1) {
+            const sub = norm.slice(k, k + len);
+            if (isPlausiblePlate(sub)) {
+              exactCandidatesSet.add(sub);
+            } else {
+              const subR = repairPlateCandidate(sub);
+              if (subR) repairedCandidatesSet.add(subR);
+            }
+          }
+        }
       }
     }
   }
-  return repaired.size === 1 ? [...repaired][0] : '';
+
+  const allCandidates = Array.from(new Set([...exactCandidatesSet, ...repairedCandidatesSet]));
+
+  // Filter out any candidate that is a proper substring of another candidate in the pool
+  const distinctCandidates = allCandidates.filter(
+    (cand) => !allCandidates.some((other) => other !== cand && other.includes(cand))
+  );
+
+  if (distinctCandidates.length === 0) {
+    return { candidate: '', isAmbiguous: false, candidates: [] };
+  }
+  if (distinctCandidates.length === 1) {
+    return { candidate: distinctCandidates[0], isAmbiguous: false, candidates: distinctCandidates };
+  }
+
+  // distinctCandidates.length > 1 → AMBIGUOUS_OCR_CANDIDATE
+  return { candidate: '', isAmbiguous: true, candidates: distinctCandidates };
+}
+
+// Pull the single independently selected plate candidate out of raw OCR text.
+// Returns the single candidate if unique, or "" if 0 or ambiguous (>1).
+function extractPlateCandidate(rawText) {
+  const info = extractPlateCandidatesInfo(rawText);
+  return info.candidate;
 }
 
 module.exports = {
-  normalizePlate, platesMatch, isPlausiblePlate, repairPlateCandidate, extractPlateCandidate,
+  normalizePlate, platesMatch, isPlausiblePlate, repairPlateCandidate, extractPlateCandidate, extractPlateCandidatesInfo,
 };
