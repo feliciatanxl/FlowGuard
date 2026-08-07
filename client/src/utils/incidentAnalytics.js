@@ -119,3 +119,33 @@ export const computeResolutionFunnel = (incidents) => ({
   })),
   falsePositiveCount: incidents.filter((i) => i.resolutionStatus === 'False Positive').length,
 });
+
+// Capitalises the first letter of every word, lowercasing the rest — used
+// wherever a detection type (built-in or user-typed) needs to match the same
+// Title Case convention as this page's static dropdown option labels.
+export const toTitleCase = (str) =>
+  (str || '').toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+
+// Formats a detection-type (incident.status) value for display: underscores ->
+// spaces, Title Case. Built-in values (UNAUTHORIZED_ACCESS, etc.) render as
+// "Unauthorized Access"; free-text custom types FM staff type in (e.g.
+// "water leakage") get normalised to the same convention regardless of the
+// case they were typed/stored in.
+export const formatDetectionType = (status) =>
+  toTitleCase((status || '').replace(/_/g, ' '));
+
+// Item 5 — incident counts grouped by detection type, covering both the fixed
+// built-in categories and any custom types FM staff have logged. Sorted by
+// count descending; every distinct type present is shown — the type space is
+// small enough that folding a tail into "Other" would just hide real data.
+export const computeDetectionTypeBreakdown = (incidents) => {
+  const counts = new Map();
+  for (const incident of incidents) {
+    const label = formatDetectionType(incident.status);
+    if (!label) continue;
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([type, count]) => ({ type, count }))
+    .sort((a, b) => b.count - a.count || a.type.localeCompare(b.type));
+};

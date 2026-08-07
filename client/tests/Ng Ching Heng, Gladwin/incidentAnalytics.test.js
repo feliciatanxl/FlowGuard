@@ -4,10 +4,12 @@
 import { describe, test, expect } from 'vitest';
 import {
   formatDuration,
+  formatDetectionType,
   computeMTTR,
   computeAIAccuracy,
   computeConfidenceBuckets,
   computeResolutionFunnel,
+  computeDetectionTypeBreakdown,
 } from '../../src/utils/incidentAnalytics';
 
 const NOW = new Date(2026, 7, 3, 12, 0, 0); // 3 Aug 2026, noon local
@@ -152,5 +154,59 @@ describe('computeResolutionFunnel', () => {
       { stage: 'Cleared', count: 1 },
     ]);
     expect(result.falsePositiveCount).toBe(1);
+  });
+});
+
+describe('formatDetectionType', () => {
+  test('turns underscores into spaces and title-cases built-in types', () => {
+    expect(formatDetectionType('UNAUTHORIZED_ACCESS')).toBe('Unauthorized Access');
+  });
+
+  test('title-cases a free-text custom type regardless of the case it was typed in', () => {
+    expect(formatDetectionType('Water Leakage')).toBe('Water Leakage');
+    expect(formatDetectionType('water leakage')).toBe('Water Leakage');
+    expect(formatDetectionType('WATER LEAKAGE')).toBe('Water Leakage');
+  });
+
+  test('handles null/empty without throwing', () => {
+    expect(formatDetectionType(null)).toBe('');
+    expect(formatDetectionType(undefined)).toBe('');
+    expect(formatDetectionType('')).toBe('');
+  });
+});
+
+describe('computeDetectionTypeBreakdown', () => {
+  test('groups by formatted type, sorted by count descending', () => {
+    const incidents = [
+      incident({ status: 'UNAUTHORIZED_ACCESS' }),
+      incident({ status: 'UNAUTHORIZED_ACCESS' }),
+      incident({ status: 'TAILGATING' }),
+      incident({ status: 'Water Leakage' }), // custom type
+    ];
+    const result = computeDetectionTypeBreakdown(incidents);
+    expect(result).toEqual([
+      { type: 'Unauthorized Access', count: 2 },
+      { type: 'Tailgating', count: 1 },
+      { type: 'Water Leakage', count: 1 },
+    ]);
+  });
+
+  test('custom types with different casing collapse into the same bucket', () => {
+    const incidents = [
+      incident({ status: 'Water Leakage' }),
+      incident({ status: 'water leakage' }),
+      incident({ status: 'WATER LEAKAGE' }),
+    ];
+    const result = computeDetectionTypeBreakdown(incidents);
+    expect(result).toEqual([{ type: 'Water Leakage', count: 3 }]);
+  });
+
+  test('incidents with no status are skipped, not counted as an empty-string type', () => {
+    const incidents = [incident({ status: '' }), incident({ status: null }), incident({ status: 'TAILGATING' })];
+    expect(computeDetectionTypeBreakdown(incidents)).toEqual([{ type: 'Tailgating', count: 1 }]);
+  });
+
+  test('empty incident list returns an empty breakdown', () => {
+    expect(computeDetectionTypeBreakdown([])).toEqual([]);
   });
 });
