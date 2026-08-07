@@ -134,8 +134,15 @@ const distanceLabel = (value) => {
 };
 
 const identityLabel = (alert) => {
-  const rawStatus = alert?.identity_status || alert?.identityStatus || '';
-  const name = alert?.person_name || alert?.personName;
+  const rawStatus = alert?.identity_status
+    || alert?.identityStatus
+    || alert?.sensor_metadata?.identity_status
+    || alert?.sensorMetadata?.identity_status
+    || '';
+  const name = alert?.person_name
+    || alert?.personName
+    || alert?.sensor_metadata?.person_name
+    || alert?.sensorMetadata?.person_name;
   if (name && String(name).trim().toUpperCase() !== 'UNKNOWN') {
     return rawStatus ? `${name} (${rawStatus})` : name;
   }
@@ -147,6 +154,10 @@ const identityLabel = (alert) => {
 const classificationLabel = (alert) => (
   alert?.classification
   || alert?.security_classification
+  || alert?.identity_status
+  || alert?.identityStatus
+  || alert?.sensor_metadata?.identity_status
+  || alert?.sensorMetadata?.identity_status
   || alert?.alert_type
   || 'Awaiting edge classification'
 );
@@ -796,8 +807,8 @@ const SecurityCamera = () => {
     ?? displayedSensorMetadata?.night_inspection
     ?? (isRestrictedMotionAlert && displayedSensorMetadata ? true : undefined);
   const facialIdentity = displayedAlert ? identityLabel(displayedAlert) : 'Awaiting facial recognition';
-  const facialRole = displayedAlert?.person_role || displayedAlert?.personRole || 'No role supplied';
-  const trackId = displayedAlert?.track_id || displayedAlert?.trackId || 'Awaiting edge metadata';
+  const facialRole = displayedAlert?.person_role || displayedAlert?.personRole || alertSensorMetadata?.person_role || alertSensorMetadata?.personRole || 'No role supplied';
+  const trackId = displayedAlert?.track_id || displayedAlert?.trackId || alertSensorMetadata?.track_id || alertSensorMetadata?.trackId || 'Awaiting edge metadata';
 
   return (
     <div className="dashboard-layout">

@@ -28,17 +28,21 @@ function severityFromDuration(seconds) {
 // Type-aware default severity, applied ONLY when the edge device did not send an
 // explicit severity. Keeps unattended-object behaviour identical to before
 // (duration-based) while giving the new alert families sensible floors:
-//   Pest / Restricted-Zone Motion -> High
+//   Pest / Restricted-Zone Motion -> High (or Critical if suspicious/suspended/unknown)
 //   Forgotten Belonging           -> Medium, escalating to High past 5 min
 //   Item Picked Up / Set Down     -> Medium
-// Pest is High by default (NOT Critical — a generic rodent sighting is not an
-// emergency); Critical is reserved for an explicitly-configured/escalated event.
-function defaultSeverityForType(alertType, durationSeconds) {
+function defaultSeverityForType(alertType, durationSeconds, identityStatus, personName) {
     const key = String(alertType || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+    const upperStatus = String(identityStatus || '').trim().toUpperCase();
+    const upperPerson = String(personName || '').trim().toUpperCase();
     switch (key) {
         case 'PEST_DETECTION':
+            return 'High';
         case 'RESTRICTED_MOTION':
         case 'RESTRICTED_ZONE_MOTION':
+            if (upperStatus === 'SUSPICIOUS' || upperStatus === 'SUSPENDED' || upperPerson === 'UNKNOWN PERSON' || upperPerson === 'UNKNOWN') {
+                return 'Critical';
+            }
             return 'High';
         case 'FORGOTTEN_BELONGING':
             return (durationSeconds && durationSeconds >= 300) ? 'High' : 'Medium';
@@ -320,6 +324,8 @@ router.post('/detection-alerts', verifyEdgeIngestToken, handleSnapshotUpload, as
             object_class,
             duration_seconds,
             person_name,
+            identity_status,
+            person_role,
             alert_type,
             severity,
             confidence,
@@ -363,13 +369,19 @@ router.post('/detection-alerts', verifyEdgeIngestToken, handleSnapshotUpload, as
         const cleanedObjectClass = cleanText(object_class, 100) || 'package-like object';
         const cleanedDevice = cleanText(device_id, 100);
         const cleanedPerson = cleanText(person_name, 255);
-        const resolvedSeverity = severity || defaultSeverityForType(cleanedAlertType, parsedDuration);
-
-        // track_id and sensor_metadata are accepted and surfaced in the notification /
-        // server log, but (by design) NOT persisted as detection_alerts columns — they
-        // ride inside the event_id and the message rather than expanding the shared schema.
+        const cleanedIdentityStatus = cleanText(identity_status, 50);
+        const cleanedPersonRole = cleanText(person_role, 100);
         const parsedTrackId = parsePositiveInt(track_id);
-        const safeSensorMeta = (sensor_metadata && typeof sensor_metadata === 'object') ? sensor_metadata : null;
+
+        const resolvedSeverity = severity || defaultSeverityForType(cleanedAlertType, parsedDuration, cleanedIdentityStatus, cleanedPerson);
+
+        // Build safeSensorMeta, ensuring identity fields and track_id ride inside sensor_metadata JSONB column if provided.
+        const baseSensorMeta = (sensor_metadata && typeof sensor_metadata === 'object') ? { ...sensor_metadata } : {};
+        if (cleanedIdentityStatus && !baseSensorMeta.identity_status) baseSensorMeta.identity_status = cleanedIdentityStatus;
+        if (cleanedPersonRole && !baseSensorMeta.person_role) baseSensorMeta.person_role = cleanedPersonRole;
+        if (parsedTrackId !== null && baseSensorMeta.track_id === undefined) baseSensorMeta.track_id = parsedTrackId;
+        if (cleanedPerson && !baseSensorMeta.person_name) baseSensorMeta.person_name = cleanedPerson;
+        const safeSensorMeta = Object.keys(baseSensorMeta).length > 0 ? baseSensorMeta : null;
 
         // The normalized object the pure message builder consumes. Snapshot url and local
         // path are passed SEPARATELY so a local edge path is never rendered as a link.
@@ -385,6 +397,10 @@ router.post('/detection-alerts', verifyEdgeIngestToken, handleSnapshotUpload, as
             confidence: parsedConfidence,
             device_id: cleanedDevice,
             person_name: cleanedPerson,
+            identity_status: cleanedIdentityStatus,
+            person_role: cleanedPersonRole,
+            track_id: parsedTrackId,
+            sensor_metadata: safeSensorMeta,
             snapshot_url: null,
             snapshot_path: snapshot_path || null,
         };

@@ -346,6 +346,8 @@ function buildDetectionAlertMessage(alert = {}, options = {}) {
     confidence,
     device_id,
     person_name,
+    identity_status,
+    person_role,
     snapshot_url,
     snapshot_path,
   } = alert;
@@ -358,9 +360,16 @@ function buildDetectionAlertMessage(alert = {}, options = {}) {
   if (zone_name) lines.push(`Location: ${zone_name}`);
   if (camera_location) lines.push(`Camera: ${camera_location}`);
 
-  // Only show a person line when it identifies someone real (never "UNKNOWN").
+  // Only show a person line when it identifies someone real (never plain "UNKNOWN").
+  const rawStatus = identity_status || alert.sensor_metadata?.identity_status;
   if (person_name && String(person_name).trim().toUpperCase() !== 'UNKNOWN') {
-    lines.push(`Person: ${person_name}`);
+    if (rawStatus && rawStatus !== 'VERIFIED') {
+      lines.push(`Person: ${person_name} (${rawStatus})`);
+    } else {
+      lines.push(`Person: ${person_name}`);
+    }
+  } else if (rawStatus === 'UNAVAILABLE') {
+    lines.push(`Identity: UNAVAILABLE`);
   }
 
   if (duration_seconds !== undefined && duration_seconds !== null && duration_seconds !== '') {

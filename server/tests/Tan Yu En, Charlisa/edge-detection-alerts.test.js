@@ -377,6 +377,98 @@ describe("POST /api/edge/detection-alerts", () => {
     expect(mockIncidentLog.create.mock.calls[0][0].source).toBe("SecurePi Edge Node");
   });
 
+  test("accepts VERIFIED person identity alert and defaults restricted motion to High severity", async () => {
+    primeCreateMocks();
+    const res = await request(app)
+      .post("/api/edge/detection-alerts")
+      .set("Authorization", "Bearer test-edge-token")
+      .send({
+        ...securePiPayload,
+        alert_type: "Restricted-Zone Motion",
+        object_class: "person",
+        person_name: "Felicia",
+        identity_status: "VERIFIED",
+        person_role: "Staff",
+        track_id: 3,
+        severity: undefined,
+      });
+    expect(res.status).toBe(201);
+    const createdAlert = mockDetectionAlert.create.mock.calls[0][0];
+    expect(createdAlert.person_name).toBe("Felicia");
+    expect(createdAlert.severity).toBe("High");
+    expect(createdAlert.sensor_metadata).toEqual(expect.objectContaining({
+      identity_status: "VERIFIED",
+      person_role: "Staff",
+      track_id: 3,
+      person_name: "Felicia",
+    }));
+  });
+
+  test("accepts SUSPICIOUS unknown person alert and defaults restricted motion to Critical severity", async () => {
+    primeCreateMocks();
+    const res = await request(app)
+      .post("/api/edge/detection-alerts")
+      .set("Authorization", "Bearer test-edge-token")
+      .send({
+        ...securePiPayload,
+        alert_type: "Restricted-Zone Motion",
+        object_class: "person",
+        person_name: "Unknown Person",
+        identity_status: "SUSPICIOUS",
+        track_id: 7,
+        severity: undefined,
+      });
+    expect(res.status).toBe(201);
+    const createdAlert = mockDetectionAlert.create.mock.calls[0][0];
+    expect(createdAlert.person_name).toBe("Unknown Person");
+    expect(createdAlert.severity).toBe("Critical");
+    expect(createdAlert.sensor_metadata.identity_status).toBe("SUSPICIOUS");
+  });
+
+  test("accepts SUSPENDED identity alert and sets Critical severity", async () => {
+    primeCreateMocks();
+    const res = await request(app)
+      .post("/api/edge/detection-alerts")
+      .set("Authorization", "Bearer test-edge-token")
+      .send({
+        ...securePiPayload,
+        alert_type: "Restricted-Zone Motion",
+        object_class: "person",
+        person_name: "John Doe",
+        identity_status: "SUSPENDED",
+        person_role: "Driver",
+        track_id: 12,
+        severity: undefined,
+      });
+    expect(res.status).toBe(201);
+    const createdAlert = mockDetectionAlert.create.mock.calls[0][0];
+    expect(createdAlert.person_name).toBe("John Doe");
+    expect(createdAlert.severity).toBe("Critical");
+    expect(createdAlert.sensor_metadata.identity_status).toBe("SUSPENDED");
+  });
+
+  test("accepts UNAVAILABLE identity alert and preserves null person_name (never converted to UNKNOWN)", async () => {
+    primeCreateMocks();
+    const res = await request(app)
+      .post("/api/edge/detection-alerts")
+      .set("Authorization", "Bearer test-edge-token")
+      .send({
+        ...securePiPayload,
+        alert_type: "Restricted-Zone Motion",
+        object_class: "person",
+        person_name: null,
+        identity_status: "UNAVAILABLE",
+        track_id: 2,
+        severity: undefined,
+      });
+    expect(res.status).toBe(201);
+    const createdAlert = mockDetectionAlert.create.mock.calls[0][0];
+    expect(createdAlert.person_name).toBeNull();
+    expect(createdAlert.severity).toBe("High");
+    expect(createdAlert.sensor_metadata.identity_status).toBe("UNAVAILABLE");
+    expect(mockIncidentLog.create.mock.calls[0][0].person_name).toBeNull();
+  });
+
   test("rejects invalid severity (400)", async () => {
     const res = await request(app)
       .post("/api/edge/detection-alerts")
