@@ -178,7 +178,7 @@ router.patch('/:id/status', verifyToken, requireRole('FM'), async (req, res) => 
             // Notify the leaving driver, then alert the next waiting booking for the same bay.
             whatsappResult = await safeBookingWhatsapp('booking-completed', whatsapp.sendBookingCompleted, booking);
             const next = await Booking.findOne({
-                where: { loading_bay: booking.loading_bay, status: { [Op.in]: ['Pending', 'Confirmed'] } },
+                where: { loading_bay: booking.loading_bay, status: 'Confirmed', booking_ref: { [Op.ne]: booking.booking_ref } },
                 order: [['slot_start', 'ASC'], ['createdAt', 'ASC']]
             });
             if (next) {
@@ -377,7 +377,7 @@ router.patch('/:ref/gate-scan', verifyToken, requireRole('FM'), async (req, res)
             await booking.update({ status: 'Completed', completed_at: new Date() });
             whatsappStatus = await safeBookingWhatsapp('booking-completed', whatsapp.sendBookingCompleted, booking);
             const next = await Booking.findOne({
-                where: { loading_bay: booking.loading_bay, status: { [Op.in]: ['Pending', 'Confirmed'] } },
+                where: { loading_bay: booking.loading_bay, status: 'Confirmed', booking_ref: { [Op.ne]: booking.booking_ref } },
                 order: [['slot_start', 'ASC'], ['createdAt', 'ASC']]
             });
             if (next) {

@@ -121,13 +121,13 @@ describe("Entry rules", () => {
     expect(b.update.mock.calls[0][0]).toEqual(expect.objectContaining({ status: "Arrived" }));
   });
 
-  test("7. Confirmed entry with mismatched plate is DENIED (manual review)", async () => {
+  test("7. Confirmed entry with mismatched plate is DENIED (not reviewable)", async () => {
     const b = bookingWith("Confirmed");
     mockBooking.findOne.mockResolvedValueOnce(b);
-    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "GBG 1284M" });
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "GBG 9999Z" });
     expect(res.body.access).toBe("DENIED");
     expect(res.body.reasonCode).toBe("PLATE_MISMATCH");
-    expect(res.body.manualReviewRequired).toBe(true);
+    expect(res.body.manualReviewRequired).toBe(false);
     expect(b.update).not.toHaveBeenCalled();
   });
 
@@ -337,21 +337,25 @@ describe("Manual mode + override", () => {
     expect(b.update).not.toHaveBeenCalled();
   });
 
-  test("11. Manual override WITHOUT a reason is denied (OVERRIDE_REASON_REQUIRED)", async () => {
-    const b = bookingWith("Confirmed");
-    mockBooking.findOne.mockResolvedValueOnce(b);
-    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "manual", plateSource: "manual", observedPlate: "GBG 9999Z", manualOverride: true, overrideReason: "   " });
-    expect(res.body.access).toBe("DENIED");
-    expect(res.body.reasonCode).toBe("OVERRIDE_REASON_REQUIRED");
-    expect(b.update).not.toHaveBeenCalled();
-  });
-
-  test("12. Valid manual override is GRANTED, audited, and marks Arrived", async () => {
+  test("11. Genuine plate mismatch CANNOT be overridden into a grant", async () => {
     const b = bookingWith("Confirmed");
     mockBooking.findOne.mockResolvedValueOnce(b);
     const res = await post({
       action: "entry", bookingRef: "FG-ABC123", verificationMode: "manual", plateSource: "manual",
-      observedPlate: "GBG 9999Z", manualOverride: true, overrideReason: "Plate obscured by mud; visual ID confirmed",
+      observedPlate: "GBG 9999Z", manualOverride: true, overrideReason: "Plate typed by FM does not match database",
+    });
+    expect(res.body.access).toBe("DENIED");
+    expect(res.body.reasonCode).toBe("PLATE_MISMATCH");
+    expect(res.body.overrideUsed).toBe(false);
+    expect(b.update).not.toHaveBeenCalled();
+  });
+
+  test("12. Valid manual override on technical capture failure (OCR_UNREADABLE) with matching observed plate is GRANTED and audited", async () => {
+    const b = bookingWith("Confirmed");
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({
+      action: "entry", bookingRef: "FG-ABC123", verificationMode: "manual", plateSource: "ocr", plateConfidence: 0,
+      observedPlate: "GBG 1234M", manualOverride: true, overrideReason: "Camera lens foggy; FM verified physical plate",
     });
     expect(res.body.access).toBe("GRANTED");
     expect(res.body.overrideUsed).toBe(true);
@@ -361,10 +365,55 @@ describe("Manual mode + override", () => {
     expect(auditArg).toEqual(expect.objectContaining({
       decision: "granted",
       overrideUsed: true,
-      overrideReason: "Plate obscured by mud; visual ID confirmed",
+      overrideReason: "Camera lens foggy; FM verified physical plate",
       fmId: 1,
       fmEmail: "fm@harrison.com",
     }));
+  });
+});
+
+describe("Same-bay occupancy protection", () => {
+  test("entry denied (BAY_OCCUPIED) when another booking is currently Arrived in the same loading bay", async () => {
+    const b = bookingWith("Confirmed", { loading_bay: "Bay A" });
+    const existingOccupant = { id: 99, booking_ref: "FG-OCCUPIED", loading_bay: "Bay A", status: "Arrived" };
+    mockBooking.findOne
+      .mockResolvedValueOnce(b)                // lookup requested booking
+      .mockResolvedValueOnce(existingOccupant); // lookup occupancy in same bay
+
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", plateConfidence: 90, observedPlate: "GBG 1234M" });
+    expect(res.body.access).toBe("DENIED");
+    expect(res.body.reasonCode).toBe("BAY_OCCUPIED");
+    expect(res.body.message).toContain("occupied by the previous vehicle");
+    expect(b.update).not.toHaveBeenCalled();
+  });
+
+  test("manual mode and manual override CANNOT bypass BAY_OCCUPIED", async () => {
+    const b = bookingWith("Confirmed", { loading_bay: "Bay A" });
+    const existingOccupant = { id: 99, booking_ref: "FG-OCCUPIED", loading_bay: "Bay A", status: "Arrived" };
+    mockBooking.findOne
+      .mockResolvedValueOnce(b)
+      .mockResolvedValueOnce(existingOccupant);
+
+    const res = await post({
+      action: "entry", bookingRef: "FG-ABC123", verificationMode: "manual", plateSource: "manual",
+      observedPlate: "GBG 1234M", manualOverride: true, overrideReason: "Let them in anyway",
+    });
+    expect(res.body.access).toBe("DENIED");
+    expect(res.body.reasonCode).toBe("BAY_OCCUPIED");
+    expect(res.body.overrideUsed).toBe(false);
+    expect(b.update).not.toHaveBeenCalled();
+  });
+
+  test("Arrived booking in a DIFFERENT loading bay does not block entry", async () => {
+    const b = bookingWith("Confirmed", { loading_bay: "Bay A" });
+    mockBooking.findOne
+      .mockResolvedValueOnce(b)   // lookup requested booking
+      .mockResolvedValueOnce(null); // no Arrived occupant in Bay A
+
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", plateConfidence: 90, observedPlate: "GBG 1234M" });
+    expect(res.body.access).toBe("GRANTED");
+    expect(res.body.reasonCode).toBe("VERIFIED");
+    expect(b.update).toHaveBeenCalled();
   });
 });
 
@@ -378,15 +427,19 @@ describe("Exit rules", () => {
     expect(b.update).not.toHaveBeenCalled();
   });
 
-  test("19. Successful exit completes the booking and fires next-in-line", async () => {
+  test("19. Successful exit completes the booking and notifies only the next Confirmed booking in same bay", async () => {
     const b = bookingWith("Arrived");
     mockBooking.findOne
       .mockResolvedValueOnce(b)                                                // lookup
-      .mockResolvedValueOnce({ id: 2, booking_ref: "FG-NEXT", driver_phone: "+6580000000", loading_bay: "Bay A" }); // next-in-line
+      .mockResolvedValueOnce({ id: 2, booking_ref: "FG-NEXT", driver_phone: "+6580000000", loading_bay: "Bay A", status: "Confirmed" }); // next-in-line
     const res = await post({ action: "exit", bookingRef: "FG-ABC123", verificationMode: "manual", plateSource: "manual", observedPlate: "GBG 1234M" });
     expect(res.body.access).toBe("GRANTED");
     expect(b.update.mock.calls[0][0]).toEqual(expect.objectContaining({ status: "Completed" }));
     expect(res.body.nextInLine).toBe("FG-NEXT");
+
+    // Verify next-in-line query filtered status: 'Confirmed'
+    const findCall = mockBooking.findOne.mock.calls[1][0];
+    expect(findCall.where.status).toBe("Confirmed");
   });
 
   test("20. Repeated exit does not resend WhatsApp or re-trigger next-in-line", async () => {

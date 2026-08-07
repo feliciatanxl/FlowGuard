@@ -1,7 +1,7 @@
 // Frontend unit test — shared Singapore-plate normalisation (browser copy).
 import { describe, test, expect } from "vitest";
 import {
-  normalizePlate, platesMatch, isPlausiblePlate, repairPlateCandidate, extractPlateCandidate,
+  normalizePlate, platesMatch, isPlausiblePlate, repairPlateCandidate, extractPlateCandidate, extractPlateCandidatesInfo,
 } from "../../src/utils/plate";
 import { isValidBookingRef, normalizeBookingRef } from "../../src/utils/gateCamera";
 
@@ -71,6 +71,18 @@ describe("extractPlateCandidate (client)", () => {
   });
   test("9. an already-valid plate is returned exactly, never re-substituted", () => {
     expect(extractPlateCandidate("SBA5678Z")).toBe("SBA5678Z");
+  });
+  test("10. BSKLS081A returns empty candidate string because it produces multiple distinct plausible candidates", () => {
+    const info = extractPlateCandidatesInfo("BSKLS081A");
+    expect(info.isAmbiguous).toBe(true);
+    expect(info.candidate).toBe("");
+    expect(info.candidates.length).toBeGreaterThan(1);
+    expect(extractPlateCandidate("BSKLS081A")).toBe("");
+  });
+  test("11. SBA56787 returns unique repaired candidate SBA5678Z without ambiguity", () => {
+    const info = extractPlateCandidatesInfo("SBA56787");
+    expect(info.isAmbiguous).toBe(false);
+    expect(info.candidate).toBe("SBA5678Z");
   });
 });
 

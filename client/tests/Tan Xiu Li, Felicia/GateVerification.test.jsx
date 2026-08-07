@@ -184,32 +184,39 @@ describe("Decision states", () => {
     expect(screen.getByText(/Proceed to Bay A/i)).toBeTruthy();
   });
 
-  test("10. a mismatch shows DENIED + manual-review with an override box", async () => {
+  test("10. a mismatch shows DENIED without an override box", async () => {
     await gotoManualAndVerify({
       access: "DENIED", reasonCode: "PLATE_MISMATCH", plateMatched: false,
-      expectedPlate: "GBG1234M", observedPlate: "GBG9999Z", manualReviewRequired: true,
+      expectedPlate: "GBG1234M", observedPlate: "GBG9999Z", manualReviewRequired: false,
       booking: { booking_ref: "FG-ABC123", loading_bay: "Bay A", status: "Confirmed" },
     }, { plate: "GBG 9999Z" });
     expect(await screen.findByText("ACCESS DENIED")).toBeTruthy();
-    expect(screen.getByText(/Manual verification required/i)).toBeTruthy();
-    expect(screen.getByLabelText("Override reason")).toBeTruthy();
+    expect(screen.queryByText(/Manual verification required/i)).toBeNull();
+    expect(screen.queryByLabelText("Override reason")).toBeNull();
   });
 
-  test("10b. OCR_UNREADABLE shows the rescan warning state, not a mismatch", async () => {
+  test("10b. OCR_UNREADABLE shows the rescan warning state, with manual review offered", async () => {
     await gotoManualAndVerify({
       access: "DENIED", reasonCode: "OCR_UNREADABLE", plateMatched: null,
       expectedPlate: "SKL9081A", observedPlate: null, manualReviewRequired: true,
       booking: { booking_ref: "FG-ABC123", loading_bay: "Bay A", status: "Confirmed" },
     }, { plate: "GBG 1234M" });
-    // Warning header, not "ACCESS DENIED / Mismatch".
     expect(await screen.findByText(/UNREADABLE — RESCAN REQUIRED/i)).toBeTruthy();
-    // The plate-check indicator is never the "✕ Mismatch" chip.
     expect(screen.queryByText("✕ Mismatch")).toBeNull();
-    // Plate check is "—" (no detected plate is claimed to differ).
     expect(screen.getByText(/No valid vehicle plate could be read/i)).toBeTruthy();
-    // Barrier stays closed with a manual-review path offered.
     expect(screen.getByText(/Manual verification required/i)).toBeTruthy();
     expect(screen.getByLabelText("Override reason")).toBeTruthy();
+  });
+
+  test("10c. BAY_OCCUPIED shows DENIED with bay occupied message and no override box", async () => {
+    await gotoManualAndVerify({
+      access: "DENIED", reasonCode: "BAY_OCCUPIED", plateMatched: true,
+      expectedPlate: "GBG1234M", observedPlate: "GBG1234M", manualReviewRequired: false,
+      booking: { booking_ref: "FG-ABC123", loading_bay: "Bay A", status: "Confirmed" },
+    });
+    expect(await screen.findByText("ACCESS DENIED")).toBeTruthy();
+    expect(screen.getByText(/occupied by the previous vehicle/i)).toBeTruthy();
+    expect(screen.queryByLabelText("Override reason")).toBeNull();
   });
 
   test("13. server reason codes drive the displayed copy (TOO_EARLY)", async () => {
@@ -239,18 +246,18 @@ describe("Manual mode + override", () => {
     }));
   });
 
-  test("12. override requires a reason before it re-submits", async () => {
+  test("12. override requires a reason before it re-submits for reviewable capture failure (OCR_UNREADABLE)", async () => {
     h.post.mockResolvedValueOnce({ data: {
-      access: "DENIED", reasonCode: "PLATE_MISMATCH", plateMatched: false,
-      expectedPlate: "GBG1234M", observedPlate: "GBG9999Z", manualReviewRequired: true,
+      access: "DENIED", reasonCode: "OCR_UNREADABLE", plateMatched: null,
+      expectedPlate: "GBG1234M", observedPlate: null, manualReviewRequired: true,
       booking: { booking_ref: "FG-ABC123", loading_bay: "Bay A", status: "Confirmed" },
     } });
     renderPage();
     fireEvent.click(screen.getByRole("tab", { name: /Manual Verification/i }));
     fireEvent.change(screen.getByLabelText("Booking reference"), { target: { value: "FG-ABC123" } });
-    fireEvent.change(screen.getByLabelText("Observed vehicle plate"), { target: { value: "GBG 9999Z" } });
+    fireEvent.change(screen.getByLabelText("Observed vehicle plate"), { target: { value: "GBG 1234M" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Verify Entry/i })); });
-    await screen.findByText("ACCESS DENIED");
+    await screen.findByText(/UNREADABLE — RESCAN REQUIRED/i);
     expect(h.post).toHaveBeenCalledTimes(1);
 
     // Empty reason → blocked, no second request.
@@ -260,17 +267,17 @@ describe("Manual mode + override", () => {
 
     // With a reason → re-submits with the override flag.
     h.post.mockResolvedValueOnce({ data: {
-      access: "GRANTED", reasonCode: "VERIFIED", overrideUsed: true, plateMatched: false,
-      expectedPlate: "GBG1234M", observedPlate: "GBG9999Z", manualReviewRequired: false,
+      access: "GRANTED", reasonCode: "VERIFIED", overrideUsed: true, plateMatched: true,
+      expectedPlate: "GBG1234M", observedPlate: "GBG1234M", manualReviewRequired: false,
       booking: { booking_ref: "FG-ABC123", loading_bay: "Bay A", status: "Arrived" },
     } });
-    fireEvent.change(screen.getByLabelText("Override reason"), { target: { value: "Plate obscured by mud; visual ID confirmed" } });
+    fireEvent.change(screen.getByLabelText("Override reason"), { target: { value: "Camera lens foggy; visual ID confirmed" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Authorise Manual Override/i })); });
 
     expect(h.post).toHaveBeenCalledTimes(2);
     const lastPayload = h.post.mock.calls[1][1];
     expect(lastPayload).toEqual(expect.objectContaining({
-      manualOverride: true, overrideReason: "Plate obscured by mud; visual ID confirmed", verificationMode: "manual",
+      manualOverride: true, overrideReason: "Camera lens foggy; visual ID confirmed", verificationMode: "manual",
     }));
     expect(await screen.findByText("ACCESS GRANTED — MANUAL OVERRIDE")).toBeTruthy();
   });

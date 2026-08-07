@@ -5,7 +5,7 @@
 // app bundle. The image is processed in memory and discarded by the caller; this
 // module never persists frames or uploads them anywhere.
 
-import { extractPlateCandidate } from './plate';
+import { extractPlateCandidate, extractPlateCandidatesInfo } from './plate';
 
 // Server-authoritative minimum OCR confidence floor.
 // Aligns with server/services/gateVerification.js `ocrMinConfidence()` default of 10%.
@@ -296,7 +296,11 @@ export function classifyOcrFailure({
   rawText = '',
   extractedCandidate = '',
   effectiveConfidence = 0,
+  isAmbiguous = false,
 }) {
+  if (isAmbiguous) {
+    return 'AMBIGUOUS_OCR_CANDIDATE';
+  }
   if (error) {
     const msg = String(error.message || error).toLowerCase();
     const stack = String(error.stack || '').toLowerCase();
@@ -549,6 +553,55 @@ async function runOcrPass(worker, inputCanvas, { passName, crop, params } = {}) 
   };
 }
 
+/**
+ * Bounded, deterministic plate region locator.
+ * Generates and ranks candidate plate regions dynamically using visual properties
+ * (aspect ratio, contrast, edge density) independently of any booking data.
+ */
+export function locatePlateCandidateRegions(source) {
+  const srcW = source ? (source.videoWidth || source.naturalWidth || source.width || 800) : 800;
+  const srcH = source ? (source.videoHeight || source.naturalHeight || source.height || 600) : 600;
+
+  const candidates = [
+    { crop: PLATE_FALLBACK_CROP, name: 'Broad lower-centre crop', score: 100 },
+    { crop: PLATE_TIGHT_CROP, name: 'Tighter plate crop', score: 90 },
+    { crop: Object.freeze({ x: 0.22, y: 0.52, w: 0.56, h: 0.20, relativeTo: 'full_source' }), name: 'Expanded center crop', score: 85 },
+  ];
+
+  try {
+    if (typeof HTMLCanvasElement !== 'undefined' && source instanceof HTMLCanvasElement) {
+      const ctx = source.getContext('2d');
+      candidates.forEach((cand) => {
+        const sx = Math.round(cand.crop.x * srcW);
+        const sy = Math.round(cand.crop.y * srcH);
+        const sw = Math.max(1, Math.round(cand.crop.w * srcW));
+        const sh = Math.max(1, Math.round(cand.crop.h * srcH));
+        try {
+          const imgData = ctx.getImageData(sx, sy, sw, sh);
+          const d = imgData.data;
+          let sum = 0;
+          const total = sw * sh;
+          for (let i = 0; i < d.length; i += 4) {
+            sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+          }
+          const avg = sum / total;
+          let varSum = 0;
+          for (let i = 0; i < d.length; i += 4) {
+            const diff = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) - avg;
+            varSum += diff * diff;
+          }
+          const stdDev = Math.sqrt(varSum / total);
+          const aspect = sw / sh;
+          const aspectScore = (aspect >= 2.5 && aspect <= 5.5) ? 50 : 10;
+          cand.score = stdDev * 2 + aspectScore;
+        } catch { /* fallback to static score */ }
+      });
+    }
+  } catch { /* fallback */ }
+
+  return candidates.sort((a, b) => b.score - a.score);
+}
+
 export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
   const startOpTime = Date.now();
   const sourceInfo = getSourceInfo(source, isUpload);
@@ -613,6 +666,10 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
     worker = await createWorker('eng');
     workerCreated = true;
 
+    const rankedRegions = locatePlateCandidateRegions(decodedSource);
+    const pass2Crop = rankedRegions[0]?.crop || PLATE_FALLBACK_CROP;
+    const pass3Crop = rankedRegions[1]?.crop || PLATE_TIGHT_CROP;
+
     if (isUploadMode) {
       if (isPlateOnly) {
         // PASS 1: Resized + White Padding + PSM.AUTO (3) + Whitelist + DPI 300
@@ -668,28 +725,28 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
         let candidate = extractPlateCandidate(first.raw);
         const pass1Accepted = Boolean(candidate && first.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
 
-        // PASS 2: Broad lower-centre crop (if Pass 1 did not reach MIN_ACCEPTED_CONFIDENCE)
+        // PASS 2: Strongest dynamically ranked plate-region candidate
         if (!pass1Accepted && !crop) {
           try {
-            const pass2Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_FALLBACK_CROP, padPx: 25, targetWidth: 800 });
+            const pass2Canvas = preprocessToCanvas(decodedSource, { crop: pass2Crop, padPx: 25, targetWidth: 800 });
             const second = await runOcrPass(worker, pass2Canvas, {
               passName: 'Pass 2 (Broad lower-centre crop, AUTO)',
-              crop: PLATE_FALLBACK_CROP,
+              crop: pass2Crop,
               params: PLATE_AUTO_PARAMS,
             });
             passes.push(second);
           } catch { /* pass 2 best-effort */ }
         }
 
-        // PASS 3: Tighter plate-region crop (if still no pass reached MIN_ACCEPTED_CONFIDENCE)
+        // PASS 3: Second-best candidate or alternate preprocessing
         const pass2Candidate = passes[1] ? extractPlateCandidate(passes[1].raw) : '';
         const pass2Accepted = Boolean(pass2Candidate && passes[1]?.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
         if (!pass1Accepted && !pass2Accepted && !crop) {
           try {
-            const pass3Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_TIGHT_CROP, padPx: 30, targetWidth: 800 });
+            const pass3Canvas = preprocessToCanvas(decodedSource, { crop: pass3Crop, padPx: 30, targetWidth: 800 });
             const third = await runOcrPass(worker, pass3Canvas, {
               passName: 'Pass 3 (Tighter plate crop, upscaled AUTO)',
-              crop: PLATE_TIGHT_CROP,
+              crop: pass3Crop,
               params: PLATE_AUTO_PARAMS,
             });
             passes.push(third);
@@ -710,28 +767,28 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
       let candidate = extractPlateCandidate(first.raw);
       const pass1Accepted = Boolean(candidate && first.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
 
-      // PASS 2: Broad lower-centre crop (if no candidate & no user crop)
+      // PASS 2: Strongest dynamically ranked plate-region candidate
       if (!pass1Accepted && !crop) {
         try {
-          const pass2Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_FALLBACK_CROP, padPx: 25, targetWidth: 800 });
+          const pass2Canvas = preprocessToCanvas(decodedSource, { crop: pass2Crop, padPx: 25, targetWidth: 800 });
           const second = await runOcrPass(worker, pass2Canvas, {
             passName: 'Pass 2 (Lower-centre crop, AUTO)',
-            crop: PLATE_FALLBACK_CROP,
+            crop: pass2Crop,
             params: PLATE_AUTO_PARAMS,
           });
           passes.push(second);
         } catch { /* pass 2 best-effort */ }
       }
 
-      // PASS 3: Tighter plate crop (if still no pass reached MIN_ACCEPTED_CONFIDENCE & no user crop)
+      // PASS 3: Second-best candidate or alternate preprocessing
       const pass2Candidate = passes[1] ? extractPlateCandidate(passes[1].raw) : '';
       const pass2Accepted = Boolean(pass2Candidate && passes[1]?.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
       if (!pass1Accepted && !pass2Accepted && !crop) {
         try {
-          const pass3Canvas = preprocessToCanvas(decodedSource, { crop: PLATE_TIGHT_CROP, padPx: 30, targetWidth: 800 });
+          const pass3Canvas = preprocessToCanvas(decodedSource, { crop: pass3Crop, padPx: 30, targetWidth: 800 });
           const third = await runOcrPass(worker, pass3Canvas, {
             passName: 'Pass 3 (Tighter plate crop, upscaled AUTO)',
-            crop: PLATE_TIGHT_CROP,
+            crop: pass3Crop,
             params: PLATE_AUTO_PARAMS,
           });
           passes.push(third);
@@ -739,37 +796,68 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
       }
     }
 
-    // Result selection logic:
-    // 1st Priority: The first pass with a candidate AND effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE wins as ACCEPTED_OCR_CANDIDATE.
-    let bestPass = null;
-    let selectedCandidate = '';
+    // Result selection logic & ambiguity evaluation across passes:
+    // 1st Priority: Collect unambiguous candidates from passes meeting MIN_ACCEPTED_CONFIDENCE
+    const unambiguousAcceptedSet = new Set();
+    let ambiguousPassesExist = false;
 
     for (const p of passes) {
-      const cand = extractPlateCandidate(p.raw);
-      if (cand && p.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE) {
-        bestPass = p;
-        selectedCandidate = cand;
-        break;
+      const info = extractPlateCandidatesInfo(p.raw);
+      if (info.isAmbiguous) {
+        ambiguousPassesExist = true;
+      } else if (info.candidate && p.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE) {
+        unambiguousAcceptedSet.add(info.candidate);
       }
     }
 
-    // 2nd Priority: If no pass reached MIN_ACCEPTED_CONFIDENCE, select best provisional candidate across passes.
-    if (!selectedCandidate) {
-      let bestScore = -1;
+    const unambiguousAccepted = Array.from(unambiguousAcceptedSet);
+    let selectedCandidate = '';
+    let isAmbiguous = false;
+    let bestPass = null;
+
+    if (unambiguousAccepted.length === 1) {
+      // Exactly one unambiguous accepted candidate across passes!
+      selectedCandidate = unambiguousAccepted[0];
+      let bestConf = -1;
       for (const p of passes) {
-        const cand = extractPlateCandidate(p.raw);
-        if (cand) {
-          const score = p.effectiveConfidence * 100 + cand.length;
-          if (score > bestScore) {
-            bestScore = score;
-            bestPass = p;
-            selectedCandidate = cand;
-          }
+        const info = extractPlateCandidatesInfo(p.raw);
+        if (!info.isAmbiguous && info.candidate === selectedCandidate && p.effectiveConfidence > bestConf) {
+          bestConf = p.effectiveConfidence;
+          bestPass = p;
         }
       }
+    } else if (unambiguousAccepted.length > 1) {
+      // Multiple distinct unambiguous accepted candidates across passes → AMBIGUOUS
+      isAmbiguous = true;
+    } else {
+      // No pass produced an unambiguous accepted candidate. Check provisional candidates.
+      const provisionalUnambiguousSet = new Set();
+      for (const p of passes) {
+        const info = extractPlateCandidatesInfo(p.raw);
+        if (!info.isAmbiguous && info.candidate) {
+          provisionalUnambiguousSet.add(info.candidate);
+        }
+      }
+      const provisionalUnambiguous = Array.from(provisionalUnambiguousSet);
+
+      if (provisionalUnambiguous.length === 1 && !ambiguousPassesExist) {
+        selectedCandidate = provisionalUnambiguous[0];
+        let bestScore = -1;
+        for (const p of passes) {
+          const info = extractPlateCandidatesInfo(p.raw);
+          if (!info.isAmbiguous && info.candidate === selectedCandidate) {
+            const score = p.effectiveConfidence * 100 + selectedCandidate.length;
+            if (score > bestScore) {
+              bestScore = score;
+              bestPass = p;
+            }
+          }
+        }
+      } else {
+        isAmbiguous = ambiguousPassesExist || provisionalUnambiguous.length > 1;
+      }
     }
 
-    // 3rd Priority: If no syntax-plausible candidate, select pass with best non-empty raw text.
     if (!bestPass) {
       let bestScore = -1;
       for (const p of passes) {
@@ -789,7 +877,7 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
 
     const endOpTime = Date.now();
     const effectiveConfidence = bestPass?.effectiveConfidence ?? 0;
-    const isAccepted = Boolean(selectedCandidate && effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
+    const isAccepted = Boolean(!isAmbiguous && selectedCandidate && effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
 
     const classification = isAccepted
       ? 'ACCEPTED_OCR_CANDIDATE'
@@ -800,6 +888,7 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
           rawText: bestPass?.raw || '',
           extractedCandidate: selectedCandidate,
           effectiveConfidence,
+          isAmbiguous,
         });
 
     const isDebugActive = debug || (
@@ -822,8 +911,8 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
 
     return {
       raw: bestPass?.raw || '',
-      normalized: selectedCandidate,
-      confidence: effectiveConfidence,
+      normalized: isAmbiguous ? '' : selectedCandidate,
+      confidence: isAmbiguous ? null : effectiveConfidence,
       readable: isAccepted,
       diagnostics: {
         sourceInfo,

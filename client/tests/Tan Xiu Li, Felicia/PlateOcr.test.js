@@ -16,9 +16,11 @@ import {
   analyzeCanvasPixels,
   classifyOcrFailure,
   calculateEffectiveConfidence,
+  locatePlateCandidateRegions,
   PLATE_FALLBACK_CROP,
   PLATE_TIGHT_CROP,
 } from "../../src/utils/plateOcr";
+import { extractPlateCandidate } from "../../src/utils/plate";
 
 const realCreate = document.createElement.bind(document);
 const fakeCanvas = (w = 300, h = 80, toDataUrlStr = "data:image/png;base64,fake") => ({
@@ -296,4 +298,70 @@ describe("Focused Tesseract OCR Fix Tests", () => {
     expect(resWithDebug.confidence).toBe(resWithoutDebug.confidence);
     expect(resWithDebug.readable).toBe(resWithoutDebug.readable);
   });
+
+  test("11. BSKLS081A producing multiple distinct candidates is classified as AMBIGUOUS_OCR_CANDIDATE and returned unreadable", async () => {
+    recognize.mockResolvedValue(ocr("BSKLS081A", 90));
+    const res = await recognizePlate(plateOnlySource, { isUpload: true, debug: true });
+
+    expect(res.readable).toBe(false);
+    expect(res.normalized).toBe("");
+    expect(res.confidence).toBeNull();
+    expect(res.diagnostics.classification).toBe("AMBIGUOUS_OCR_CANDIDATE");
+  });
+
+  test("12. Noise text (PERODUA, TOYOTA, CC ACCT0) returns empty string candidate", () => {
+    expect(extractPlateCandidate("PERODUA")).toBe("");
+    expect(extractPlateCandidate("TOYOTA")).toBe("");
+    expect(extractPlateCandidate("CC ACCT0")).toBe("");
+  });
+
+  test("13. locatePlateCandidateRegions returns ranked candidates without booking plate", () => {
+    const regions = locatePlateCandidateRegions(fullCarSource);
+    expect(Array.isArray(regions)).toBe(true);
+    expect(regions.length).toBeGreaterThan(0);
+    expect(regions[0]).toHaveProperty("crop");
+  });
+
+  test("14. OCR output is 100% identical regardless of expected booking plate", async () => {
+    recognize.mockResolvedValue(ocr("BSKLS081A", 90));
+    const res1 = await recognizePlate(plateOnlySource, { isUpload: true });
+    const res2 = await recognizePlate(plateOnlySource, { isUpload: true });
+
+    expect(res1.readable).toBe(res2.readable);
+    expect(res1.normalized).toBe(res2.normalized);
+    expect(res1.diagnostics.classification).toBe(res2.diagnostics.classification);
+  });
+
+  test("15. Full-car SKL9081A image with noisy early passes resolves to SKL9081A when Pass 3 tighter plate crop returns clean raw text", async () => {
+    recognize
+      .mockResolvedValueOnce(ocr("BSKLS081A", 90))       // Pass 1: raw BSKLS081A (ambiguous)
+      .mockResolvedValueOnce(ocr("BSKLS081A", 90))       // Pass 2: broad crop BSKLS081A (ambiguous)
+      .mockResolvedValueOnce(ocr("SKL9081A", 85));        // Pass 3: tighter plate crop receives clean visual SKL9081A
+
+    const res = await recognizePlate(fullCarSource, { isUpload: true, debug: true });
+
+    expect(res.diagnostics.passes.length).toBe(3); // Within 3 pass maximum!
+    expect(res.normalized).toBe("SKL9081A");
+    expect(res.readable).toBe(true);
+    expect(res.confidence).toBe(85);
+    expect(res.diagnostics.classification).toBe("ACCEPTED_OCR_CANDIDATE");
+  });
+
+  test("16. Separate non-ambiguous accepted passes returning different valid candidates are classified as AMBIGUOUS_OCR_CANDIDATE, readable false, and keep barrier closed", () => {
+    const classification = classifyOcrFailure({
+      sourceInfo: { srcW: 600, srcH: 400, isReady: true },
+      pixelStats: { usable: true, brightnessVariance: 50 },
+      passes: [
+        { raw: "SBS1234A", effectiveConfidence: 80, isSelected: false },
+        { raw: "SBA5678Z", effectiveConfidence: 85, isSelected: false },
+      ],
+      rawText: "SBA5678Z",
+      extractedCandidate: "",
+      effectiveConfidence: 85,
+      isAmbiguous: true,
+    });
+
+    expect(classification).toBe("AMBIGUOUS_OCR_CANDIDATE");
+  });
 });
+
