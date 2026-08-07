@@ -121,13 +121,13 @@ describe("Entry rules", () => {
     expect(b.update.mock.calls[0][0]).toEqual(expect.objectContaining({ status: "Arrived" }));
   });
 
-  test("7. Confirmed entry with mismatched plate is DENIED (manual review)", async () => {
+  test("7. Confirmed entry with mismatched plate is DENIED (not reviewable)", async () => {
     const b = bookingWith("Confirmed");
     mockBooking.findOne.mockResolvedValueOnce(b);
-    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "GBG 1284M" });
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "GBG 9999Z" });
     expect(res.body.access).toBe("DENIED");
     expect(res.body.reasonCode).toBe("PLATE_MISMATCH");
-    expect(res.body.manualReviewRequired).toBe(true);
+    expect(res.body.manualReviewRequired).toBe(false);
     expect(b.update).not.toHaveBeenCalled();
   });
 
@@ -199,6 +199,126 @@ describe("Entry rules", () => {
   });
 });
 
+describe("OCR quality gate (server-authoritative)", () => {
+  test("automatic OCR garbage (YWERETANCLPPEMYY) is OCR_UNREADABLE, not a mismatch", async () => {
+    const b = bookingWith("Confirmed", { license_plate: "SKL9081A" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "YWERETANCLPPEMYY" });
+    expect(res.body.access).toBe("DENIED");
+    expect(res.body.reasonCode).toBe("OCR_UNREADABLE");
+    // Never claims a detected plate that differs — it simply could not be read.
+    expect(res.body.plateMatched).toBeNull();
+    expect(res.body.observedPlate).toBeNull();
+    expect(b.update).not.toHaveBeenCalled();
+  });
+
+  test("OCR_UNREADABLE requires manual review", async () => {
+    const b = bookingWith("Confirmed", { license_plate: "SKL9081A" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "TOYOTA" });
+    expect(res.body.reasonCode).toBe("OCR_UNREADABLE");
+    expect(res.body.manualReviewRequired).toBe(true);
+  });
+
+  test("automatic OCR with SKL9081A against an SKL9081A booking is GRANTED", async () => {
+    const b = bookingWith("Confirmed", { license_plate: "SKL9081A" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", plateConfidence: 90, observedPlate: "SKL9081A" });
+    expect(res.body.access).toBe("GRANTED");
+    expect(res.body.reasonCode).toBe("VERIFIED");
+    expect(res.body.plateMatched).toBe(true);
+  });
+
+  test("automatic OCR with a plausible DIFFERENT plate (SBA5678Z) is PLATE_MISMATCH", async () => {
+    const b = bookingWith("Confirmed", { license_plate: "SKL9081A" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "SBA5678Z" });
+    expect(res.body.access).toBe("DENIED");
+    expect(res.body.reasonCode).toBe("PLATE_MISMATCH");
+    expect(res.body.observedPlate).toBe("SBA5678Z");
+    expect(b.update).not.toHaveBeenCalled();
+  });
+
+  test("automatic OCR 'GBG 1234 M' still matches a GBG1234M booking", async () => {
+    const b = bookingWith("Confirmed"); // booked "GBG 1234M"
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "GBG 1234 M" });
+    expect(res.body.access).toBe("GRANTED");
+    expect(res.body.plateMatched).toBe(true);
+  });
+
+  test("a plausible plate with clearly-unusable confidence is OCR_UNREADABLE", async () => {
+    const b = bookingWith("Confirmed"); // booked "GBG 1234M"
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", plateConfidence: 2, observedPlate: "GBG1234M" });
+    expect(res.body.reasonCode).toBe("OCR_UNREADABLE");
+    expect(b.update).not.toHaveBeenCalled();
+  });
+
+  test("a plausible matching plate with NO confidence is still GRANTED (absence never rejects)", async () => {
+    const b = bookingWith("Confirmed"); // booked "GBG 1234M"
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "GBG1234M" });
+    expect(res.body.access).toBe("GRANTED");
+    expect(res.body.plateMatched).toBe(true);
+  });
+
+  test("manual mode is unaffected by the OCR plausibility gate", async () => {
+    // A manual observed value that is not a "plausible" auto-plate is still compared
+    // as the FM typed it (mismatch here), never silently turned into OCR_UNREADABLE.
+    const b = bookingWith("Confirmed", { license_plate: "SKL9081A" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "manual", plateSource: "manual", observedPlate: "SBA5678Z" });
+    expect(res.body.reasonCode).toBe("PLATE_MISMATCH");
+  });
+});
+
+// The controlled OCR character-repair happens CLIENT-side on the grammar alone
+// (SBA56787 → SBA5678Z), so the server receives the already-repaired plate. These
+// assert the server's authoritative decision on that repaired value end-to-end.
+describe("Controlled OCR repair — decision behaviour (server receives repaired plate)", () => {
+  test("repaired SBA5678Z against an SBA5678Z booking is VERIFIED", async () => {
+    const b = bookingWith("Confirmed", { license_plate: "SBA5678Z" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", plateConfidence: 47, observedPlate: "SBA5678Z" });
+    expect(res.body.access).toBe("GRANTED");
+    expect(res.body.reasonCode).toBe("VERIFIED");
+    expect(res.body.plateMatched).toBe(true);
+    expect(b.update.mock.calls[0][0]).toEqual(expect.objectContaining({ status: "Arrived" }));
+  });
+
+  test("repaired SBA5678Z against an SKL9081A booking is PLATE_MISMATCH", async () => {
+    const b = bookingWith("Confirmed", { license_plate: "SKL9081A" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "SBA5678Z" });
+    expect(res.body.access).toBe("DENIED");
+    expect(res.body.reasonCode).toBe("PLATE_MISMATCH");
+    expect(res.body.observedPlate).toBe("SBA5678Z");
+    expect(b.update).not.toHaveBeenCalled();
+  });
+
+  test("an OCR value with NO unique repair reaches the server as unreadable → OCR_UNREADABLE", async () => {
+    // The client could not produce a plausible plate; the server independently
+    // treats the leftover raw value as unreadable (rescan), never a mismatch.
+    const b = bookingWith("Confirmed", { license_plate: "SBA5678Z" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", observedPlate: "SSSA" });
+    expect(res.body.access).toBe("DENIED");
+    expect(res.body.reasonCode).toBe("OCR_UNREADABLE");
+    expect(res.body.plateMatched).toBeNull();
+    expect(res.body.observedPlate).toBeNull();
+  });
+
+  test("simulated-LPR behaviour is unchanged by the repair work", async () => {
+    const b = bookingWith("Confirmed", { license_plate: "SBA5678Z" });
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "simulation", observedPlate: "SBA5678Z" });
+    expect(res.body.access).toBe("GRANTED");
+    expect(res.body.reasonCode).toBe("VERIFIED");
+    expect(res.body.plateMatched).toBe(true);
+  });
+});
+
 describe("Manual mode + override", () => {
   test("9. Manual mode with matching plate is GRANTED", async () => {
     const b = bookingWith("Confirmed");
@@ -217,21 +337,25 @@ describe("Manual mode + override", () => {
     expect(b.update).not.toHaveBeenCalled();
   });
 
-  test("11. Manual override WITHOUT a reason is denied (OVERRIDE_REASON_REQUIRED)", async () => {
-    const b = bookingWith("Confirmed");
-    mockBooking.findOne.mockResolvedValueOnce(b);
-    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "manual", plateSource: "manual", observedPlate: "GBG 9999Z", manualOverride: true, overrideReason: "   " });
-    expect(res.body.access).toBe("DENIED");
-    expect(res.body.reasonCode).toBe("OVERRIDE_REASON_REQUIRED");
-    expect(b.update).not.toHaveBeenCalled();
-  });
-
-  test("12. Valid manual override is GRANTED, audited, and marks Arrived", async () => {
+  test("11. Genuine plate mismatch CANNOT be overridden into a grant", async () => {
     const b = bookingWith("Confirmed");
     mockBooking.findOne.mockResolvedValueOnce(b);
     const res = await post({
       action: "entry", bookingRef: "FG-ABC123", verificationMode: "manual", plateSource: "manual",
-      observedPlate: "GBG 9999Z", manualOverride: true, overrideReason: "Plate obscured by mud; visual ID confirmed",
+      observedPlate: "GBG 9999Z", manualOverride: true, overrideReason: "Plate typed by FM does not match database",
+    });
+    expect(res.body.access).toBe("DENIED");
+    expect(res.body.reasonCode).toBe("PLATE_MISMATCH");
+    expect(res.body.overrideUsed).toBe(false);
+    expect(b.update).not.toHaveBeenCalled();
+  });
+
+  test("12. Valid manual override on technical capture failure (OCR_UNREADABLE) with matching observed plate is GRANTED and audited", async () => {
+    const b = bookingWith("Confirmed");
+    mockBooking.findOne.mockResolvedValueOnce(b);
+    const res = await post({
+      action: "entry", bookingRef: "FG-ABC123", verificationMode: "manual", plateSource: "ocr", plateConfidence: 0,
+      observedPlate: "GBG 1234M", manualOverride: true, overrideReason: "Camera lens foggy; FM verified physical plate",
     });
     expect(res.body.access).toBe("GRANTED");
     expect(res.body.overrideUsed).toBe(true);
@@ -241,10 +365,55 @@ describe("Manual mode + override", () => {
     expect(auditArg).toEqual(expect.objectContaining({
       decision: "granted",
       overrideUsed: true,
-      overrideReason: "Plate obscured by mud; visual ID confirmed",
+      overrideReason: "Camera lens foggy; FM verified physical plate",
       fmId: 1,
       fmEmail: "fm@harrison.com",
     }));
+  });
+});
+
+describe("Same-bay occupancy protection", () => {
+  test("entry denied (BAY_OCCUPIED) when another booking is currently Arrived in the same loading bay", async () => {
+    const b = bookingWith("Confirmed", { loading_bay: "Bay A" });
+    const existingOccupant = { id: 99, booking_ref: "FG-OCCUPIED", loading_bay: "Bay A", status: "Arrived" };
+    mockBooking.findOne
+      .mockResolvedValueOnce(b)                // lookup requested booking
+      .mockResolvedValueOnce(existingOccupant); // lookup occupancy in same bay
+
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", plateConfidence: 90, observedPlate: "GBG 1234M" });
+    expect(res.body.access).toBe("DENIED");
+    expect(res.body.reasonCode).toBe("BAY_OCCUPIED");
+    expect(res.body.message).toContain("occupied by the previous vehicle");
+    expect(b.update).not.toHaveBeenCalled();
+  });
+
+  test("manual mode and manual override CANNOT bypass BAY_OCCUPIED", async () => {
+    const b = bookingWith("Confirmed", { loading_bay: "Bay A" });
+    const existingOccupant = { id: 99, booking_ref: "FG-OCCUPIED", loading_bay: "Bay A", status: "Arrived" };
+    mockBooking.findOne
+      .mockResolvedValueOnce(b)
+      .mockResolvedValueOnce(existingOccupant);
+
+    const res = await post({
+      action: "entry", bookingRef: "FG-ABC123", verificationMode: "manual", plateSource: "manual",
+      observedPlate: "GBG 1234M", manualOverride: true, overrideReason: "Let them in anyway",
+    });
+    expect(res.body.access).toBe("DENIED");
+    expect(res.body.reasonCode).toBe("BAY_OCCUPIED");
+    expect(res.body.overrideUsed).toBe(false);
+    expect(b.update).not.toHaveBeenCalled();
+  });
+
+  test("Arrived booking in a DIFFERENT loading bay does not block entry", async () => {
+    const b = bookingWith("Confirmed", { loading_bay: "Bay A" });
+    mockBooking.findOne
+      .mockResolvedValueOnce(b)   // lookup requested booking
+      .mockResolvedValueOnce(null); // no Arrived occupant in Bay A
+
+    const res = await post({ action: "entry", bookingRef: "FG-ABC123", verificationMode: "automatic", plateSource: "ocr", plateConfidence: 90, observedPlate: "GBG 1234M" });
+    expect(res.body.access).toBe("GRANTED");
+    expect(res.body.reasonCode).toBe("VERIFIED");
+    expect(b.update).toHaveBeenCalled();
   });
 });
 
@@ -258,15 +427,19 @@ describe("Exit rules", () => {
     expect(b.update).not.toHaveBeenCalled();
   });
 
-  test("19. Successful exit completes the booking and fires next-in-line", async () => {
+  test("19. Successful exit completes the booking and notifies only the next Confirmed booking in same bay", async () => {
     const b = bookingWith("Arrived");
     mockBooking.findOne
       .mockResolvedValueOnce(b)                                                // lookup
-      .mockResolvedValueOnce({ id: 2, booking_ref: "FG-NEXT", driver_phone: "+6580000000", loading_bay: "Bay A" }); // next-in-line
+      .mockResolvedValueOnce({ id: 2, booking_ref: "FG-NEXT", driver_phone: "+6580000000", loading_bay: "Bay A", status: "Confirmed" }); // next-in-line
     const res = await post({ action: "exit", bookingRef: "FG-ABC123", verificationMode: "manual", plateSource: "manual", observedPlate: "GBG 1234M" });
     expect(res.body.access).toBe("GRANTED");
     expect(b.update.mock.calls[0][0]).toEqual(expect.objectContaining({ status: "Completed" }));
     expect(res.body.nextInLine).toBe("FG-NEXT");
+
+    // Verify next-in-line query filtered status: 'Confirmed'
+    const findCall = mockBooking.findOne.mock.calls[1][0];
+    expect(findCall.where.status).toBe("Confirmed");
   });
 
   test("20. Repeated exit does not resend WhatsApp or re-trigger next-in-line", async () => {

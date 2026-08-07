@@ -14,13 +14,19 @@ const h = vi.hoisted(() => {
     startQrScan: vi.fn(async ({ onResult, onError }) => { store.onResult = onResult; store.onError = onError; return qrStop; }),
     startCamera: vi.fn(async () => ({ stop: plateStop })),
     recognizePlate: vi.fn(async () => ({ raw: "gbg 1234 m", normalized: "GBG1234M", confidence: 88 })),
+    decodeFileToCanvas: vi.fn(async (file) => {
+      if (file?.name === "corrupt.txt" || file?.type === "text/plain") {
+        throw new Error("The uploaded image could not be processed. Please select a valid PNG or JPEG.");
+      }
+      return { width: 300, height: 80 };
+    }),
     post: vi.fn(),
   };
 });
 
 vi.mock("axios", () => ({ default: { post: h.post } }));
 vi.mock("../../src/components/Sidebar", () => ({ default: () => <div data-testid="sidebar" /> }));
-vi.mock("../../src/utils/plateOcr", () => ({ recognizePlate: h.recognizePlate }));
+vi.mock("../../src/utils/plateOcr", () => ({ recognizePlate: h.recognizePlate, decodeFileToCanvas: h.decodeFileToCanvas }));
 vi.mock("../../src/utils/gateCamera", async (importOriginal) => {
   const actual = await importOriginal();
   return {
@@ -123,13 +129,39 @@ describe("QR result handling", () => {
 });
 
 describe("PoC OCR", () => {
-  test("8. OCR result is shown normalised with confidence", async () => {
+  test("8. readable OCR result is shown normalised with confidence", async () => {
     renderPage();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Start Camera/i })); });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Capture & Read Plate/i })); });
+    const captureBtn = screen.queryByRole("button", { name: /Capture & Read Plate/i });
+    if (captureBtn) {
+      await act(async () => { fireEvent.click(captureBtn); });
+    }
     expect(await screen.findByText("GBG1234M")).toBeTruthy(); // normalised
     expect(screen.getByText(/88%/)).toBeTruthy();             // confidence
     expect(h.recognizePlate).toHaveBeenCalled();
+  });
+
+  test("8c. valid image upload decodes and runs OCR", async () => {
+    renderPage();
+    const file = new File(["gbg1234m-image-bytes"], "plate.png", { type: "image/png" });
+    const fileInput = screen.getByLabelText(/Upload Plate Image/i);
+    await act(async () => {
+      fireEvent.change(fileInput, { target: { files: [file] } });
+    });
+    expect(h.decodeFileToCanvas).toHaveBeenCalledWith(file);
+    expect(h.recognizePlate).toHaveBeenCalled();
+    expect(await screen.findByText("GBG1234M")).toBeTruthy();
+  });
+
+  test("8d. invalid or corrupted file upload shows processing error message", async () => {
+    renderPage();
+    const file = new File(["bad"], "corrupt.txt", { type: "text/plain" });
+    const fileInput = screen.getByLabelText(/Upload Plate Image/i);
+    await act(async () => {
+      fireEvent.change(fileInput, { target: { files: [file] } });
+    });
+    expect(h.decodeFileToCanvas).toHaveBeenCalledWith(file);
+    expect(await screen.findByText(/The uploaded image could not be processed. Please select a valid PNG or JPEG./i)).toBeTruthy();
   });
 });
 
@@ -155,15 +187,39 @@ describe("Decision states", () => {
     expect(screen.getByText(/Proceed to Bay A/i)).toBeTruthy();
   });
 
-  test("10. a mismatch shows DENIED + manual-review with an override box", async () => {
+  test("10. a mismatch shows DENIED without an override box", async () => {
     await gotoManualAndVerify({
       access: "DENIED", reasonCode: "PLATE_MISMATCH", plateMatched: false,
-      expectedPlate: "GBG1234M", observedPlate: "GBG9999Z", manualReviewRequired: true,
+      expectedPlate: "GBG1234M", observedPlate: "GBG9999Z", manualReviewRequired: false,
       booking: { booking_ref: "FG-ABC123", loading_bay: "Bay A", status: "Confirmed" },
     }, { plate: "GBG 9999Z" });
     expect(await screen.findByText("ACCESS DENIED")).toBeTruthy();
+    expect(screen.queryByText(/Manual verification required/i)).toBeNull();
+    expect(screen.queryByLabelText("Override reason")).toBeNull();
+  });
+
+  test("10b. OCR_UNREADABLE shows the rescan warning state, with manual review offered", async () => {
+    await gotoManualAndVerify({
+      access: "DENIED", reasonCode: "OCR_UNREADABLE", plateMatched: null,
+      expectedPlate: "SKL9081A", observedPlate: null, manualReviewRequired: true,
+      booking: { booking_ref: "FG-ABC123", loading_bay: "Bay A", status: "Confirmed" },
+    }, { plate: "GBG 1234M" });
+    expect(await screen.findByText(/UNREADABLE — RESCAN REQUIRED/i)).toBeTruthy();
+    expect(screen.queryByText("✕ Mismatch")).toBeNull();
+    expect(screen.getByText(/No valid vehicle plate could be read/i)).toBeTruthy();
     expect(screen.getByText(/Manual verification required/i)).toBeTruthy();
     expect(screen.getByLabelText("Override reason")).toBeTruthy();
+  });
+
+  test("10c. BAY_OCCUPIED shows DENIED with bay occupied message and no override box", async () => {
+    await gotoManualAndVerify({
+      access: "DENIED", reasonCode: "BAY_OCCUPIED", plateMatched: true,
+      expectedPlate: "GBG1234M", observedPlate: "GBG1234M", manualReviewRequired: false,
+      booking: { booking_ref: "FG-ABC123", loading_bay: "Bay A", status: "Confirmed" },
+    });
+    expect(await screen.findByText("ACCESS DENIED")).toBeTruthy();
+    expect(screen.getByText(/occupied by the previous vehicle/i)).toBeTruthy();
+    expect(screen.queryByLabelText("Override reason")).toBeNull();
   });
 
   test("13. server reason codes drive the displayed copy (TOO_EARLY)", async () => {
@@ -193,18 +249,18 @@ describe("Manual mode + override", () => {
     }));
   });
 
-  test("12. override requires a reason before it re-submits", async () => {
+  test("12. override requires a reason before it re-submits for reviewable capture failure (OCR_UNREADABLE)", async () => {
     h.post.mockResolvedValueOnce({ data: {
-      access: "DENIED", reasonCode: "PLATE_MISMATCH", plateMatched: false,
-      expectedPlate: "GBG1234M", observedPlate: "GBG9999Z", manualReviewRequired: true,
+      access: "DENIED", reasonCode: "OCR_UNREADABLE", plateMatched: null,
+      expectedPlate: "GBG1234M", observedPlate: null, manualReviewRequired: true,
       booking: { booking_ref: "FG-ABC123", loading_bay: "Bay A", status: "Confirmed" },
     } });
     renderPage();
     fireEvent.click(screen.getByRole("tab", { name: /Manual Verification/i }));
     fireEvent.change(screen.getByLabelText("Booking reference"), { target: { value: "FG-ABC123" } });
-    fireEvent.change(screen.getByLabelText("Observed vehicle plate"), { target: { value: "GBG 9999Z" } });
+    fireEvent.change(screen.getByLabelText("Observed vehicle plate"), { target: { value: "GBG 1234M" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Verify Entry/i })); });
-    await screen.findByText("ACCESS DENIED");
+    await screen.findByText(/UNREADABLE — RESCAN REQUIRED/i);
     expect(h.post).toHaveBeenCalledTimes(1);
 
     // Empty reason → blocked, no second request.
@@ -214,17 +270,17 @@ describe("Manual mode + override", () => {
 
     // With a reason → re-submits with the override flag.
     h.post.mockResolvedValueOnce({ data: {
-      access: "GRANTED", reasonCode: "VERIFIED", overrideUsed: true, plateMatched: false,
-      expectedPlate: "GBG1234M", observedPlate: "GBG9999Z", manualReviewRequired: false,
+      access: "GRANTED", reasonCode: "VERIFIED", overrideUsed: true, plateMatched: true,
+      expectedPlate: "GBG1234M", observedPlate: "GBG1234M", manualReviewRequired: false,
       booking: { booking_ref: "FG-ABC123", loading_bay: "Bay A", status: "Arrived" },
     } });
-    fireEvent.change(screen.getByLabelText("Override reason"), { target: { value: "Plate obscured by mud; visual ID confirmed" } });
+    fireEvent.change(screen.getByLabelText("Override reason"), { target: { value: "Camera lens foggy; visual ID confirmed" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Authorise Manual Override/i })); });
 
     expect(h.post).toHaveBeenCalledTimes(2);
     const lastPayload = h.post.mock.calls[1][1];
     expect(lastPayload).toEqual(expect.objectContaining({
-      manualOverride: true, overrideReason: "Plate obscured by mud; visual ID confirmed", verificationMode: "manual",
+      manualOverride: true, overrideReason: "Camera lens foggy; visual ID confirmed", verificationMode: "manual",
     }));
     expect(await screen.findByText("ACCESS GRANTED — MANUAL OVERRIDE")).toBeTruthy();
   });
@@ -254,5 +310,74 @@ describe("No image persistence", () => {
     const blob = JSON.stringify(localStorage) + JSON.stringify(sessionStorage);
     expect(blob.toLowerCase()).not.toContain("data:image");
     expect(blob.toLowerCase()).not.toContain("base64");
+  });
+});
+
+describe("Webcam automatic OCR scanning flow & diagnostics", () => {
+  test("15. Start Camera requests camera and starts automatic scanning loop", async () => {
+    h.recognizePlate.mockResolvedValueOnce({
+      raw: "GBG 1234 M", normalized: "GBG1234M", confidence: 88, readable: true,
+      diagnostics: { classification: "ACCEPTED_OCR_CANDIDATE" },
+    });
+
+    renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Start Camera/i }));
+    });
+
+    expect(h.startCamera).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("GBG1234M")).toBeTruthy();
+    expect(h.recognizePlate).toHaveBeenCalled();
+  });
+
+  test("16. Retake resets state and restarts scanning on active stream without recreating stream", async () => {
+    h.recognizePlate
+      .mockResolvedValueOnce({ raw: "GBG 1234 M", normalized: "GBG1234M", confidence: 88, readable: true })
+      .mockResolvedValueOnce({ raw: "", normalized: "", confidence: null, readable: false });
+
+    renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Start Camera/i }));
+    });
+
+    expect(await screen.findByText("GBG1234M")).toBeTruthy();
+    const startCameraCallCount = h.startCamera.mock.calls.length;
+
+    // Click Retake
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Retake/i }));
+    });
+
+    // Verify OCR result was cleared
+    expect(screen.queryByText("GBG1234M")).toBeNull();
+
+    // Verify scanning restarted on existing stream without calling startCamera again
+    expect(h.startCamera.mock.calls.length).toBe(startCameraCallCount);
+  });
+
+  test("17. Unreadable frame retries automatically and readable frame stops further scanning", async () => {
+    vi.useFakeTimers();
+    h.recognizePlate
+      .mockResolvedValueOnce({ raw: "", normalized: "", confidence: null, readable: false })
+      .mockResolvedValueOnce({ raw: "GBG 1234 M", normalized: "GBG1234M", confidence: 88, readable: true });
+
+    renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Start Camera/i }));
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    expect(h.recognizePlate).toHaveBeenCalledTimes(1);
+
+    // Advance timers by ~1800ms to trigger retry scan
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(h.recognizePlate).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
   });
 });

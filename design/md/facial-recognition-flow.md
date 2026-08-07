@@ -44,8 +44,11 @@ flowchart TB
     direction LR
     P -->|Gate Scanner| Q[POST /api/attendance/scan]
     Q --> R[Attendance IN or OUT<br/>and simulated turnstile outcome]
-    P -->|V-Patrol| S[POST /api/facial-recognition/access-event]
+    P -->|V-Patrol| VP{V-Patrol mode}
+    VP -->|Patrol only| S[POST /api/facial-recognition/access-event]
     S --> T[SecurityLog access event<br/>Attendance unchanged]
+    VP -->|Check In / Check Out| AA[POST /api/attendance/action]
+    AA --> AB[Explicit Attendance IN or OUT<br/>bounded per-process cycle dedup]
   end
 ```
 
@@ -127,7 +130,7 @@ flowchart TB
 - Tracking (`/api/facial-recognition/track`) is detector-only and has no identity, database, Attendance or SecurityLog side effects.
 - Recognition (`/api/facial-recognition/recognize`) uses the AI match and confidence result, then treats the PostgreSQL user ID, active state and enrolment state as authoritative.
 - Gate Scanner performs tracking, initial recognition, a baseline head-turn challenge, final same-ID recognition and then `/api/attendance/scan`.
-- V-Patrol applies the same access policy but writes `/api/facial-recognition/access-event`; Attendance is unchanged.
+- V-Patrol applies the same access policy. Its default **Patrol only** mode writes `/api/facial-recognition/access-event` (a deduplicated `SecurityLog`) and leaves Attendance unchanged; its **Check In** / **Check Out** modes additionally write an explicit `Attendance` IN/OUT through `/api/attendance/action`, only after the final same-person confirmation. Denied or failed scans write no Attendance. Duplicate-cycle protection is a bounded per-process guard — there is no `Attendance.cycleId` column, so it is not durable across restarts.
 - Unknown, suspended, multiple-face and timeout cases fail closed. Where the recognition/access routes audit a denial, they write `SecurityLog` access or intrusion events, not `IncidentLog` records.
 - Enrolment images remain in request memory and are not written to PostgreSQL, disk, cloud storage or logs; only the generated biometric vector is stored.
 - Suspension is reversible and retains records. Permanent off-boarding is transactional: the user and Attendance rows are hard-deleted, while operational/security history is retained only after unlinking or anonymisation.

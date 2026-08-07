@@ -6,6 +6,7 @@ import '../css/Dashboard.css';
 import '../css/Management.css';
 import '../css/Users.css';
 import '../css/IncidentDashboard.css';
+import { formatDetectionType, toTitleCase } from '../utils/incidentAnalytics';
 
 // ---------------------------------------------------------------------------
 // Badge helpers
@@ -49,6 +50,16 @@ const sourceLabel = (s) => {
 
 const truncate = (str, n = 30) =>
   str && str.length > n ? str.slice(0, n) + '…' : str;
+
+// Sentinel value for the "Other / Custom..." option — never sent to the server
+// as-is; handleCreate substitutes createForm.customStatus in its place.
+const CUSTOM_INCIDENT_TYPE = 'OTHER_CUSTOM';
+const CUSTOM_TYPE_MAX_LENGTH = 35;
+
+// Notes textarea auto-grow cap (px) — must match the max-height in
+// .inc-notes-textarea-autogrow (IncidentDashboard.css). Beyond this the box
+// stops growing and scrolls internally instead of running off-screen.
+const NOTES_TEXTAREA_MAX_HEIGHT = 200;
 
 // Break a location string into lines: max 2 words OR max 12 chars per line,
 // whichever limit is hit first. Total display capped at 30 chars (word boundary).
@@ -110,18 +121,21 @@ const IncidentDashboard = () => {
   const [editMode, setEditMode]                 = useState(false);
   const [editForm, setEditForm]                 = useState({ resolutionStatus: '', severity: '', notes: '' });
   const [editSaving, setEditSaving]             = useState(false);
+  const editNotesRef = useRef(null);
 
   // --- Create modal ---
   const [showCreate, setShowCreate]     = useState(false);
   const [createForm, setCreateForm]     = useState({
     camera_location: '',
     status: 'UNAUTHORIZED_ACCESS',
+    customStatus: '',
     severity: 'Medium',
     person_name: '',
     confidence_score: '',
     notes: '',
   });
   const [createSaving, setCreateSaving] = useState(false);
+  const createNotesRef = useRef(null);
 
   // --- Delete confirm modal ---
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -194,6 +208,28 @@ const IncidentDashboard = () => {
     window.addEventListener('resize', updatePos);
     return () => window.removeEventListener('resize', updatePos);
   }, []);
+
+  // Auto-grow the create form's Notes textarea to fit its content instead of
+  // letting the user drag-resize it — re-measure whenever the text changes or
+  // the modal (re)opens, since the ref is null while it's unmounted. Capped at
+  // NOTES_TEXTAREA_MAX_HEIGHT so long notes scroll inside the box instead of
+  // pushing the modal off-screen.
+  useEffect(() => {
+    const el = createNotesRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, NOTES_TEXTAREA_MAX_HEIGHT)}px`;
+  }, [createForm.notes, showCreate]);
+
+  // Same auto-grow/hardcap treatment for the detail modal's edit-mode Notes
+  // textarea — re-measure whenever the text changes or edit mode toggles on,
+  // since the ref is null while the textarea isn't rendered (view mode).
+  useEffect(() => {
+    const el = editNotesRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, NOTES_TEXTAREA_MAX_HEIGHT)}px`;
+  }, [editForm.notes, editMode]);
 
   // ---------------------------------------------------------------------------
   // Fetch from API
@@ -374,9 +410,16 @@ const IncidentDashboard = () => {
     e.preventDefault();
     setCreateSaving(true);
     try {
+      const resolvedStatus = createForm.status === CUSTOM_INCIDENT_TYPE
+        ? toTitleCase(createForm.customStatus.trim().slice(0, CUSTOM_TYPE_MAX_LENGTH))
+        : createForm.status;
+      // Normalised once at creation (Location is never editable afterward), so
+      // every downstream consumer — the table, the detail modal, an escalated
+      // Support Ticket's description — always sees the same Title Case string.
+      const resolvedLocation = toTitleCase(createForm.camera_location.trim());
       const res = await axios.post('/api/incident', {
-        camera_location: createForm.camera_location,
-        status: createForm.status,
+        camera_location: resolvedLocation,
+        status: resolvedStatus,
         source: 'Manual',
         severity: createForm.severity,
         person_name: createForm.person_name || undefined,
@@ -396,6 +439,7 @@ const IncidentDashboard = () => {
       setCreateForm({
         camera_location: '',
         status: 'UNAUTHORIZED_ACCESS',
+        customStatus: '',
         severity: 'Medium',
         person_name: '',
         confidence_score: '',
@@ -769,7 +813,7 @@ const IncidentDashboard = () => {
                 </div>
                 <div className="inc-detail-item">
                   <span className="inc-detail-label">Detection Type</span>
-                  <span className="inc-detail-value">{selectedIncident.status.replace(/_/g, ' ')}</span>
+                  <span className="inc-detail-value">{formatDetectionType(selectedIncident.status)}</span>
                 </div>
                 <div className="inc-detail-item">
                   <span className="inc-detail-label">Confidence Score</span>
@@ -827,7 +871,8 @@ const IncidentDashboard = () => {
                 {editMode ? (
                   <>
                     <textarea
-                      className="inc-notes-textarea"
+                      ref={editNotesRef}
+                      className="inc-notes-textarea inc-notes-textarea-autogrow"
                       rows={4}
                       value={editForm.notes}
                       onChange={(e) => setEditForm(f => ({ ...f, notes: e.target.value }))}
@@ -911,7 +956,27 @@ const IncidentDashboard = () => {
                       <option value="RESTRICTED_MOTION">Restricted-Zone Motion</option>
                       <option value="FORGOTTEN_BELONGING">Forgotten Belonging</option>
                       <option value="ITEM_MOVEMENT">Item Movement</option>
+                      <option value={CUSTOM_INCIDENT_TYPE}>Other / Custom...</option>
                     </select>
+                    {createForm.status === CUSTOM_INCIDENT_TYPE && (
+                      <div style={{ marginTop: '10px' }}>
+                        <label className="inc-detail-label" htmlFor="inc-custom-status">Custom Incident Type</label>
+                        <input
+                          id="inc-custom-status"
+                          type="text"
+                          className="inc-search-input"
+                          style={{ marginTop: '6px' }}
+                          value={createForm.customStatus}
+                          onChange={(e) => setCreateForm(f => ({ ...f, customStatus: e.target.value }))}
+                          placeholder="e.g., Water Leakage"
+                          maxLength={CUSTOM_TYPE_MAX_LENGTH}
+                          required
+                        />
+                        <p style={{ color: '#64748b', fontSize: '0.75rem', margin: '6px 0 0' }}>
+                          Max {CUSTOM_TYPE_MAX_LENGTH} characters.
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   <div className="inc-form-group">
@@ -965,7 +1030,8 @@ const IncidentDashboard = () => {
                   <div className="inc-form-group inc-form-full">
                     <label className="inc-detail-label">Notes (optional)</label>
                     <textarea
-                      className="inc-notes-textarea"
+                      ref={createNotesRef}
+                      className="inc-notes-textarea inc-notes-textarea-autogrow"
                       rows={3}
                       placeholder="Describe the incident..."
                       value={createForm.notes}

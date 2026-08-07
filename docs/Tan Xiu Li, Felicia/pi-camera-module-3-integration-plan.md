@@ -13,7 +13,7 @@ unchanged.
 
 ## Pi camera server
 
-`raspberry-pi/pi_camera_steam.py` binds to `0.0.0.0:8081` and provides:
+`raspberry-pi4/pi_camera_steam.py` binds to `0.0.0.0:8081` and provides:
 
 | Purpose | Endpoint |
 |---|---|
@@ -103,7 +103,7 @@ runtime URL in Settings.
 
 Copy or pull these current repository files onto the Pi:
 
-- `raspberry-pi/pi_camera_steam.py`
+- `raspberry-pi4/pi_camera_steam.py`
 
 Then run:
 

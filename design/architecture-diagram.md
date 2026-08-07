@@ -76,7 +76,7 @@ Key boundaries:
 
 - The deployed browser uses the public Nginx client as a same-origin proxy to Node; it never calls private FastAPI directly.
 - The browser reaches the Camera Module 3 over the trusted local network. Cloud Run does not connect to the Pi private IP.
-- SecurePi is a separate Pi 5/IMX500 process that pushes authenticated edge events to Node; this is distinct from the browser-to-Pi stream.
+- SecurePi is a separate Pi 5/IMX500 process that pushes authenticated edge events to Node; this is distinct from the browser-to-Pi stream. Its runtime lives in the canonical external repository [charlisaa/updated_securePi_FlowGuard](https://github.com/charlisaa/updated_securePi_FlowGuard) and is not deployed from this repository.
 - Node owns access, logistics, alert, incident, support, and audit decisions. FastAPI returns inference candidates/telemetry.
 - PostgreSQL stores records and metadata, not continuous video. FlowGuard alert snapshots are temporary unless an external evidence lifecycle is provided.
 - Gemini generates helpdesk text only; deterministic server code owns escalation and writes. WhatsApp failure cannot roll back a committed record.

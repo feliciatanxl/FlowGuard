@@ -17,9 +17,9 @@ PostgreSQL is authoritative for application state. Camera frames are not stored 
 | Gemini | Google Gemini REST API used by the support workflow for natural-language replies grounded in current Knowledge Base entries. | External; enabled only when `GEMINI_API_KEY` is configured. |
 | WhatsApp | Meta WhatsApp Cloud API for booking/driver and separately configured security-alert notifications. | External; persisted results can be simulated, sent, failed, skipped, or not requested. |
 | Cloud platform | Secret Manager, Artifact Registry, Cloud Build, Cloud Run, and Cloud SQL. | Google Cloud control/runtime plane. |
-| Gate camera | Raspberry Pi Camera Module 3 service in `raspberry-pi/`, exposing `/health`, `/video_feed`, and `/snapshot` on a trusted hotspot/LAN. | Local network only; browser connects directly. |
+| Gate camera | Raspberry Pi 4 Camera Module 3 service in `raspberry-pi4/`, exposing `/health`, `/video_feed`, and `/snapshot` on a trusted hotspot/LAN. | Local network only; browser connects directly. |
 | Laptop camera | Browser `getUserMedia` source used directly or as the safe Pi fallback. | Local browser device. |
-| SecurePi | Separate subsystem using Raspberry Pi 5 and Sony IMX500 for edge inference, local evidence, and outbound alert events. Source is maintained in dedicated SecurePi repositories, not copied into FlowGuard. | Local edge process; outbound authenticated HTTPS to Node. |
+| SecurePi | Separate subsystem using Raspberry Pi 5 and Sony IMX500 for edge inference, local evidence, and outbound alert events. Its runtime source is maintained in the canonical external repository [charlisaa/updated_securePi_FlowGuard](https://github.com/charlisaa/updated_securePi_FlowGuard) — the Pi 5/IMX500 build physically used with this FlowGuard integration — and is not copied into FlowGuard. | Local edge process; outbound authenticated HTTPS to Node. |
 
 ## Request boundaries
 
@@ -79,14 +79,14 @@ server/
   migrations/       additive PostgreSQL schema changes
   tests/            Jest route/service/integration evidence
 ai-service/         private FastAPI facial, QR, and object-analysis service
-raspberry-pi/       Camera Module 3 local MJPEG/snapshot service and tests
+raspberry-pi4/      Raspberry Pi 4 Camera Module 3 local MJPEG/snapshot service and tests
 design/             group design sources and rendered PNG diagrams
 docs/               group evidence/run sheet plus separately owned documentation
 deployment/         Cloud Run configuration guidance and placeholders
 flowguard-ai/       existing individual AI-use records; not runtime application code
 ```
 
-There is no `edge/securepi/` runtime folder in the current repository. SecurePi remains part of the system architecture through the FlowGuard edge API, browser integration, and [edge-AI reference](../docs/securepi-flowguard-edge-ai.md); its hardware/model source stays in dedicated repositories.
+There is no `edge/securepi/` runtime folder in the current repository. SecurePi remains part of the system architecture through the FlowGuard edge API, browser integration, and [edge-AI reference](../docs/securepi-flowguard-edge-ai.md); its hardware/model source stays in the canonical external repository [charlisaa/updated_securePi_FlowGuard](https://github.com/charlisaa/updated_securePi_FlowGuard).
 
 ## Data architecture
 

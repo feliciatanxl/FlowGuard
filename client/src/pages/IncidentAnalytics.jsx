@@ -6,6 +6,7 @@ import MTTRStatTile from '../components/MTTRStatTile';
 import AccuracyMeter from '../components/AccuracyMeter';
 import ConfidenceBucketChart from '../components/ConfidenceBucketChart';
 import ResolutionFunnelChart from '../components/ResolutionFunnelChart';
+import DetectionTypeBreakdownChart from '../components/DetectionTypeBreakdownChart';
 import '../css/Dashboard.css';
 import '../css/IncidentDashboard.css';
 import '../css/IncidentAnalytics.css';
@@ -14,6 +15,7 @@ import {
   computeAIAccuracy,
   computeConfidenceBuckets,
   computeResolutionFunnel,
+  computeDetectionTypeBreakdown,
 } from '../utils/incidentAnalytics';
 
 // Reachable only via the "View Deep Analytics ->" button on the Incident Dashboard —
@@ -65,6 +67,7 @@ const IncidentAnalytics = () => {
   const accuracy = computeAIAccuracy(incidents);
   const buckets = computeConfidenceBuckets(incidents);
   const funnel = computeResolutionFunnel(incidents);
+  const typeBreakdown = computeDetectionTypeBreakdown(incidents);
 
   return (
     <div className="dashboard-layout">
@@ -100,6 +103,7 @@ const IncidentAnalytics = () => {
 
         <ConfidenceBucketChart buckets={buckets} />
         <ResolutionFunnelChart funnel={funnel} />
+        <DetectionTypeBreakdownChart breakdown={typeBreakdown} />
       </main>
     </div>
   );

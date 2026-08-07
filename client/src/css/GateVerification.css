@@ -214,6 +214,7 @@
 .gate-decision { border-radius: 12px; padding: 16px; border: 1px solid; }
 .gate-decision.granted { background: #052e1a; border-color: #10b981; }
 .gate-decision.denied { background: #2a0f14; border-color: #ef4444; }
+.gate-decision.unreadable { background: #2a1f05; border-color: #f59e0b; }
 
 .gate-decision-head { display: flex; align-items: center; gap: 10px; }
 .gate-decision-icon {
@@ -225,9 +226,12 @@
 }
 .gate-decision.granted .gate-decision-icon { background: #10b981; color: #04120b; }
 .gate-decision.denied .gate-decision-icon { background: #ef4444; color: #1a0505; }
+.gate-decision.unreadable .gate-decision-icon { background: #f59e0b; color: #1a1405; }
 .gate-decision-title { font-weight: 800; letter-spacing: 0.03em; font-size: 1.02rem; }
 .gate-decision.granted .gate-decision-title { color: #6ee7b7; }
 .gate-decision.denied .gate-decision-title { color: #fca5a5; }
+.gate-decision.unreadable .gate-decision-title { color: #fcd34d; }
+.gate-ocr-unreadable { color: #fcd34d; }
 .gate-decision-msg { color: #e2e8f0; font-size: 0.9rem; margin: 10px 0; }
 
 /* --- Barrier simulation --- */
@@ -467,3 +471,116 @@
 }
 @keyframes gate-spin { to { transform: rotate(360deg); } }
 .gate-verify-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* --- Temporary OCR Runtime Diagnostics (?ocrDebug=1) --- */
+.gate-ocr-debug-card {
+  margin-top: 18px;
+  background: #0b1329;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 16px;
+}
+.gate-debug-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.gate-debug-header h3 {
+  margin: 0;
+  color: #38bdf8;
+  font-size: 1rem;
+}
+.gate-debug-badge {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.gate-debug-badge.ok { background: #065f46; color: #34d399; }
+.gate-debug-badge.warn { background: #854d0e; color: #fde047; }
+.gate-debug-badge.fail { background: #991b1b; color: #fca5a5; }
+
+.gate-debug-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+@media (max-width: 768px) {
+  .gate-debug-grid { grid-template-columns: 1fr; }
+}
+
+.gate-debug-box {
+  background: #020617;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 12px;
+}
+.gate-debug-box h4 {
+  margin: 0 0 8px;
+  color: #94a3b8;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+}
+.gate-debug-box ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+}
+.gate-debug-box li {
+  margin-bottom: 4px;
+}
+
+.gate-debug-passes h4 {
+  margin: 0 0 10px;
+  color: #94a3b8;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+}
+.gate-debug-pass-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.gate-debug-pass-item {
+  display: flex;
+  gap: 12px;
+  background: #020617;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  padding: 10px;
+  align-items: center;
+}
+.gate-debug-pass-thumb {
+  width: 140px;
+  height: 60px;
+  flex-shrink: 0;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+.gate-debug-pass-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.gate-debug-no-thumb {
+  color: #64748b;
+  font-size: 0.72rem;
+}
+.gate-debug-pass-info {
+  font-size: 0.78rem;
+  color: #cbd5e1;
+}
+.gate-debug-pass-info p {
+  margin: 2px 0;
+}

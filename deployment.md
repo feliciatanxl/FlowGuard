@@ -98,8 +98,8 @@ Executed on the current branch after the chatbot merge on 3 Aug 2026:
 | Client production build | `cd client && npm run build` | **Passed:** 759 modules transformed. Vite warned that the approximately 801.50 kB main chunk exceeds 500 kB; build completed. |
 | Server tests | `cd server && npm test -- --runInBand` | **Passed:** 46 Jest suites, 686 tests in 8 bounded batches. Runner force-exit notices indicate open handles should be investigated separately. |
 | AI safe tests | `cd ai-service && .venv/Scripts/python -m pytest -q test/test_qr_endpoint.py test/test_track_endpoint.py tests/test_zone_resolution.py tests/test_zone_threshold_env.py` | **Passed:** 4 files, 35 tests; 9 deprecation warnings. Hardware/private-image scripts were not run. |
-| Pi tests | `cd raspberry-pi && python -m pytest test_pi_camera_stream.py` | **Passed:** 1 file, 19 tests. |
-| Pi syntax | `cd raspberry-pi && python -m py_compile pi_camera_steam.py` | **Passed:** exit 0. |
+| Pi tests | `cd raspberry-pi4 && python -m pytest test_pi_camera_stream.py` | **Passed:** 1 file, 19 tests. |
+| Pi syntax | `cd raspberry-pi4 && python -m py_compile pi_camera_steam.py` | **Passed:** exit 0. |
 
 Excluded AI scripts are `test_webcam.py`, `test_manpower.py`, and `test_insightface.py` (camera/private images) plus `test_yolo.py` (real `test.jpg` inference). Their absence is not recorded as a pass.
 
@@ -133,7 +133,7 @@ Lucas's helpdesk/Knowledge Base and Gladwin's incident/analytics areas are imple
 ### Raspberry Pi Camera Module 3
 
 1. Connect the laptop and Pi to the same trusted hotspot/LAN.
-2. Start `raspberry-pi/pi_camera_steam.py` on the Pi (default documented port 8081).
+2. Start `raspberry-pi4/pi_camera_steam.py` on the Pi (default documented port 8081).
 3. Verify the local `/health`, `/video_feed`, and `/snapshot` endpoints from the demo browser/network.
 4. In **Settings -> Raspberry Pi Camera**, save only the device base URL and use **Test Connection**.
 5. Grant browser local-network/camera permission if prompted.
@@ -143,7 +143,7 @@ The browser-local setting contains only the normalised device URL. Never put a c
 
 ### SecurePi / IMX500
 
-SecurePi is separate from the Camera Module 3 service. It runs on Raspberry Pi 5 + Sony IMX500, performs edge inference, and sends outbound authenticated events to Node. Follow [docs/securepi-flowguard-edge-ai.md](docs/securepi-flowguard-edge-ai.md). Do not restore a copied `edge/securepi/` folder. Do not claim physical pest/model or snapshot-upload interoperability until the documented hardware/parser/contract checks pass.
+SecurePi is separate from the Camera Module 3 service. It runs on Raspberry Pi 5 + Sony IMX500, performs edge inference, and sends outbound authenticated events to Node. Its runtime is the canonical external repository [charlisaa/updated_securePi_FlowGuard](https://github.com/charlisaa/updated_securePi_FlowGuard) (owned and maintained separately; not deployed from this repository). Follow [docs/securepi-flowguard-edge-ai.md](docs/securepi-flowguard-edge-ai.md). Do not restore a copied `edge/securepi/` folder. Do not claim physical pest/model or snapshot-upload interoperability until the documented hardware/parser/contract checks pass.
 
 ## Demo-data checklist
 
@@ -193,4 +193,4 @@ SecurePi is separate from the Camera Module 3 service. It runs on Raspberry Pi 5
 | Monitoring, edge, incidents | camera/zone/detection/edge/incident routes, models, migrations, tests |
 | Chatbot, Gemini, support, Knowledge Base | `AIChatPopup.jsx`, support route/services/models/migrations/tests |
 | Incident analytics | `IncidentAnalytics.jsx`, `client/src/utils/incidentAnalytics.js`, incident migration/tests |
-| Pi and SecurePi | `raspberry-pi/`, `client/src/constants/piCamera.js`, `docs/securepi-flowguard-edge-ai.md` |
+| Pi and SecurePi | `raspberry-pi4/`, `client/src/constants/piCamera.js`, `docs/securepi-flowguard-edge-ai.md` |

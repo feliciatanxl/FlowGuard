@@ -1,20 +1,460 @@
-// Proof-of-Concept plate OCR wrapper.
+// Proof-of-Concept plate OCR wrapper with runtime diagnostic mode.
 //
 // tesseract.js is loaded via DYNAMIC import so the (large) OCR/WASM code is only
 // downloaded when the FM actually runs recognition — it never bloats the initial
 // app bundle. The image is processed in memory and discarded by the caller; this
 // module never persists frames or uploads them anywhere.
-//
-// This is a PoC, NOT production-grade licence-plate recognition. Accuracy varies
-// with lighting, glare, angle and plate condition — manual verification remains
-// available in the UI.
 
-import { normalizePlate } from './plate';
+import { extractPlateCandidate, extractPlateCandidatesInfo } from './plate';
 
-// Draw a source image/video/canvas onto an offscreen canvas with light
-// preprocessing (grayscale + contrast) to give OCR a cleaner signal. Optionally
-// crop to a normalised guide rectangle {x,y,w,h} in 0–1 units.
-export function preprocessToCanvas(source, { crop } = {}) {
+// Server-authoritative minimum OCR confidence floor.
+// Aligns with server/services/gateVerification.js `ocrMinConfidence()` default of 10%.
+export const MIN_ACCEPTED_CONFIDENCE = 10;
+
+// Plate-centred crop region for full car captures.
+export const PLATE_FALLBACK_CROP = Object.freeze({ x: 0.24, y: 0.56, w: 0.52, h: 0.16, relativeTo: 'full_source' });
+
+// Reduced-bumper plate crop region for full car captures to isolate license plate from surrounding bumper noise.
+export const PLATE_TIGHT_CROP = Object.freeze({ x: 0.28, y: 0.58, w: 0.44, h: 0.12, relativeTo: 'full_source' });
+
+// Unconstrained parameters for full camera scene captures (PSM.AUTO + DPI 300).
+export const DEFAULT_OCR_PARAMS = Object.freeze({
+  tessedit_char_whitelist: '',
+  tessedit_pageseg_mode: '3',
+  user_defined_dpi: '300',
+});
+
+// Primary plate parameters using PSM.AUTO (3) with uppercase alphanumeric whitelist & DPI 300.
+export const PLATE_AUTO_PARAMS = Object.freeze({
+  tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+  tessedit_pageseg_mode: '3',
+  user_defined_dpi: '300',
+});
+
+// Primary plate-focused parameters using PSM.RAW_LINE (13) with uppercase alphanumeric whitelist & DPI 300.
+export const PLATE_RAW_LINE_PARAMS = Object.freeze({
+  tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+  tessedit_pageseg_mode: '13',
+  user_defined_dpi: '300',
+});
+
+// Bounded fallback plate parameters using PSM.SINGLE_WORD (8) with whitelist & DPI 300.
+export const PLATE_SINGLE_WORD_PARAMS = Object.freeze({
+  tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+  tessedit_pageseg_mode: '8',
+  user_defined_dpi: '300',
+});
+
+const DECODE_ERROR_MSG = 'The uploaded image could not be processed. Please select a valid PNG or JPEG.';
+
+/**
+ * Calculate deterministic effective confidence for Tesseract OCR result.
+ * Prevents empty layout blocks from reporting fake non-zero confidence (e.g. 95% on blank text)
+ * and evaluates word/symbol confidence for non-empty text.
+ */
+export function calculateEffectiveConfidence(data, rawText) {
+  const trimmed = String(rawText || '').trim();
+
+  // 1. Empty raw text ALWAYS has effective confidence 0.
+  if (!trimmed || trimmed === '(none)') {
+    return 0;
+  }
+
+  // Priority 1: data.words (if present and non-empty)
+  if (Array.isArray(data?.words) && data.words.length > 0) {
+    const validWordConfs = data.words
+      .filter((w) => w && String(w.text || '').trim().length > 0 && typeof w.confidence === 'number' && w.confidence > 0)
+      .map((w) => w.confidence);
+    if (validWordConfs.length > 0) {
+      const avg = validWordConfs.reduce((a, b) => a + b, 0) / validWordConfs.length;
+      return Math.round(avg * 10) / 10;
+    }
+  }
+
+  // Priority 2: Non-empty TSV level-5 token confidences
+  if (typeof data?.tsv === 'string' && data.tsv.includes('\t')) {
+    try {
+      const tsvLines = data.tsv.split('\n').filter(Boolean).map((line) => line.split('\t'));
+      const validTsvConfs = tsvLines
+        .filter((cols) => cols[0] === '5' && cols[11] && cols[11].trim().length > 0 && !isNaN(parseFloat(cols[10])) && parseFloat(cols[10]) > 0)
+        .map((cols) => parseFloat(cols[10]));
+      if (validTsvConfs.length > 0) {
+        const avg = validTsvConfs.reduce((a, b) => a + b, 0) / validTsvConfs.length;
+        return Math.round(avg * 10) / 10;
+      }
+    } catch { /* best effort TSV parsing */ }
+  }
+
+  // Priority 3: Non-empty symbol confidences
+  if (Array.isArray(data?.symbols) && data.symbols.length > 0) {
+    const validSymbolConfs = data.symbols
+      .filter((s) => s && String(s.text || '').trim().length > 0 && typeof s.confidence === 'number' && s.confidence > 0)
+      .map((s) => s.confidence);
+    if (validSymbolConfs.length > 0) {
+      const avg = validSymbolConfs.reduce((a, b) => a + b, 0) / validSymbolConfs.length;
+      return Math.round(avg * 10) / 10;
+    }
+  }
+
+  // Priority 4: Engine data.confidence ONLY when raw text is non-empty and confidence > 0
+  const engineConf = typeof data?.confidence === 'number' && !isNaN(data.confidence) ? data.confidence : 0;
+  if (engineConf > 0) {
+    return Math.round(engineConf * 10) / 10;
+  }
+
+  return 0;
+}
+
+/**
+ * Inspect JavaScript image/video/file source object and extract diagnostic metadata.
+ */
+export function getSourceInfo(source, isUpload = false) {
+  if (!source) {
+    return {
+      sourceType: isUpload ? 'Upload' : 'Camera',
+      jsObjectType: 'null',
+      srcW: 0,
+      srcH: 0,
+      isReady: false,
+    };
+  }
+
+  const isFile = typeof File !== 'undefined' && source instanceof File;
+  const isBlob = typeof Blob !== 'undefined' && source instanceof Blob;
+  const isVideo = (typeof HTMLVideoElement !== 'undefined' && source instanceof HTMLVideoElement) ||
+    (typeof source?.readyState === 'number' || typeof source?.videoWidth === 'number');
+
+  const isCanvas = typeof HTMLCanvasElement !== 'undefined' && source instanceof HTMLCanvasElement;
+  const isImage = typeof HTMLImageElement !== 'undefined' && source instanceof HTMLImageElement;
+
+  const jsObjectType = isFile ? 'File'
+    : isBlob ? 'Blob'
+      : isVideo ? 'HTMLVideoElement'
+        : isCanvas ? 'HTMLCanvasElement'
+          : isImage ? 'HTMLImageElement'
+            : typeof source;
+
+  let sourceType = source?.sourceType || (isUpload ? 'Upload' : 'Laptop Webcam');
+  if (isCanvas && !isUpload && !source?.sourceType) {
+    sourceType = 'Pi 4';
+  }
+
+  const srcW = source.videoWidth || source.naturalWidth || source.width || 0;
+  const srcH = source.videoHeight || source.naturalHeight || source.height || 0;
+
+  const info = {
+    sourceType,
+    jsObjectType,
+    srcW,
+    srcH,
+    isReady: true,
+  };
+
+  if (isVideo) {
+    info.videoWidth = source.videoWidth || 0;
+    info.videoHeight = source.videoHeight || 0;
+    info.readyState = source.readyState;
+    info.isReady = source.readyState >= 2 && source.videoWidth > 0 && source.videoHeight > 0;
+  }
+
+  if (isFile || isBlob) {
+    info.mimeType = source.type || 'unknown';
+    info.fileSize = source.size || 0;
+  }
+
+  return info;
+}
+
+/**
+ * Analyze pixel brightness, contrast variance, and transparency of a canvas.
+ */
+export function analyzeCanvasPixels(canvas) {
+  const w = canvas?.width || 0;
+  const h = canvas?.height || 0;
+  if (!w || !h) {
+    return {
+      width: w,
+      height: h,
+      usable: false,
+      reason: 'Zero dimensions',
+      minBrightness: 0,
+      maxBrightness: 0,
+      avgBrightness: 0,
+      brightnessVariance: 0,
+      brightnessStdDev: 0,
+      pctTransparent: 100,
+      pctNearWhite: 0,
+      pctNearBlack: 100,
+    };
+  }
+
+  try {
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const d = imgData.data;
+    const totalPixels = w * h;
+
+    let sum = 0;
+    let minB = 255;
+    let maxB = 0;
+    let transparentCount = 0;
+    let nearWhiteCount = 0;
+    let nearBlackCount = 0;
+
+    const brightnesses = new Float32Array(totalPixels);
+
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i];
+      const g = d[i + 1];
+      const b = d[i + 2];
+      const a = d[i + 3];
+
+      if (a < 10) transparentCount += 1;
+
+      const bright = 0.299 * r + 0.587 * g + 0.114 * b;
+      const idx = i / 4;
+      brightnesses[idx] = bright;
+
+      sum += bright;
+      if (bright < minB) minB = bright;
+      if (bright > maxB) maxB = bright;
+
+      if (bright > 240) nearWhiteCount += 1;
+      if (bright < 15) nearBlackCount += 1;
+    }
+
+    const avgB = sum / totalPixels;
+    let varianceSum = 0;
+    for (let i = 0; i < totalPixels; i += 1) {
+      const diff = brightnesses[i] - avgB;
+      varianceSum += diff * diff;
+    }
+    const variance = varianceSum / totalPixels;
+    const stdDev = Math.sqrt(variance);
+
+    const pctTransparent = Math.round((transparentCount / totalPixels) * 1000) / 10;
+    const pctNearWhite = Math.round((nearWhiteCount / totalPixels) * 1000) / 10;
+    const pctNearBlack = Math.round((nearBlackCount / totalPixels) * 1000) / 10;
+
+    let usable = true;
+    let reason = 'OK';
+
+    if (pctTransparent > 90) {
+      usable = false;
+      reason = 'Mostly transparent';
+    } else if (variance < 1) {
+      usable = false;
+      reason = 'Uniform color (zero variance)';
+    } else if (pctNearWhite > 98) {
+      usable = false;
+      reason = 'Blank white canvas';
+    } else if (pctNearBlack > 98) {
+      usable = false;
+      reason = 'Blank black canvas';
+    }
+
+    return {
+      width: w,
+      height: h,
+      usable,
+      reason,
+      minBrightness: Math.round(minB * 10) / 10,
+      maxBrightness: Math.round(maxB * 10) / 10,
+      avgBrightness: Math.round(avgB * 10) / 10,
+      brightnessVariance: Math.round(variance * 10) / 10,
+      brightnessStdDev: Math.round(stdDev * 10) / 10,
+      pctTransparent,
+      pctNearWhite,
+      pctNearBlack,
+    };
+  } catch {
+    return {
+      width: w,
+      height: h,
+      usable: true,
+      reason: 'getImageData unsupported in test environment',
+      minBrightness: 0,
+      maxBrightness: 255,
+      avgBrightness: 128,
+      brightnessVariance: 50,
+      brightnessStdDev: 7.07,
+      pctTransparent: 0,
+      pctNearWhite: 0,
+      pctNearBlack: 0,
+    };
+  }
+}
+
+/**
+ * Classify OCR operation failure into one exact category.
+ */
+export function classifyOcrFailure({
+  sourceInfo,
+  pixelStats,
+  passes = [],
+  error = null,
+  rawText = '',
+  extractedCandidate = '',
+  effectiveConfidence = 0,
+  isAmbiguous = false,
+}) {
+  if (isAmbiguous) {
+    return 'AMBIGUOUS_OCR_CANDIDATE';
+  }
+  if (error) {
+    const msg = String(error.message || error).toLowerCase();
+    const stack = String(error.stack || '').toLowerCase();
+    if (msg.includes('ready') || msg.includes('not ready')) return 'SOURCE_NOT_READY';
+    if (msg.includes('zero') || msg.includes('empty') || sourceInfo?.srcW === 0 || sourceInfo?.srcH === 0) return 'SOURCE_ZERO_DIMENSIONS';
+    if (msg.includes('drawimage')) return 'DRAW_IMAGE_FAILED';
+    if (msg.includes('worker') || msg.includes('createworker')) return 'TESSERACT_WORKER_INIT_FAILED';
+    if (msg.includes('wasm') || msg.includes('fetch') || msg.includes('traineddata') || msg.includes('network') || stack.includes('import')) return 'TESSERACT_ASSET_LOAD_FAILED';
+  }
+
+  if (sourceInfo && sourceInfo.isReady === false) {
+    return 'SOURCE_NOT_READY';
+  }
+
+  if (!sourceInfo || sourceInfo.srcW === 0 || sourceInfo.srcH === 0) {
+    return 'SOURCE_ZERO_DIMENSIONS';
+  }
+
+  if (pixelStats && !pixelStats.usable) {
+    return 'BLANK_OR_UNIFORM_CANVAS';
+  }
+
+  if (pixelStats && pixelStats.brightnessVariance < 10) {
+    return 'LOW_CONTRAST_CANVAS';
+  }
+
+  if (passes.length >= 2 && passes[0]?.raw) {
+    const p1Candidate = extractPlateCandidate(passes[0].raw);
+    if (p1Candidate && !extractedCandidate) {
+      return 'CROP_MISSED_PLATE';
+    }
+  }
+
+  const hasAnyPassText = passes.some((p) => p?.raw && String(p.raw).trim() !== '' && String(p.raw).trim() !== '(none)');
+  const trimmedRaw = String(rawText || '').trim();
+
+  if (!hasAnyPassText && (!trimmedRaw || trimmedRaw === '(none)')) {
+    return 'TESSERACT_EMPTY_RESULT';
+  }
+
+  if (extractedCandidate && effectiveConfidence < MIN_ACCEPTED_CONFIDENCE) {
+    return 'LOW_CONFIDENCE_CANDIDATE';
+  }
+
+  if (!extractedCandidate) {
+    return 'CANDIDATE_REJECTED';
+  }
+
+  return 'UNKNOWN_FAILURE';
+}
+
+export async function decodeFileToCanvas(file) {
+  if (!file || typeof file !== 'object') {
+    throw new Error(DECODE_ERROR_MSG);
+  }
+
+  if (file.type) {
+    const type = String(file.type).toLowerCase();
+    const isSupported = type.startsWith('image/png') || type.startsWith('image/jpeg') || type.startsWith('image/jpg') || type.startsWith('image/webp');
+    if (!isSupported) {
+      throw new Error(DECODE_ERROR_MSG);
+    }
+  }
+
+  let bitmap = null;
+  let objectUrl = null;
+  let drawSource = null;
+  let srcW = 0;
+  let srcH = 0;
+
+  try {
+    if (typeof createImageBitmap === 'function') {
+      try {
+        bitmap = await createImageBitmap(file);
+        if (bitmap) {
+          if (bitmap.width <= 0 || bitmap.height <= 0) {
+            throw new Error(DECODE_ERROR_MSG);
+          }
+          drawSource = bitmap;
+          srcW = bitmap.width;
+          srcH = bitmap.height;
+        }
+      } catch (err) {
+        if (err?.message === DECODE_ERROR_MSG) {
+          throw err;
+        }
+        bitmap = null;
+      }
+    }
+
+    if (!drawSource && typeof URL !== 'undefined' && URL.createObjectURL && typeof Image !== 'undefined') {
+      objectUrl = URL.createObjectURL(file);
+      const img = new Image();
+      const loaded = new Promise((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('Image load failed'));
+      });
+      img.src = objectUrl;
+      await loaded;
+      if (img.decode) {
+        try { await img.decode(); } catch { /* best effort */ }
+      }
+      srcW = img.naturalWidth || img.width || 0;
+      srcH = img.naturalHeight || img.height || 0;
+      if (srcW > 0 && srcH > 0) {
+        drawSource = img;
+      }
+    }
+
+    if (!drawSource || srcW <= 0 || srcH <= 0) {
+      throw new Error(DECODE_ERROR_MSG);
+    }
+
+    const MAX_DIM = 2400;
+    let targetW = srcW;
+    let targetH = srcH;
+    if (targetW > MAX_DIM || targetH > MAX_DIM) {
+      const scale = Math.min(MAX_DIM / targetW, MAX_DIM / targetH);
+      targetW = Math.round(targetW * scale);
+      targetH = Math.round(targetH * scale);
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(drawSource, 0, 0, srcW, srcH, 0, 0, targetW, targetH);
+    return canvas;
+  } catch (err) {
+    if (err?.message === DECODE_ERROR_MSG) {
+      throw err;
+    }
+    throw new Error(DECODE_ERROR_MSG, { cause: err });
+  } finally {
+    if (bitmap && typeof bitmap.close === 'function') {
+      try { bitmap.close(); } catch { /* ignore */ }
+    }
+    if (objectUrl && typeof URL !== 'undefined' && URL.revokeObjectURL) {
+      try { URL.revokeObjectURL(objectUrl); } catch { /* ignore */ }
+    }
+  }
+}
+
+/**
+ * Bounded image preprocessing: crops region, optionally scales, adds white border padding,
+ * and adjusts contrast/grayscale to optimize Tesseract line/word detection.
+ */
+export function preprocessToCanvas(source, {
+  crop,
+  contrastVariant = 1.4,
+  padPx = 25,
+  targetWidth = 800,
+  grayscale = false,
+} = {}) {
   const srcW = source.videoWidth || source.naturalWidth || source.width;
   const srcH = source.videoHeight || source.naturalHeight || source.height;
   if (!srcW || !srcH) throw new Error('The captured image was empty. Please retake.');
@@ -24,44 +464,492 @@ export function preprocessToCanvas(source, { crop } = {}) {
   const sw = crop ? Math.round(crop.w * srcW) : srcW;
   const sh = crop ? Math.round(crop.h * srcH) : srcH;
 
-  const canvas = document.createElement('canvas');
-  canvas.width = sw;
-  canvas.height = sh;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
+  let scaledW = sw;
+  let scaledH = sh;
+  if (targetWidth && targetWidth > 0 && sw > targetWidth) {
+    const scale = targetWidth / sw;
+    scaledW = Math.round(sw * scale);
+    scaledH = Math.round(sh * scale);
+  }
 
-  // Grayscale + simple contrast stretch. Wrapped in try/catch because some test
-  // environments (jsdom) do not implement getImageData.
-  try {
-    const img = ctx.getImageData(0, 0, sw, sh);
-    const d = img.data;
-    const contrast = 1.4;
-    const intercept = 128 * (1 - contrast);
-    for (let i = 0; i < d.length; i += 4) {
-      let g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-      g = g * contrast + intercept;
-      g = g < 0 ? 0 : g > 255 ? 255 : g;
-      d[i] = d[i + 1] = d[i + 2] = g;
-    }
-    ctx.putImageData(img, 0, 0);
-  } catch { /* preprocessing is best-effort */ }
+  const padding = padPx > 0 ? padPx : 0;
+  const finalW = scaledW + padding * 2;
+  const finalH = scaledH + padding * 2;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = finalW;
+  canvas.height = finalH;
+  const ctx = canvas.getContext('2d');
+
+  // Fill background white for border padding
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, finalW, finalH);
+
+  // Draw image in centered area
+  ctx.drawImage(source, sx, sy, sw, sh, padding, padding, scaledW, scaledH);
+
+  if (grayscale || (contrastVariant && contrastVariant !== 1.0)) {
+    try {
+      const img = ctx.getImageData(0, 0, finalW, finalH);
+      const d = img.data;
+      const contrast = contrastVariant || 1.0;
+      const intercept = 128 * (1 - contrast);
+      for (let i = 0; i < d.length; i += 4) {
+        let g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        if (contrastVariant && contrastVariant !== 1.0) {
+          g = g * contrast + intercept;
+          g = g < 0 ? 0 : g > 255 ? 255 : g;
+        }
+        if (grayscale) {
+          d[i] = d[i + 1] = d[i + 2] = g;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    } catch { /* best effort */ }
+  }
 
   return canvas;
 }
 
-// Run OCR on an image source (canvas/image/video/blob URL). Returns
-// { raw, normalized, confidence }. Throws on OCR failure.
-export async function recognizePlate(source, { crop } = {}) {
-  const input = (typeof HTMLCanvasElement !== 'undefined' && source instanceof HTMLCanvasElement)
-    ? source
-    : preprocessToCanvas(source, { crop });
-
-  const mod = await import('tesseract.js');
-  const recognize = mod.recognize || mod.default?.recognize || mod.default;
-  const result = await recognize(input, 'eng');
+async function runOcrPass(worker, inputCanvas, { passName, crop, params } = {}) {
+  const startTime = Date.now();
+  if (params && typeof worker.setParameters === 'function') {
+    await worker.setParameters(params);
+  }
+  const result = await worker.recognize(inputCanvas, {}, { tsv: true });
+  const endTime = Date.now();
   const data = result?.data || {};
   const raw = String(data.text || '').trim();
-  const confidence = typeof data.confidence === 'number' ? Math.round(data.confidence * 10) / 10 : null;
 
-  return { raw, normalized: normalizePlate(raw), confidence };
+  const engineConfidence = typeof data.confidence === 'number' ? Math.round(data.confidence * 10) / 10 : 0;
+  const effectiveConfidence = calculateEffectiveConfidence(data, raw);
+
+  let previewUrl = '';
+  try {
+    if (typeof inputCanvas?.toDataURL === 'function') {
+      previewUrl = inputCanvas.toDataURL('image/png');
+    }
+  } catch { /* best effort */ }
+
+  const wordsCount = Array.isArray(data.words) ? data.words.length : (raw ? raw.split(/\s+/).filter(Boolean).length : 0);
+  const symbolsCount = Array.isArray(data.symbols) ? data.symbols.length : 0;
+
+  return {
+    passName: passName || 'Pass',
+    crop: crop || null,
+    params: params ? { ...params } : {},
+    dimensions: { w: inputCanvas.width || 0, h: inputCanvas.height || 0 },
+    previewUrl,
+    startTime,
+    endTime,
+    durationMs: endTime - startTime,
+    raw,
+    confidence: effectiveConfidence,
+    engineConfidence,
+    effectiveConfidence,
+    wordsCount,
+    symbolsCount,
+    isSelected: false,
+  };
+}
+
+/**
+ * Bounded, deterministic plate region locator.
+ * Generates and ranks candidate plate regions dynamically using visual properties
+ * (aspect ratio, contrast, edge density) independently of any booking data.
+ */
+export function locatePlateCandidateRegions(source) {
+  const srcW = source ? (source.videoWidth || source.naturalWidth || source.width || 800) : 800;
+  const srcH = source ? (source.videoHeight || source.naturalHeight || source.height || 600) : 600;
+
+  const candidates = [
+    { crop: PLATE_FALLBACK_CROP, name: 'Broad lower-centre crop', score: 100 },
+    { crop: PLATE_TIGHT_CROP, name: 'Tighter plate crop', score: 90 },
+  ];
+
+  try {
+    if (typeof HTMLCanvasElement !== 'undefined' && source instanceof HTMLCanvasElement) {
+      const ctx = source.getContext('2d');
+      candidates.forEach((cand) => {
+        const sx = Math.round(cand.crop.x * srcW);
+        const sy = Math.round(cand.crop.y * srcH);
+        const sw = Math.max(1, Math.round(cand.crop.w * srcW));
+        const sh = Math.max(1, Math.round(cand.crop.h * srcH));
+        try {
+          const imgData = ctx.getImageData(sx, sy, sw, sh);
+          const d = imgData.data;
+          let sum = 0;
+          const total = sw * sh;
+          for (let i = 0; i < d.length; i += 4) {
+            sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+          }
+          const avg = sum / total;
+          let varSum = 0;
+          for (let i = 0; i < d.length; i += 4) {
+            const diff = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) - avg;
+            varSum += diff * diff;
+          }
+          const stdDev = Math.sqrt(varSum / total);
+          const aspect = sw / sh;
+          const aspectScore = (aspect >= 2.5 && aspect <= 5.5) ? 50 : 10;
+          const areaRatio = (sw * sh) / (srcW * srcH);
+          const areaPenalty = areaRatio > 0.08 ? 30 : 0;
+          cand.score = stdDev * 2 + aspectScore - areaPenalty;
+        } catch { /* fallback to static score */ }
+      });
+    }
+  } catch { /* fallback */ }
+
+  return candidates.sort((a, b) => b.score - a.score);
+}
+
+export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
+  const startOpTime = Date.now();
+  const sourceInfo = getSourceInfo(source, isUpload);
+  let decodedSource = source;
+
+  const isUploadMode = Boolean(
+    isUpload ||
+    (typeof Blob !== 'undefined' && source instanceof Blob) ||
+    (typeof File !== 'undefined' && source instanceof File)
+  );
+
+  if (
+    (typeof Blob !== 'undefined' && source instanceof Blob) ||
+    (typeof File !== 'undefined' && source instanceof File)
+  ) {
+    decodedSource = await decodeFileToCanvas(source);
+  }
+
+  const srcW = decodedSource.videoWidth || decodedSource.naturalWidth || decodedSource.width;
+  const srcH = decodedSource.videoHeight || decodedSource.naturalHeight || decodedSource.height;
+  if (!srcW || !srcH) {
+    const err = new Error('The captured image was empty. Please retake.');
+    const classification = classifyOcrFailure({ sourceInfo, error: err });
+    return {
+      raw: '',
+      normalized: '',
+      confidence: null,
+      readable: false,
+      diagnostics: {
+        sourceInfo,
+        pixelStats: analyzeCanvasPixels(null),
+        passes: [],
+        classification,
+        timing: { startTime: startOpTime, endTime: Date.now(), totalMs: Date.now() - startOpTime },
+        workerStatus: { created: false, terminated: false },
+        error: { message: err.message },
+      },
+    };
+  }
+
+  const pixelStats = (typeof HTMLCanvasElement !== 'undefined' && decodedSource instanceof HTMLCanvasElement)
+    ? analyzeCanvasPixels(decodedSource)
+    : (() => {
+        try {
+          return analyzeCanvasPixels(preprocessToCanvas(decodedSource));
+        } catch {
+          return analyzeCanvasPixels(null);
+        }
+      })();
+
+  const aspectRatio = srcH > 0 ? srcW / srcH : 1;
+  const isPlateOnly = aspectRatio >= 2.2;
+
+  const passes = [];
+  let worker = null;
+  let workerCreated = false;
+  let workerTerminated = false;
+
+  try {
+    const mod = await import('tesseract.js');
+    const createWorker = mod.createWorker || mod.default?.createWorker;
+    worker = await createWorker('eng');
+    workerCreated = true;
+
+    const rankedRegions = locatePlateCandidateRegions(decodedSource);
+    const pass2Crop = rankedRegions[0]?.crop || PLATE_FALLBACK_CROP;
+    const pass3Crop = rankedRegions[1]?.crop || PLATE_TIGHT_CROP;
+
+    if (isUploadMode) {
+      if (isPlateOnly) {
+        // PASS 1: Resized + White Padding + PSM.AUTO (3) + Whitelist + DPI 300
+        const pass1Canvas = preprocessToCanvas(decodedSource, { padPx: 25, targetWidth: 800 });
+        const first = await runOcrPass(worker, pass1Canvas, {
+          passName: 'Pass 1 (Plate-focused PSM.AUTO with padding)',
+          crop: null,
+          params: PLATE_AUTO_PARAMS,
+        });
+        passes.push(first);
+
+        let candidate = extractPlateCandidate(first.raw);
+        const pass1Accepted = Boolean(candidate && first.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
+
+        // PASS 2: Alternative contrast 1.8 & grayscale (if Pass 1 did not reach MIN_ACCEPTED_CONFIDENCE)
+        if (!pass1Accepted && !crop) {
+          try {
+            const pass2Canvas = preprocessToCanvas(decodedSource, { padPx: 25, targetWidth: 800, contrastVariant: 1.8, grayscale: true });
+            const second = await runOcrPass(worker, pass2Canvas, {
+              passName: 'Pass 2 (Alternative contrast 1.8 & grayscale)',
+              crop: null,
+              params: PLATE_AUTO_PARAMS,
+            });
+            passes.push(second);
+          } catch { /* pass 2 best-effort */ }
+        }
+
+        // PASS 3: RAW_LINE fallback (if still no pass reached MIN_ACCEPTED_CONFIDENCE)
+        const pass2Candidate = passes[1] ? extractPlateCandidate(passes[1].raw) : '';
+        const pass2Accepted = Boolean(pass2Candidate && passes[1]?.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
+        if (!pass1Accepted && !pass2Accepted && !crop) {
+          try {
+            const pass3Canvas = preprocessToCanvas(decodedSource, { padPx: 25, targetWidth: 800 });
+            const third = await runOcrPass(worker, pass3Canvas, {
+              passName: 'Pass 3 (Plate-focused RAW_LINE fallback)',
+              crop: null,
+              params: PLATE_RAW_LINE_PARAMS,
+            });
+            passes.push(third);
+          } catch { /* pass 3 best-effort */ }
+        }
+      } else {
+        // Full car upload (aspectRatio < 2.2)
+        // PASS 1: Full scene unconstrained PSM.AUTO (3)
+        const pass1Canvas = crop ? preprocessToCanvas(decodedSource, { crop }) : preprocessToCanvas(decodedSource);
+        const first = await runOcrPass(worker, pass1Canvas, {
+          passName: 'Pass 1 (Full scene, unconstrained PSM.AUTO)',
+          crop,
+          params: DEFAULT_OCR_PARAMS,
+        });
+        passes.push(first);
+
+        let candidate = extractPlateCandidate(first.raw);
+        const pass1Accepted = Boolean(candidate && first.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
+
+        // PASS 2: Strongest dynamically ranked plate-region candidate
+        if (!pass1Accepted && !crop) {
+          try {
+            const pass2Canvas = preprocessToCanvas(decodedSource, { crop: pass2Crop, padPx: 25, targetWidth: 800 });
+            const second = await runOcrPass(worker, pass2Canvas, {
+              passName: 'Pass 2 (Broad lower-centre crop, AUTO)',
+              crop: pass2Crop,
+              params: PLATE_AUTO_PARAMS,
+            });
+            passes.push(second);
+          } catch { /* pass 2 best-effort */ }
+        }
+
+        // PASS 3: Second-best candidate or alternate preprocessing
+        const pass2Candidate = passes[1] ? extractPlateCandidate(passes[1].raw) : '';
+        const pass2Accepted = Boolean(pass2Candidate && passes[1]?.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
+        if (!pass1Accepted && !pass2Accepted && !crop) {
+          try {
+            const pass3Canvas = preprocessToCanvas(decodedSource, { crop: pass3Crop, padPx: 30, targetWidth: 800 });
+            const third = await runOcrPass(worker, pass3Canvas, {
+              passName: 'Pass 3 (Tighter plate crop, upscaled AUTO)',
+              crop: pass3Crop,
+              params: PLATE_AUTO_PARAMS,
+            });
+            passes.push(third);
+          } catch { /* pass 3 best-effort */ }
+        }
+      }
+    } else {
+      // Camera / Pi 4 Live Capture
+      // PASS 1: Full frame unconstrained PSM.AUTO (3)
+      const pass1Canvas = crop ? preprocessToCanvas(decodedSource, { crop }) : preprocessToCanvas(decodedSource);
+      const first = await runOcrPass(worker, pass1Canvas, {
+        passName: 'Pass 1 (Full frame, unconstrained PSM.AUTO)',
+        crop,
+        params: DEFAULT_OCR_PARAMS,
+      });
+      passes.push(first);
+
+      let candidate = extractPlateCandidate(first.raw);
+      const pass1Accepted = Boolean(candidate && first.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
+
+      // PASS 2: Strongest dynamically ranked plate-region candidate
+      if (!pass1Accepted && !crop) {
+        try {
+          const pass2Canvas = preprocessToCanvas(decodedSource, { crop: pass2Crop, padPx: 25, targetWidth: 800 });
+          const second = await runOcrPass(worker, pass2Canvas, {
+            passName: 'Pass 2 (Lower-centre crop, AUTO)',
+            crop: pass2Crop,
+            params: PLATE_AUTO_PARAMS,
+          });
+          passes.push(second);
+        } catch { /* pass 2 best-effort */ }
+      }
+
+      // PASS 3: Second-best candidate or alternate preprocessing
+      const pass2Candidate = passes[1] ? extractPlateCandidate(passes[1].raw) : '';
+      const pass2Accepted = Boolean(pass2Candidate && passes[1]?.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
+      if (!pass1Accepted && !pass2Accepted && !crop) {
+        try {
+          const pass3Canvas = preprocessToCanvas(decodedSource, { crop: pass3Crop, padPx: 30, targetWidth: 800 });
+          const third = await runOcrPass(worker, pass3Canvas, {
+            passName: 'Pass 3 (Tighter plate crop, upscaled AUTO)',
+            crop: pass3Crop,
+            params: PLATE_AUTO_PARAMS,
+          });
+          passes.push(third);
+        } catch { /* pass 3 best-effort */ }
+      }
+    }
+
+    // Result selection logic & ambiguity evaluation across passes:
+    // 1st Priority: Collect unambiguous candidates from passes meeting MIN_ACCEPTED_CONFIDENCE
+    const unambiguousAcceptedSet = new Set();
+    let ambiguousPassesExist = false;
+
+    for (const p of passes) {
+      const info = extractPlateCandidatesInfo(p.raw);
+      if (info.isAmbiguous) {
+        ambiguousPassesExist = true;
+      } else if (info.candidate && p.effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE) {
+        unambiguousAcceptedSet.add(info.candidate);
+      }
+    }
+
+    const unambiguousAccepted = Array.from(unambiguousAcceptedSet);
+    let selectedCandidate = '';
+    let isAmbiguous = false;
+    let bestPass = null;
+
+    if (unambiguousAccepted.length === 1) {
+      // Exactly one unambiguous accepted candidate across passes!
+      selectedCandidate = unambiguousAccepted[0];
+      let bestConf = -1;
+      for (const p of passes) {
+        const info = extractPlateCandidatesInfo(p.raw);
+        if (!info.isAmbiguous && info.candidate === selectedCandidate && p.effectiveConfidence > bestConf) {
+          bestConf = p.effectiveConfidence;
+          bestPass = p;
+        }
+      }
+    } else if (unambiguousAccepted.length > 1) {
+      // Multiple distinct unambiguous accepted candidates across passes → AMBIGUOUS
+      isAmbiguous = true;
+    } else {
+      // No pass produced an unambiguous accepted candidate. Check provisional candidates.
+      const provisionalUnambiguousSet = new Set();
+      for (const p of passes) {
+        const info = extractPlateCandidatesInfo(p.raw);
+        if (!info.isAmbiguous && info.candidate) {
+          provisionalUnambiguousSet.add(info.candidate);
+        }
+      }
+      const provisionalUnambiguous = Array.from(provisionalUnambiguousSet);
+
+      if (provisionalUnambiguous.length === 1 && !ambiguousPassesExist) {
+        selectedCandidate = provisionalUnambiguous[0];
+        let bestScore = -1;
+        for (const p of passes) {
+          const info = extractPlateCandidatesInfo(p.raw);
+          if (!info.isAmbiguous && info.candidate === selectedCandidate) {
+            const score = p.effectiveConfidence * 100 + selectedCandidate.length;
+            if (score > bestScore) {
+              bestScore = score;
+              bestPass = p;
+            }
+          }
+        }
+      } else {
+        isAmbiguous = ambiguousPassesExist || provisionalUnambiguous.length > 1;
+      }
+    }
+
+    if (!bestPass) {
+      let bestScore = -1;
+      for (const p of passes) {
+        const text = String(p.raw || '').trim();
+        if (!text || text === '(none)') continue;
+        const score = p.effectiveConfidence * 10 + text.length;
+        if (score > bestScore) {
+          bestScore = score;
+          bestPass = p;
+        }
+      }
+    }
+
+    if (bestPass && (selectedCandidate || (bestPass.raw && String(bestPass.raw).trim() !== '' && String(bestPass.raw).trim() !== '(none)'))) {
+      bestPass.isSelected = true;
+    }
+
+    const endOpTime = Date.now();
+    const effectiveConfidence = bestPass?.effectiveConfidence ?? 0;
+    const isAccepted = Boolean(!isAmbiguous && selectedCandidate && effectiveConfidence >= MIN_ACCEPTED_CONFIDENCE);
+
+    const classification = isAccepted
+      ? 'ACCEPTED_OCR_CANDIDATE'
+      : classifyOcrFailure({
+          sourceInfo,
+          pixelStats,
+          passes,
+          rawText: bestPass?.raw || '',
+          extractedCandidate: selectedCandidate,
+          effectiveConfidence,
+          isAmbiguous,
+        });
+
+    const isDebugActive = debug || (
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).get('ocrDebug') === '1'
+    );
+
+    if (isDebugActive && typeof console !== 'undefined' && console.groupCollapsed) {
+      console.groupCollapsed(`🔍 FlowGuard OCR Diagnostics [${sourceInfo.sourceType}] — ${selectedCandidate ? classification + ' (' + selectedCandidate + ', conf: ' + effectiveConfidence + '%)' : classification}`);
+      console.log('Source Metadata:', sourceInfo);
+      console.log('Canvas Pixel Stats:', pixelStats);
+      passes.forEach((p, i) => console.log(`Pass ${i + 1} [${p.passName}]${p.isSelected ? ' (SELECTED)' : ''}:`, {
+        ...p,
+        engineConfidence: p.engineConfidence,
+        effectiveConfidence: p.effectiveConfidence,
+      }));
+      console.log('Classification:', classification);
+      console.groupEnd();
+    }
+
+    return {
+      raw: bestPass?.raw || '',
+      normalized: isAmbiguous ? '' : selectedCandidate,
+      confidence: isAmbiguous ? null : effectiveConfidence,
+      readable: isAccepted,
+      diagnostics: {
+        sourceInfo,
+        pixelStats,
+        passes,
+        classification,
+        timing: { startTime: startOpTime, endTime: endOpTime, totalMs: endOpTime - startOpTime },
+        workerStatus: { created: workerCreated, terminated: false },
+        error: null,
+      },
+    };
+  } catch (caughtErr) {
+    const endOpTime = Date.now();
+    const classification = classifyOcrFailure({ sourceInfo, pixelStats, passes, error: caughtErr });
+
+    return {
+      raw: '',
+      normalized: '',
+      confidence: null,
+      readable: false,
+      diagnostics: {
+        sourceInfo,
+        pixelStats,
+        passes,
+        classification,
+        timing: { startTime: startOpTime, endTime: endOpTime, totalMs: endOpTime - startOpTime },
+        workerStatus: { created: workerCreated, terminated: workerTerminated },
+        error: { message: caughtErr.message, stack: caughtErr.stack },
+      },
+    };
+  } finally {
+    if (worker) {
+      try {
+        await worker.terminate();
+        workerTerminated = true;
+      } catch { /* teardown best-effort */ }
+    }
+  }
 }

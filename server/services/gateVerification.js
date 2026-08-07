@@ -17,11 +17,11 @@
 const models = require('../models');
 const whatsapp = require('./whatsappService');
 const { writeGateAccessLog } = require('./gateAudit');
-const { normalizePlate } = require('../utils/plate');
+const { normalizePlate, isPlausiblePlate } = require('../utils/plate');
 
 const { Op } = require('sequelize');
 
-// --- Stable machine reason codes (frontend maps these to copy) ---
+// Stable machine reason codes (frontend maps these to copy)
 const REASON = Object.freeze({
   VERIFIED: 'VERIFIED',
   BOOKING_NOT_FOUND: 'BOOKING_NOT_FOUND',
@@ -33,6 +33,7 @@ const REASON = Object.freeze({
   NOT_ARRIVED: 'NOT_ARRIVED',
   TOO_EARLY: 'TOO_EARLY',
   TOO_LATE: 'TOO_LATE',
+  BAY_OCCUPIED: 'BAY_OCCUPIED',
   PLATE_REQUIRED: 'PLATE_REQUIRED',
   PLATE_MISMATCH: 'PLATE_MISMATCH',
   OCR_UNREADABLE: 'OCR_UNREADABLE',
@@ -42,8 +43,9 @@ const REASON = Object.freeze({
   AUDIT_FAILED: 'AUDIT_FAILED',
 });
 
-// Failures an authorised FM may deliberately override in MANUAL mode.
-const REVIEWABLE = new Set([REASON.PLATE_MISMATCH, REASON.OCR_UNREADABLE, REASON.CAMERA_UNAVAILABLE]);
+// Failures an authorised FM may deliberately override in MANUAL mode (genuine technical capture failures only).
+// Genuine plate mismatch, timing, status and bay occupancy failures are NEVER overridable.
+const REVIEWABLE = new Set([REASON.OCR_UNREADABLE, REASON.CAMERA_UNAVAILABLE]);
 
 const VALID_ACTIONS = new Set(['entry', 'exit']);
 const VALID_MODES = new Set(['automatic', 'manual']);
@@ -60,6 +62,7 @@ const MESSAGES = {
   [REASON.NOT_ARRIVED]: 'Vehicle has no recorded arrival — cannot record exit.',
   [REASON.TOO_EARLY]: 'Arrival is earlier than the approved window.',
   [REASON.TOO_LATE]: 'Arrival is later than the approved window.',
+  [REASON.BAY_OCCUPIED]: 'The loading bay is still occupied by the previous vehicle. Wait until it has left before admitting the next booking.',
   [REASON.PLATE_REQUIRED]: 'A vehicle plate is required to verify this booking.',
   [REASON.PLATE_MISMATCH]: 'Detected plate does not match the approved booking.',
   [REASON.OCR_UNREADABLE]: 'The plate could not be read automatically.',
@@ -68,6 +71,15 @@ const MESSAGES = {
   [REASON.INVALID_ACTION]: "action must be 'entry' or 'exit'.",
   [REASON.AUDIT_FAILED]: 'The decision could not be safely recorded — access was not granted.',
 };
+
+// Conservative confidence floor for AUTOMATIC OCR. Deliberately LOW so a clear
+// plate is never rejected just for a modest score; it only screens out obviously
+// unusable reads. A plate with NO confidence reported is not rejected on that
+// basis. Read per call so tests/deploys pick up changes.
+function ocrMinConfidence() {
+  const min = Number(process.env.GATE_OCR_MIN_CONFIDENCE);
+  return Number.isFinite(min) ? min : 10;
+}
 
 // Env-configurable arrival grace (minutes). Read per call so tests/deploys pick up changes.
 function graceWindow() {
@@ -115,16 +127,21 @@ function checkArrivalWindow(booking, now) {
 
 // Pure decision core. Given the loaded booking + normalised inputs, decide the
 // base outcome WITHOUT touching the DB. Returns a plain decision descriptor.
-function decide(booking, input, now) {
-  const { action, verificationMode, observedPlate, plateSource } = input;
+function decide(booking, input, now, { bayOccupied = false } = {}) {
+  const { action, verificationMode, observedPlate, plateSource, plateConfidence } = input;
   const expectedPlate = normalizePlate(booking.license_plate);
   const observed = normalizePlate(observedPlate);
-  const hasPlate = observed.length > 0;
-  const plateMatched = hasPlate ? observed === expectedPlate : null;
+  // Server-authoritative quality gate: for AUTOMATIC OCR the observed value must
+  // independently look like a real plate (and clear a conservative confidence
+  // floor). The server never trusts the browser's "readable" flag — noisy/low
+  // confidence OCR is "unreadable" (rescan), never a mismatch. Manual and
+  // simulation keep the original "any non-empty plate" behaviour.
+  const usable = isPlateUsable({ observed, verificationMode, plateSource, plateConfidence });
+  const plateMatched = usable ? observed === expectedPlate : null;
 
   const base = {
     expectedPlate,
-    observedPlate: observed || null,
+    observedPlate: usable ? observed : null,
     plateMatched,
     warning: null,
   };
@@ -135,12 +152,14 @@ function decide(booking, input, now) {
     if (booking.status === 'Arrived') return { ...base, grant: true, code: REASON.ALREADY_ARRIVED, idempotent: true };
     if (booking.status !== 'Confirmed') return { ...base, grant: false, code: REASON.BOOKING_NOT_CONFIRMED };
 
-    // Confirmed → time window, then plate.
+    // Confirmed → time window, bay occupancy, then plate.
     const window = checkArrivalWindow(booking, now);
     if (window.code) return { ...base, grant: false, code: window.code };
     base.warning = window.warning || null;
 
-    const plate = evaluatePlate({ hasPlate, plateMatched, verificationMode, plateSource });
+    if (bayOccupied) return { ...base, grant: false, code: REASON.BAY_OCCUPIED };
+
+    const plate = evaluatePlate({ usable, plateMatched, verificationMode, plateSource });
     if (plate) return { ...base, grant: false, code: plate };
     return { ...base, grant: true, code: REASON.VERIFIED, transitionTo: 'Arrived' };
   }
@@ -150,18 +169,30 @@ function decide(booking, input, now) {
   if (booking.status === 'Completed') return { ...base, grant: true, code: REASON.ALREADY_COMPLETED, idempotent: true };
   if (booking.status !== 'Arrived') return { ...base, grant: false, code: REASON.NOT_ARRIVED };
 
-  const plate = evaluatePlate({ hasPlate, plateMatched, verificationMode, plateSource });
+  const plate = evaluatePlate({ usable, plateMatched, verificationMode, plateSource });
   if (plate) return { ...base, grant: false, code: plate };
   return { ...base, grant: true, code: REASON.VERIFIED, transitionTo: 'Completed' };
 }
 
+// Is the observed plate good enough to make a MATCH/MISMATCH decision on? For
+// automatic OCR this demands a plausible plate that clears the confidence floor,
+// so garbage OCR (e.g. "YWERETANCLPPEMYY") is treated as unreadable rather than
+// silently compared. Manual/simulation only require a non-empty value.
+function isPlateUsable({ observed, verificationMode, plateSource, plateConfidence }) {
+  if (!observed) return false;
+  if (plateSource === 'ocr' || verificationMode === 'automatic') {
+    if (!isPlausiblePlate(observed)) return false;
+    if (plateConfidence != null && Number.isFinite(plateConfidence) && plateConfidence < ocrMinConfidence()) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // Plate gate shared by entry & exit. Returns a deny reason code, or null to pass.
-function evaluatePlate({ hasPlate, plateMatched, verificationMode, plateSource }) {
-  if (!hasPlate) {
-    // Automatic OCR that came back empty is a reviewable "unreadable"; anything
-    // else missing a plate is a hard PLATE_REQUIRED.
-    if (verificationMode === 'automatic' && plateSource === 'ocr') return REASON.OCR_UNREADABLE;
-    if (verificationMode === 'automatic' && plateSource === 'simulation') return REASON.OCR_UNREADABLE;
+function evaluatePlate({ usable, plateMatched, verificationMode, plateSource }) {
+  if (!usable) {
+    if (plateSource === 'ocr' || plateSource === 'simulation') return REASON.OCR_UNREADABLE;
     return REASON.PLATE_REQUIRED;
   }
   return plateMatched ? null : REASON.PLATE_MISMATCH;
@@ -197,7 +228,11 @@ async function notifyAfterCommit(booking, transitionTo) {
     } else if (transitionTo === 'Completed') {
       await whatsapp.sendBookingCompleted(booking);
       const next = await models.Booking.findOne({
-        where: { loading_bay: booking.loading_bay, status: { [Op.in]: ['Pending', 'Confirmed'] } },
+        where: {
+          loading_bay: booking.loading_bay,
+          status: 'Confirmed',
+          booking_ref: { [Op.ne]: booking.booking_ref },
+        },
         order: [['slot_start', 'ASC'], ['createdAt', 'ASC']],
       });
       if (next) {
@@ -245,11 +280,8 @@ async function verifyGate(input, actor, opts = {}) {
     fmId: actor?.id ?? null,
     fmEmail: actor?.email ?? null,
   };
-  const normalizedInput = { action, verificationMode, observedPlate, plateSource };
+  const normalizedInput = { action, verificationMode, observedPlate, plateSource, plateConfidence };
 
-  // Everything that touches the booking row runs inside a transaction with a row
-  // lock when the DB supports it; unit tests mock the models (no sequelize) and
-  // fall back to a plain, lock-free path.
   const sequelize = models.sequelize;
   const useTx = sequelize && typeof sequelize.transaction === 'function';
 
@@ -259,7 +291,6 @@ async function verifyGate(input, actor, opts = {}) {
     const booking = await models.Booking.findOne(findOpts);
 
     if (!booking) {
-      // Audit the denial (best-effort — a failed audit must not mask a not-found).
       await safeAuditDenied({
         bookingRef, action, code: REASON.BOOKING_NOT_FOUND, verificationMode, plateSource,
         plateConfidence, expectedPlate: null, observedPlate: normalizePlate(observedPlate) || null,
@@ -274,14 +305,48 @@ async function verifyGate(input, actor, opts = {}) {
       };
     }
 
-    let outcome = decide(booking, normalizedInput, now);
+    // Transaction-safe per-bay advisory lock + occupancy check
+    let bayOccupied = false;
+    if (action === 'entry' && booking.status === 'Confirmed' && booking.loading_bay) {
+      if (t && sequelize && typeof sequelize.query === 'function') {
+        try {
+          const dialect = typeof sequelize.getDialect === 'function' ? sequelize.getDialect() : sequelize.options?.dialect;
+          if (!dialect || dialect === 'postgres') {
+            await sequelize.query('SELECT pg_advisory_xact_lock(hashtext(:bay));', {
+              replacements: { bay: String(booking.loading_bay) },
+              transaction: t,
+            });
+          }
+        } catch { /* best effort for non-postgres / test mocks */ }
+      }
+
+      if (models.Booking && typeof models.Booking.findOne === 'function') {
+        const occupied = await models.Booking.findOne({
+          where: {
+            loading_bay: booking.loading_bay,
+            status: 'Arrived',
+            booking_ref: { [Op.ne]: booking.booking_ref },
+          },
+          ...(t ? { transaction: t } : {}),
+        });
+        if (occupied) {
+          bayOccupied = true;
+        }
+      }
+    }
+
+    let outcome = decide(booking, normalizedInput, now, { bayOccupied });
     outcome.action = action;
     outcome.verificationMode = verificationMode;
 
-    // --- Manual override (FM only, manual mode, reviewable failures only) ---
+    // --- Manual override (FM only, manual mode, reviewable capture failures only) ---
     if (!outcome.grant && manualOverride && verificationMode === 'manual') {
       if (REVIEWABLE.has(outcome.code)) {
-        if (!overrideReason) {
+        const obsNorm = normalizePlate(observedPlate);
+        const expNorm = normalizePlate(booking.license_plate);
+        if (!obsNorm || obsNorm !== expNorm) {
+          outcome = { ...outcome, grant: false, code: REASON.PLATE_MISMATCH };
+        } else if (!overrideReason) {
           outcome = { ...outcome, grant: false, code: REASON.OVERRIDE_REASON_REQUIRED };
         } else {
           // Approved override: grant, and drive the transition the base check blocked.
@@ -297,7 +362,7 @@ async function verifyGate(input, actor, opts = {}) {
           };
         }
       }
-      // Non-reviewable failures are NOT overridable — the deny stands unchanged.
+      // Non-reviewable failures (PLATE_MISMATCH, TOO_EARLY, TOO_LATE, BAY_OCCUPIED, BOOKING_NOT_CONFIRMED, etc.) are NOT overridable.
     }
 
     const commonAudit = {
@@ -316,8 +381,6 @@ async function verifyGate(input, actor, opts = {}) {
     };
 
     if (outcome.grant) {
-      // Audit FIRST so a granted decision that cannot be recorded fails closed
-      // (the booking is never transitioned without a durable audit row).
       try {
         await writeGateAccessLog({ ...commonAudit, decision: 'granted', reasonCode: outcome.originalReasonCode || outcome.code },
           t ? { transaction: t } : {});
@@ -328,7 +391,6 @@ async function verifyGate(input, actor, opts = {}) {
         throw err; // rolls the transaction back (no status change persists)
       }
 
-      // Idempotent already-Arrived/already-Completed: no DB change, no notify.
       if (outcome.transitionTo && !outcome.idempotent) {
         const patch = outcome.transitionTo === 'Arrived'
           ? { status: 'Arrived', arrived_at: now }
@@ -349,15 +411,13 @@ async function verifyGate(input, actor, opts = {}) {
     if (err && err.__auditFailed) {
       return { http: 500, body: { access: 'DENIED', reasonCode: REASON.AUDIT_FAILED, message: MESSAGES[REASON.AUDIT_FAILED] } };
     }
-    throw err; // real DB error → route maps to 500
+    throw err;
   }
 
-  // Early-returned bodies (not-found / would never reach here with outcome).
   if (result.body) return result;
 
   const { outcome, booking } = result;
 
-  // Post-commit driver notifications for a real (non-idempotent) transition.
   if (outcome.grant && outcome.transitionTo && !outcome.idempotent) {
     outcome.nextInLine = await notifyAfterCommit(booking, outcome.transitionTo);
   }

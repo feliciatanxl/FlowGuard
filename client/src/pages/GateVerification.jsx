@@ -17,7 +17,7 @@ import {
   CAMERA_STATUS, resolvePreferredCameraSource, fetchPiSnapshotBitmap,
   PI_CAMERA_STREAM_URL, PI_CONNECTION_STATUS, stopStream, drawBitmapToCanvasAndClose,
 } from '../utils/cameraSource';
-import { recognizePlate } from '../utils/plateOcr';
+import { recognizePlate, decodeFileToCanvas } from '../utils/plateOcr';
 import { formatSingaporeBookingDateTime } from '../constants/datetime';
 import '../css/Dashboard.css';
 import '../css/Booking.css';
@@ -30,6 +30,10 @@ const CLOUD_QR_ENABLED =
   String(import.meta.env?.VITE_ENABLE_CLOUD_QR_FALLBACK ?? '').toLowerCase() !== 'false';
 const CLOUD_QR_DELAY_MS = Number(import.meta.env?.VITE_QR_CLOUD_FALLBACK_DELAY_MS) || 2500;
 const CAMERA_DEBUG = String(import.meta.env?.VITE_CAMERA_DEBUG ?? '').toLowerCase() === 'true';
+const isOcrDebug = Boolean(
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).get('ocrDebug') === '1'
+);
 
 // Scanner service states → short inline status copy (Phase 2 scanner states).
 const SCANNER_STATE_TEXT = {
@@ -73,9 +77,10 @@ const REASON_TEXT = {
   NOT_ARRIVED: 'No arrival is recorded for this booking — exit cannot be completed.',
   TOO_EARLY: 'The vehicle is earlier than the approved arrival window.',
   TOO_LATE: 'The vehicle is later than the approved arrival window.',
+  BAY_OCCUPIED: 'The loading bay is still occupied by the previous vehicle. Wait until it has left before admitting the next booking.',
   PLATE_REQUIRED: 'A vehicle plate is required to verify this booking.',
   PLATE_MISMATCH: 'Detected plate does not match the approved booking.',
-  OCR_UNREADABLE: 'The plate could not be read automatically.',
+  OCR_UNREADABLE: 'No valid vehicle plate could be read — rescan required. Align the plate and retake, upload a clearer image, or use manual verification.',
   CAMERA_UNAVAILABLE: 'The gate camera was unavailable.',
   OVERRIDE_REASON_REQUIRED: 'A manual override requires a reason.',
   INVALID_ACTION: 'Invalid gate action.',
@@ -148,10 +153,30 @@ const GateVerification = () => {
   const plateVideoRef = useRef(null);
   const qrStopRef = useRef(null);
   const plateStopRef = useRef(null);
+  const plateScanTimeoutRef = useRef(null);
+  const ocrInFlightRef = useRef(false);
+  const ocrScanningActiveRef = useRef(false);
   const mountedRef = useRef(true);
   const cameraGenerationRef = useRef(0);
   const cameraAbortRef = useRef(null);
   const cameraStartPromiseRef = useRef(null);
+
+  const [cameraDiagnostics, setCameraDiagnostics] = useState({
+    sourceType: 'Laptop Webcam',
+    videoDimensions: '0×0',
+    capturedCanvas: '0×0',
+    frameNumber: 0,
+    ocrTriggered: false,
+    ocrInFlight: false,
+    lastScan: null,
+  });
+
+  const clearPlateScanTimer = () => {
+    if (plateScanTimeoutRef.current) {
+      clearTimeout(plateScanTimeoutRef.current);
+      plateScanTimeoutRef.current = null;
+    }
+  };
 
   const isCameraWorkCurrent = (generation) => (
     mountedRef.current && generation === cameraGenerationRef.current
@@ -175,6 +200,9 @@ const GateVerification = () => {
   };
 
   const stopPlateResources = () => {
+    clearPlateScanTimer();
+    ocrScanningActiveRef.current = false;
+    ocrInFlightRef.current = false;
     try { plateStopRef.current?.stop?.(); } catch { /* ignore */ }
     plateStopRef.current = null;
     stopStream(plateVideoRef.current);
@@ -484,6 +512,87 @@ const GateVerification = () => {
   };
 
   // --- PoC OCR ---
+  const captureWebcamFrame = () => {
+    const video = plateVideoRef.current;
+    if (!video) return null;
+    const vw = video.videoWidth || 1280;
+    const vh = video.videoHeight || 720;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = vw;
+    canvas.height = vh;
+    canvas.sourceType = 'Laptop Webcam';
+    const ctx = canvas.getContext('2d');
+    try {
+      if (ctx) ctx.drawImage(video, 0, 0, vw, vh);
+    } catch { /* ignore draw errors on mock elements */ }
+
+    return {
+      canvas,
+      vw,
+      vh,
+      cw: canvas.width,
+      ch: canvas.height,
+    };
+  };
+
+  const scanCameraFrame = async (generation = cameraGenerationRef.current) => {
+    if (!isCameraWorkCurrent(generation) || !ocrScanningActiveRef.current) return;
+    if (ocrInFlightRef.current) return;
+
+    clearPlateScanTimer();
+
+    const captured = captureWebcamFrame();
+    if (!captured) {
+      if (isCameraWorkCurrent(generation) && ocrScanningActiveRef.current) {
+        plateScanTimeoutRef.current = setTimeout(() => scanCameraFrame(generation), 500);
+      }
+      return;
+    }
+
+    ocrInFlightRef.current = true;
+    const frameNum = (cameraDiagnostics.frameNumber || 0) + 1;
+    const lastScanTime = new Date().toLocaleTimeString();
+
+    setCameraDiagnostics((prev) => ({
+      ...prev,
+      sourceType: 'Laptop Webcam',
+      videoDimensions: `${captured.vw}×${captured.vh}`,
+      capturedCanvas: `${captured.cw}×${captured.ch}`,
+      frameNumber: frameNum,
+      ocrTriggered: true,
+      ocrInFlight: true,
+      lastScan: lastScanTime,
+    }));
+
+    let result;
+    try {
+      result = await runOcrOn(captured.canvas, CAMERA_SOURCE.WEBCAM, generation);
+    } catch {
+      result = null;
+    } finally {
+      ocrInFlightRef.current = false;
+      if (isCameraWorkCurrent(generation)) {
+        setCameraDiagnostics((prev) => ({
+          ...prev,
+          ocrInFlight: false,
+        }));
+      }
+    }
+
+    if (!isCameraWorkCurrent(generation) || !ocrScanningActiveRef.current) return result;
+
+    if (result && result.readable) {
+      ocrScanningActiveRef.current = false;
+      clearPlateScanTimer();
+    } else {
+      if (ocrScanningActiveRef.current) {
+        plateScanTimeoutRef.current = setTimeout(() => scanCameraFrame(generation), 1800);
+      }
+    }
+    return result;
+  };
+
   const startPlateCam = () => {
     if (cameraStartPromiseRef.current) return cameraStartPromiseRef.current;
     const { generation, signal } = beginCameraWork();
@@ -504,6 +613,10 @@ const GateVerification = () => {
         setPlateCamActive(true);
         setPlateCameraState(SCANNER_STATE.CAMERA_READY);
         setSourceStatus(CAMERA_STATUS.WEBCAM_ACTIVE);
+
+        // Start automatic camera OCR scanning loop
+        ocrScanningActiveRef.current = true;
+        scanCameraFrame(generation);
       } catch (e) {
         if (!isCameraWorkCurrent(generation) || e?.code === 'aborted') return;
         setOcrError(e.message || cameraErrorMessage('unknown'));
@@ -523,11 +636,14 @@ const GateVerification = () => {
     setOcrBusy(true);
     setOcrError('');
     try {
-      const result = await recognizePlate(source);
+      const isUpload = capturedFrom === CAMERA_SOURCE.UPLOAD;
+      const result = await recognizePlate(source, { isUpload, debug: isOcrDebug });
       if (!isCameraWorkCurrent(generation)) return null;
       setOcr({ ...result, simulated: false });
-      if (!result.normalized) {
-        setOcrError('No plate text could be read. Retake the photo, or use manual verification.');
+      if (!result.readable) {
+        // Garbage/no plate: never submitted as an observed plate (see submitAutomatic),
+        // so this is a rescan prompt, not a mismatch.
+        setOcrError('No valid vehicle plate could be read. Align the plate clearly and retake the image, upload a clearer image, or use manual verification.');
       }
       setPlateSource('ocr');
       setActualPlateSource(capturedFrom);
@@ -544,8 +660,11 @@ const GateVerification = () => {
   const captureAndRead = async () => {
     if (!plateVideoRef.current) return;
     const generation = cameraGenerationRef.current;
-    await runOcrOn(plateVideoRef.current, CAMERA_SOURCE.WEBCAM, generation);
-    if (isCameraWorkCurrent(generation)) stopPlateCam();
+    ocrScanningActiveRef.current = true;
+    const res = await scanCameraFrame(generation);
+    if (res?.readable && isCameraWorkCurrent(generation)) {
+      stopPlateCam();
+    }
   };
 
   // Raspberry Pi Camera Module 3 plate capture: grab one fresh still onto an in-memory
@@ -585,21 +704,14 @@ const GateVerification = () => {
     e.target.value = ''; // allow re-selecting the same file; nothing is persisted
     if (!file) return;
     const { generation } = beginCameraWork();
-    const url = URL.createObjectURL(file);
     try {
-      const img = new Image();
-      const loaded = new Promise((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error('Could not read that image.'));
-      });
-      img.src = url;
-      await loaded;
+      const decodedCanvas = await decodeFileToCanvas(file);
       if (!isCameraWorkCurrent(generation)) return;
-      await runOcrOn(img, CAMERA_SOURCE.UPLOAD, generation);
+      await runOcrOn(decodedCanvas, CAMERA_SOURCE.UPLOAD, generation);
     } catch (err) {
-      if (isCameraWorkCurrent(generation)) setOcrError(err.message || 'Could not read that image.');
-    } finally {
-      URL.revokeObjectURL(url); // never keep the image around
+      if (isCameraWorkCurrent(generation)) {
+        setOcrError(err.message || 'The uploaded image could not be processed. Please select a valid PNG or JPEG.');
+      }
     }
   };
 
@@ -613,12 +725,30 @@ const GateVerification = () => {
   };
 
   const retakePlate = () => {
-    stopAllCameras();
+    clearPlateScanTimer();
     setOcr(null);
     setOcrError('');
     setSimInput('');
     setPlateSource('ocr');
     setActualPlateSource(null);
+    setCameraDiagnostics({
+      sourceType: 'Laptop Webcam',
+      videoDimensions: '0×0',
+      capturedCanvas: '0×0',
+      frameNumber: 0,
+      ocrTriggered: false,
+      ocrInFlight: false,
+      lastScan: null,
+    });
+
+    const isStreamActive = plateCamActive && plateVideoRef.current;
+    if (isStreamActive) {
+      ocrScanningActiveRef.current = true;
+      scanCameraFrame(cameraGenerationRef.current);
+    } else {
+      stopAllCameras();
+      startPlateCam();
+    }
   };
 
   const switchPlateSource = (next) => {
@@ -751,6 +881,10 @@ const GateVerification = () => {
   const decisionGranted = decision?.access === 'GRANTED';
   const decisionOverride = Boolean(decision?.overrideUsed);
   const reviewable = Boolean(decision && decision.access === 'DENIED' && decision.manualReviewRequired);
+  const decisionUnreadable = decision?.reasonCode === 'OCR_UNREADABLE';
+
+  // Simulated readings carry no `readable` flag; fall back to "has a normalised plate".
+  const ocrReadable = Boolean(ocr && (ocr.readable ?? ocr.normalized));
 
   // Manual-tab field validity (Section 5: disable Verify until both are valid).
   const manualRefValid = isValidBookingRef(bookingRef);
@@ -1038,15 +1172,90 @@ const GateVerification = () => {
                   {ocr && (
                     <div className="gate-ocr-result" aria-label="OCR result">
                       {ocr.simulated && <span className="gate-badge sim">Simulated LPR — PoC demonstration</span>}
+                      {/* Raw text is kept for troubleshooting only — it is never
+                          submitted as the observed plate when no plate was read. */}
                       <div className="gate-ocr-row"><span>Raw OCR text</span><code>{ocr.raw || '(none)'}</code></div>
-                      <div className="gate-ocr-row"><span>Normalised plate</span><strong>{ocr.normalized || '(none)'}</strong></div>
+                      <div className="gate-ocr-row">
+                        <span>Normalised plate</span>
+                        {ocrReadable
+                          ? <strong>{ocr.normalized}</strong>
+                          : (ocr?.normalized ? <strong className="gate-ocr-unreadable">{ocr.normalized} (Low Confidence / Unverified)</strong> : <strong className="gate-ocr-unreadable">Not detected</strong>)}
+                      </div>
                       <div className="gate-ocr-row">
                         <span>OCR confidence</span>
                         <span>{ocr.confidence == null ? '—' : `${ocr.confidence}%`}</span>
                       </div>
                     </div>
                   )}
+
+                  {isOcrDebug && (plateCamActive || ocr?.diagnostics) && (
+                    <section className="gate-ocr-debug-card" aria-label="OCR Diagnostics">
+                      <div className="gate-debug-header">
+                        <h3>🔍 OCR Runtime Diagnostics <code>(?ocrDebug=1)</code></h3>
+                        <span className={`gate-debug-badge ${ocr?.readable ? 'ok' : (ocr?.diagnostics?.classification === 'LOW_CONFIDENCE_CANDIDATE' ? 'warn' : 'fail')}`}>
+                          {ocr?.diagnostics?.classification || (ocr?.readable ? 'ACCEPTED_OCR_CANDIDATE' : (plateCamActive ? 'SCANNING_CAMERA' : 'UNKNOWN'))}
+                        </span>
+                      </div>
+
+                      <div className="gate-debug-grid">
+                        <div className="gate-debug-box">
+                          <h4>Camera Diagnostics</h4>
+                          <ul>
+                            <li>Source Type: <strong>{cameraDiagnostics.sourceType || ocr?.diagnostics?.sourceInfo?.sourceType || (plateCamSource === CAMERA_SOURCE.UPLOAD ? 'Upload' : 'Laptop Webcam')}</strong></li>
+                            <li>Video Dimensions: <strong>{cameraDiagnostics.videoDimensions !== '0×0' ? cameraDiagnostics.videoDimensions : (ocr?.diagnostics?.sourceInfo?.srcW ? `${ocr.diagnostics.sourceInfo.srcW} × ${ocr.diagnostics.sourceInfo.srcH}` : '0 × 0')}</strong></li>
+                            <li>Captured Canvas: <strong>{cameraDiagnostics.capturedCanvas !== '0×0' ? cameraDiagnostics.capturedCanvas : (ocr?.diagnostics?.pixelStats?.width ? `${ocr.diagnostics.pixelStats.width} × ${ocr.diagnostics.pixelStats.height}` : '0 × 0')}</strong></li>
+                            <li>Frame Number: <strong>{cameraDiagnostics.frameNumber}</strong></li>
+                            <li>OCR Triggered: <strong>{cameraDiagnostics.ocrTriggered ? 'yes' : 'no'}</strong></li>
+                            <li>OCR In Flight: <strong>{ocrBusy || cameraDiagnostics.ocrInFlight ? 'yes' : 'no'}</strong></li>
+                            <li>Last Scan: <strong>{cameraDiagnostics.lastScan || 'Never'}</strong></li>
+                          </ul>
+                        </div>
+
+                        <div className="gate-debug-box">
+                          <h4>OCR Result & Canvas Validation</h4>
+                          <ul>
+                            <li>Raw OCR: <strong>{ocr?.raw ? `"${ocr.raw}"` : '(none)'}</strong></li>
+                            <li>Normalised Plate: <strong>{ocr?.normalized || '(none)'}</strong></li>
+                            <li>Confidence: <strong>{ocr?.confidence == null ? '—' : `${ocr.confidence}%`}</strong></li>
+                            <li>Classification: <strong>{ocr?.diagnostics?.classification || (ocr?.readable ? 'ACCEPTED_OCR_CANDIDATE' : (ocr ? 'UNREADABLE' : 'NONE'))}</strong></li>
+                            {ocr?.diagnostics?.pixelStats && (
+                              <>
+                                <li>Canvas Size: <strong>{ocr.diagnostics.pixelStats?.width} × {ocr.diagnostics.pixelStats?.height}</strong></li>
+                                <li>Usability: <strong className={ocr.diagnostics.pixelStats?.usable ? 'gate-ok' : 'gate-ocr-unreadable'}>{ocr.diagnostics.pixelStats?.usable ? 'Usable' : `Unusable (${ocr.diagnostics.pixelStats?.reason})`}</strong></li>
+                              </>
+                            )}
+                          </ul>
+                        </div>
+                      </div>
+
+                      {Array.isArray(ocr?.diagnostics?.passes) && ocr.diagnostics.passes.length > 0 && (
+                        <div className="gate-debug-passes">
+                          <h4>Bounded OCR Pass Previews ({ocr.diagnostics.passes.length} pass{ocr.diagnostics.passes.length > 1 ? 'es' : ''})</h4>
+                          <div className="gate-debug-pass-list">
+                            {ocr.diagnostics.passes.map((p, idx) => (
+                              <div key={idx} className={`gate-debug-pass-item${p.isSelected ? ' selected-pass' : ''}`}>
+                                <div className="gate-debug-pass-thumb">
+                                  {p.previewUrl ? (
+                                    <img src={p.previewUrl} alt={p.passName} />
+                                  ) : (
+                                    <div className="gate-debug-no-thumb">No Preview</div>
+                                  )}
+                                </div>
+                                <div className="gate-debug-pass-info">
+                                  <p className="pass-title"><strong>Pass {idx + 1}: {p.passName}</strong> ({p.durationMs}ms){p.isSelected ? ' [SELECTED]' : ''}</p>
+                                  <p>Dimensions: <code>{p.dimensions?.w} × {p.dimensions?.h}</code> | Crop: <code>{p.crop ? `${p.crop.x},${p.crop.y},${p.crop.w},${p.crop.h}` : 'None'}</code></p>
+                                  <p>Params: <code>PSM {p.params?.tessedit_pageseg_mode || '3'}</code> | Whitelist: <code>{p.params?.tessedit_char_whitelist ? 'A-Z,0-9' : 'None'}</code></p>
+                                  <p>Raw OCR: <strong>{p.raw ? `"${p.raw}"` : '(none)'}</strong> (Eff: {p.effectiveConfidence !== undefined ? `${p.effectiveConfidence}%` : (p.confidence !== null ? `${p.confidence}%` : 'N/A')}, Eng: {p.engineConfidence !== undefined ? `${p.engineConfidence}%` : 'N/A'})</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </section>
+                  )}
                 </div>
+
 
                 {/* Step 3: Verify */}
                 <div className="gate-block">
@@ -1127,13 +1336,19 @@ const GateVerification = () => {
                 <p>No decision yet. Complete the steps and press <strong>Verify</strong>.</p>
               </div>
             ) : (
-              <div className={`gate-decision ${decisionGranted ? 'granted' : 'denied'}`} role="status" aria-live="polite">
+              <div
+                className={`gate-decision ${decisionGranted ? 'granted' : decisionUnreadable ? 'unreadable' : 'denied'}`}
+                role="status"
+                aria-live="polite"
+              >
                 <div className="gate-decision-head">
-                  <span className="gate-decision-icon" aria-hidden="true">{decisionGranted ? '✓' : '✕'}</span>
+                  <span className="gate-decision-icon" aria-hidden="true">{decisionGranted ? '✓' : decisionUnreadable ? '⚠' : '✕'}</span>
                   <span className="gate-decision-title">
                     {decisionGranted
                       ? (decisionOverride ? 'ACCESS GRANTED — MANUAL OVERRIDE' : 'ACCESS GRANTED')
-                      : 'ACCESS DENIED'}
+                      : decisionUnreadable
+                        ? 'UNREADABLE — RESCAN REQUIRED'
+                        : 'ACCESS DENIED'}
                   </span>
                 </div>
 
@@ -1166,7 +1381,7 @@ const GateVerification = () => {
                   <div><span>Detected plate</span><strong>{decision.observedPlate || '—'}</strong></div>
                   <div>
                     <span>Plate check</span>
-                    <strong className={decision.plateMatched ? 'match' : 'mismatch'}>
+                    <strong className={decision.plateMatched == null ? '' : decision.plateMatched ? 'match' : 'mismatch'}>
                       {decision.plateMatched == null ? '—' : decision.plateMatched ? '✓ Match' : '✕ Mismatch'}
                     </strong>
                   </div>

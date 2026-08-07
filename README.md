@@ -28,7 +28,7 @@ Primary actors are Facilities Manager (`FM`), `Tenant`, `Staff`, public Driver, 
 - Raspberry Pi Camera Module 3 and laptop webcam capture, with manual image upload for enrolment.
 - FM-only Gate Scanner and V-Patrol with transient face tracking, recognition, multiple-face rejection, motion/head-turn liveness, and final same-person confirmation.
 - Unknown, stale, suspended, liveness-timeout, identity-mismatch, and multiple-face outcomes fail closed.
-- Gate Scanner toggles `Attendance` IN/OUT; V-Patrol writes `SecurityLog` access events without changing attendance.
+- Gate Scanner toggles `Attendance` IN/OUT via `POST /api/attendance/scan`. V-Patrol defaults to **Patrol only** (audit-only `SecurityLog` access events through `POST /api/facial-recognition/access-event`, no attendance change); its optional **Check In** / **Check Out** controls write an explicit `Attendance` IN/OUT through `POST /api/attendance/action`, and only after successful recognition, liveness, and final same-person confirmation. Denied or failed scans create no attendance. Duplicate-cycle protection is a bounded in-process guard — there is no `Attendance.cycleId` column, so it is not a durable cross-restart database guarantee.
 - FM-only side-effect-free evaluation workflow with stable participant labels.
 - Transactional PDPA off-boarding wipes the embedding, removes attendance, anonymises retained access logs, unlinks booking ownership, retires the evaluation mapping, deletes the user, and requests an AI cache refresh.
 - Liveness is a PoC head-turn/motion check, not certified anti-spoofing. Multiple-face rejection is not presented as tailgating detection. No VIP role exists.
@@ -75,7 +75,7 @@ Primary actors are Facilities Manager (`FM`), `Tenant`, `Staff`, public Driver, 
 - `client/` - React 19/Vite frontend. The Cloud Run image serves the built SPA through Nginx and proxies `/api/*` and `/user/*` to Node.
 - `server/` - Node.js/Express API, Sequelize models, RBAC, integration services, and cron cleanup.
 - `ai-service/` - private Python/FastAPI service for InsightFace, QR decoding, and YOLO.
-- `raspberry-pi/` - Raspberry Pi Camera Module 3 snapshot/MJPEG PoC.
+- `raspberry-pi4/` - Raspberry Pi 4 Camera Module 3 snapshot/MJPEG PoC.
 - `design/` - group design sources and rendered PNG diagrams.
 - `docs/` - group evidence/run sheet plus separately owned documentation.
 - `deployment/` - Google Cloud Run guidance and environment placeholders.
@@ -137,7 +137,7 @@ For local development, Node reaches FastAPI through `FACE_AI_URL=http://127.0.0.
 
 ## Edge AI — SecurePi
 
-SecurePi is FlowGuard's separate Raspberry Pi and Sony IMX500 edge-AI subsystem for local person/object tracking, unattended-object decisions, local evidence, and authenticated alert submission. Its source stays in dedicated hardware repositories while FlowGuard provides the edge API, browser, alert, incident, and notification integration. See the [SecurePi Edge AI integration guide](docs/securepi-flowguard-edge-ai.md); the recommended canonical reference from the current repository review is [feliciatanxl/SecurePi_FlowGuard](https://github.com/feliciatanxl/SecurePi_FlowGuard).
+SecurePi is FlowGuard's separate Raspberry Pi and Sony IMX500 edge-AI subsystem for local person/object tracking, unattended-object decisions, local evidence, and authenticated alert submission. Its source stays in dedicated hardware repositories while FlowGuard provides the edge API, browser, alert, incident, and notification integration. See the [SecurePi Edge AI integration guide](docs/securepi-flowguard-edge-ai.md). The canonical external SecurePi runtime — the Raspberry Pi 5 + Sony IMX500 implementation that has been physically used with this FlowGuard build — is [charlisaa/updated_securePi_FlowGuard](https://github.com/charlisaa/updated_securePi_FlowGuard). It is owned and maintained separately; FlowGuard configures and consumes its local stream and edge alerts but does not copy or deploy that runtime.
 
 ## Gate camera source (Raspberry Pi Camera Module 3)
 
@@ -180,7 +180,7 @@ Local Raspberry Pi 4 setup (Camera Module 3, Picamera2), serving port 8081:
 
 ```bash
 sudo apt install -y python3-picamera2 python3-opencv python3-flask
-cd raspberry-pi
+cd raspberry-pi4
 python3 pi_camera_steam.py
 # routes: /  /health  /video_feed  /snapshot   (hostname -I gives <PI-IP>)
 ```
@@ -236,7 +236,7 @@ These commands ran on the current `feature/facial-smart-logistics` branch after 
 | Client build | `cd client && npm run build` | **Passed:** 759 modules transformed; Vite retained the >500 kB chunk warning (main chunk approximately 801.50 kB). |
 | Server tests | `cd server && npm test -- --runInBand` | **Passed:** 46 Jest suites, 686 tests in 8 bounded batches; force-exit/open-handle notices remain. |
 | Safe AI tests | Four QR/track/zone files in the repository `.venv` | **Passed:** 4 files, 35 tests; 9 dependency deprecation warnings. |
-| Pi camera tests | `cd raspberry-pi && python -m pytest test_pi_camera_stream.py` | **Passed:** 1 file, 19 tests. |
+| Pi camera tests | `cd raspberry-pi4 && python -m pytest test_pi_camera_stream.py` | **Passed:** 1 file, 19 tests. |
 | Pi syntax | `python -m py_compile pi_camera_steam.py` | **Passed:** exit 0. |
 
 Not run automatically: `ai-service/test/test_webcam.py`, `test_manpower.py`, and `test_insightface.py` require a physical camera and/or private images; `test_yolo.py` requires `test.jpg` and real model inference. See [deployment.md](deployment.md) for commands, warnings, public smoke checks, and the manual deployed-verification matrix.

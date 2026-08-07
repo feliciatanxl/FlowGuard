@@ -14,3 +14,164 @@ export function platesMatch(a, b) {
   const nb = normalizePlate(b);
   return na.length > 0 && na === nb;
 }
+
+// Shape of a valid Singapore-style plate AFTER normalisation: 1–3 prefix letters,
+// 1–4 digits, one final checksum letter. e.g. "SBA5678Z", "GBG1234M", "S1A".
+// This is a deliberately STRICT gate — it rejects OCR noise ("YWERETANCLPPEMYY"),
+// words ("TOYOTA"), and digit-only junk ("123456789") so garbage can never be
+// treated as an observed plate. It is NOT fuzzy matching: the value must match
+// exactly, so a plausible plate always maps to exactly one vehicle.
+const PLATE_PATTERN = /^[A-Z]{1,3}[0-9]{1,4}[A-Z]$/;
+
+export function isPlausiblePlate(value) {
+  return PLATE_PATTERN.test(normalizePlate(value));
+}
+
+// Position-aware OCR character-confusion tables. These encode ONLY the visual
+// digit⇆letter confusions Tesseract makes on Singapore plates. A substitution is
+// applied SOLELY where a character's current type is impossible for its grammar
+// position — this is strict syntax repair, never fuzzy matching and never edit
+// distance. (Mirrors server/utils/plate.js exactly.)
+const DIGIT_TO_LETTER = { 0: 'O', 1: 'I', 2: 'Z', 5: 'S', 6: 'G', 8: 'B' };
+// The final checksum letter additionally recovers a Z mis-read as 7 — the exact
+// physically-observed failure ("SBA5678Z" → "SBA56787").
+const DIGIT_TO_LETTER_FINAL = { ...DIGIT_TO_LETTER, 7: 'Z' };
+const LETTER_TO_DIGIT = { O: '0', I: '1', L: '1', Z: '2', S: '5', G: '6', B: '8' };
+
+const isLetterChar = (c) => c >= 'A' && c <= 'Z';
+const isDigitChar = (c) => c >= '0' && c <= '9';
+
+// Resolve one character to the type its position REQUIRES: keep it when already
+// correct, substitute only a known OCR confusion, and return null when it cannot
+// legally occupy that position.
+function resolveLetter(c, table) {
+  if (isLetterChar(c)) return c;
+  return isDigitChar(c) ? (table[c] || null) : null;
+}
+function resolveDigit(c) {
+  if (isDigitChar(c)) return c;
+  return isLetterChar(c) ? (LETTER_TO_DIGIT[c] || null) : null;
+}
+
+// Controlled, position-aware plate-syntax repair. Returns a single plausible plate
+// ONLY when the plate GRAMMAR (1–3 prefix letters, 1–4 digits, 1 checksum letter)
+// forces exactly one interpretation of the raw value. It NEVER consults the
+// booked/expected plate, never uses fuzzy matching or edit distance, and returns
+// "" when the value is already unrepairable OR ambiguous (zero, or multiple
+// distinct, plausible reconstructions). A value that is already a valid plate is
+// returned unchanged — substitutions are never applied to a well-formed plate.
+export function repairPlateCandidate(value) {
+  const s = normalizePlate(value);
+  if (!s) return '';
+  if (isPlausiblePlate(s)) return s; // already valid → never substitute
+  if (!/\d/.test(s) || /^\d+$/.test(s)) return ''; // pure letter words and pure digit strings are never repaired into fake plates
+
+  const results = new Set();
+  for (let prefixLen = 1; prefixLen <= 3; prefixLen += 1) {
+    for (let numLen = 1; numLen <= 4; numLen += 1) {
+      if (prefixLen + numLen + 1 !== s.length) continue; // must fit the grammar length exactly
+      const out = [];
+      let ok = true;
+      for (let i = 0; i < s.length && ok; i += 1) {
+        let ch;
+        if (i < prefixLen) ch = resolveLetter(s[i], DIGIT_TO_LETTER); // prefix letters
+        else if (i < prefixLen + numLen) ch = resolveDigit(s[i]); // numeric block
+        else ch = resolveLetter(s[i], DIGIT_TO_LETTER_FINAL); // final checksum letter
+        if (ch == null) ok = false; else out.push(ch);
+      }
+      // Every completed reconstruction is plausible by construction.
+      if (ok) results.add(out.join(''));
+    }
+  }
+
+  // Accept ONLY a unique reconstruction; zero or multiple candidates → unreadable.
+  return results.size === 1 ? [...results][0] : '';
+}
+
+// Collect all plausible candidates (exact or position-repaired) from raw text
+// without receiving, reading or comparing against any expected booking plate.
+export function extractPlateCandidatesInfo(rawText) {
+  const text = String(rawText ?? '');
+  if (!text.trim()) return { candidate: '', isAmbiguous: false, candidates: [] };
+  const lines = text.split(/[\r\n]+/);
+
+  const exactCandidatesSet = new Set();
+  const repairedCandidatesSet = new Set();
+
+  // 1. Check whole lines (with spaces/hyphens stripped)
+  for (const line of lines) {
+    const stripped = normalizePlate(line);
+    if (isPlausiblePlate(stripped)) exactCandidatesSet.add(stripped);
+  }
+
+  // 2. Check spaced-out tokens on the same line that form an exact plausible plate when joined
+  for (const line of lines) {
+    const tokens = line.split(/[^A-Za-z0-9]+/).filter(Boolean);
+    for (let i = 0; i < tokens.length; i += 1) {
+      let joined = '';
+      for (let j = i; j < tokens.length && j < i + 4; j += 1) {
+        joined += tokens[j];
+        const norm = normalizePlate(joined);
+        if (isPlausiblePlate(norm)) exactCandidatesSet.add(norm);
+      }
+    }
+  }
+
+  // Collect clean tokens per line
+  const allTokens = [];
+  for (const line of lines) {
+    const tokens = line.split(/[^A-Za-z0-9]+/).filter(Boolean);
+    allTokens.push(...tokens);
+  }
+
+  // 3. Process individual tokens
+  for (const tok of allTokens) {
+    const norm = normalizePlate(tok);
+    if (isPlausiblePlate(norm)) {
+      exactCandidatesSet.add(norm);
+    } else {
+      // Check full token repair
+      const fullRepair = repairPlateCandidate(norm);
+      if (fullRepair) {
+        repairedCandidatesSet.add(fullRepair);
+      } else {
+        // If full token doesn't repair, check substrings of length 8 down to 7
+        for (let len = Math.min(8, norm.length); len >= 7; len -= 1) {
+          for (let k = 0; k <= norm.length - len; k += 1) {
+            const sub = norm.slice(k, k + len);
+            if (isPlausiblePlate(sub)) {
+              exactCandidatesSet.add(sub);
+            } else {
+              const subR = repairPlateCandidate(sub);
+              if (subR) repairedCandidatesSet.add(subR);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const allCandidates = Array.from(new Set([...exactCandidatesSet, ...repairedCandidatesSet]));
+
+  // Filter out any candidate that is a proper substring of another candidate in the pool
+  const distinctCandidates = allCandidates.filter(
+    (cand) => !allCandidates.some((other) => other !== cand && other.includes(cand))
+  );
+
+  if (distinctCandidates.length === 0) {
+    return { candidate: '', isAmbiguous: false, candidates: [] };
+  }
+  if (distinctCandidates.length === 1) {
+    return { candidate: distinctCandidates[0], isAmbiguous: false, candidates: distinctCandidates };
+  }
+
+  // distinctCandidates.length > 1 → AMBIGUOUS_OCR_CANDIDATE
+  return { candidate: '', isAmbiguous: true, candidates: distinctCandidates };
+}
+
+// Pull the single independently selected plate candidate out of raw OCR text.
+// Returns the single candidate if unique, or "" if 0 or ambiguous (>1).
+export function extractPlateCandidate(rawText) {
+  const info = extractPlateCandidatesInfo(rawText);
+  return info.candidate;
+}
