@@ -141,14 +141,35 @@ The external Pi5 node requires **two separate credentials** for distinct operati
 
 ## 5. Expected Pi5 Telemetry Endpoints
 
-The Security Camera UI polls the Pi5 device directly for optional live feed diagnostics. The Pi5 application should expose:
+The Security Camera UI polls the Pi5 device directly for live feed diagnostics and sensor telemetry. The Pi5 application should expose:
 
-1. **`GET /health`**
+1. **`GET /sensor_status`** *(Recommended)*
    - Returns: `200 OK`
-   - Body: `{"status": "online", "camera": "IMX500", "streaming": true, "latest_frame_age_seconds": 0.2}`
-2. **`GET /video_feed`**
+   - Body:
+     ```json
+     {
+       "connected": true,
+       "pir_ready": true,
+       "pir": true,
+       "motion": true,
+       "distance_cm": 42.5,
+       "baseline_distance_cm": 120.0,
+       "distance_change_cm": 77.5,
+       "object_close": true,
+       "trigger": "PIR",
+       "inspection_active": true,
+       "inspection_remaining_seconds": 10,
+       "after_hours": true,
+       "inspection_id": "pi5-cycle-1786137000"
+     }
+     ```
+   - Note: Exposing a top-level `inspection_id` / `inspection_cycle_id` allows cross-device hardware correlation.
+2. **`GET /health`**
+   - Returns: `200 OK`
+   - Body: `{"status": "online", "camera": "IMX500", "streaming": true, "latest_frame_age_seconds": 0.2, "sensor": {...}}`
+3. **`GET /video_feed`**
    - Returns: Annotated MJPEG stream (`multipart/x-mixed-replace`).
-3. **`GET /people-count`** *(Optional)*
+4. **`GET /people-count`** *(Optional)*
    - Body: `{"count": 1, "detection_active": true}`
 
 ---

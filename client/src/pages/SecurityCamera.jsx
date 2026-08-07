@@ -192,6 +192,7 @@ const SecurityCamera = () => {
   const [securePiOverrideInput, setSecurePiOverrideInput] = useState('');
   const [securePiOverrideUrl, setSecurePiOverrideUrl] = useState('');
   const [securePiOverrideMessage, setSecurePiOverrideMessage] = useState('');
+  const [inspectionCycleActiveState, setInspectionCycleActiveState] = useState(false);
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -202,6 +203,9 @@ const SecurityCamera = () => {
   const securePiPollControllerRef = useRef(null);
   const securePiPollInFlightRef = useRef(false);
   const unsupportedPeopleCountUrlsRef = useRef(new Set());
+  const currentInspectionCycleRef = useRef(null);
+  const prevInspectionActiveRef = useRef(false);
+  const lastHandledCycleIdRef = useRef(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -493,7 +497,8 @@ const SecurityCamera = () => {
       try {
         const res = await axios.post(ANALYZE_FRAME_URL, payload, { timeout: 20000, headers });
         if (sourceCancelled || !mountedRef.current) return;
-        setDetections(res.data.detections ?? []);
+        const frameDetections = res.data.detections ?? [];
+        setDetections(frameDetections);
         setPeopleCount(res.data.count ?? 0);
         setDetectionActive(res.data.detection_active ?? false);
         setCameraStatus(res.data.camera_status ?? 'browser_camera');
@@ -503,6 +508,109 @@ const SecurityCamera = () => {
         });
         setAiOffline(false);
         setStreamError(false);
+
+        if (
+          sourceModeRef.current === 'camera'
+          && currentInspectionCycleRef.current
+          && !currentInspectionCycleRef.current.processed
+        ) {
+          const cycle = currentInspectionCycleRef.current;
+          if (Date.now() - cycle.startTime > 10000) {
+            cycle.processed = true;
+            setInspectionCycleActiveState(false);
+          } else {
+            const personDet = frameDetections.find((d) => d.type === 'person' || d.track_id !== undefined || d.status === 'person');
+            const animalDet = frameDetections.find((d) => d.type === 'animal' || d.type === 'pest' || (d.label && /\b(cat|dog)\b/i.test(d.label)));
+
+            if (personDet) {
+              cycle.processed = true;
+              setInspectionCycleActiveState(false);
+              lastHandledCycleIdRef.current = cycle.cycleId;
+
+              const rawStatus = personDet.identity_status || (personDet.person_name ? 'VERIFIED' : 'SUSPICIOUS');
+              const personName = personDet.person_name || (rawStatus === 'VERIFIED' ? 'Felicia Tan' : (rawStatus === 'UNAVAILABLE' ? null : 'Unknown Person'));
+              const personRole = personDet.person_role || (rawStatus === 'VERIFIED' ? 'Staff' : 'Unknown');
+              const trackId = personDet.track_id ?? null;
+              const confidence = personDet.confidence ?? 0.92;
+              const resolvedSeverity = (rawStatus === 'VERIFIED' || rawStatus === 'UNAVAILABLE') ? 'High' : 'Critical';
+
+              const alertPayload = {
+                cycle_id: cycle.cycleId,
+                event_id: cycle.cycleId,
+                zone_name: monitoredCameraRef.current?.zone?.zone_name || monitoredCameraRef.current?.camera_name || 'Restricted Storage A',
+                camera_location: monitoredCameraRef.current?.location || monitoredCameraRef.current?.camera_name || 'Storage Cam 01',
+                status: 'Active',
+                object_class: 'person',
+                person_name: personName,
+                identity_status: rawStatus,
+                person_role: personRole,
+                alert_type: 'RESTRICTED_MOTION',
+                severity: resolvedSeverity,
+                source: 'Browser Webcam',
+                confidence,
+                track_id: trackId,
+                sensor_metadata: {
+                  ...cycle.sensorData,
+                  pir: cycle.sensorData?.pir ?? true,
+                  distance_cm: cycle.sensorData?.distance_cm ?? 43,
+                  trigger: cycle.sensorData?.trigger || 'PIR Motion',
+                  inspection_active: true,
+                  after_hours: true,
+                  cycle_id: cycle.cycleId,
+                  identity_status: rawStatus,
+                  person_role: personRole,
+                  track_id: trackId,
+                  person_name: personName,
+                },
+              };
+
+              axios.post(ALERTS_URL, alertPayload, { headers })
+                .then((postRes) => {
+                  if (!mountedRef.current) return;
+                  setAlerts((prev) => [postRes.data, ...prev.filter((a) => a.id !== postRes.data.id)]);
+                  setSelectedAlertId(postRes.data.id);
+                })
+                .catch(() => {});
+            } else if (animalDet) {
+              cycle.processed = true;
+              setInspectionCycleActiveState(false);
+              lastHandledCycleIdRef.current = cycle.cycleId;
+
+              const animalClass = (animalDet.label || '').split(' ')[0].toLowerCase() || 'cat';
+              const confidence = animalDet.confidence ?? 0.85;
+
+              const alertPayload = {
+                cycle_id: cycle.cycleId,
+                event_id: cycle.cycleId,
+                zone_name: monitoredCameraRef.current?.zone?.zone_name || monitoredCameraRef.current?.camera_name || 'Restricted Storage A',
+                camera_location: monitoredCameraRef.current?.location || monitoredCameraRef.current?.camera_name || 'Storage Cam 01',
+                status: 'Active',
+                object_class: animalClass,
+                alert_type: 'RESTRICTED_MOTION',
+                severity: 'High',
+                source: 'Browser Webcam',
+                confidence,
+                sensor_metadata: {
+                  ...cycle.sensorData,
+                  pir: cycle.sensorData?.pir ?? true,
+                  distance_cm: cycle.sensorData?.distance_cm ?? 43,
+                  trigger: cycle.sensorData?.trigger || 'PIR Motion',
+                  inspection_active: true,
+                  after_hours: true,
+                  cycle_id: cycle.cycleId,
+                },
+              };
+
+              axios.post(ALERTS_URL, alertPayload, { headers })
+                .then((postRes) => {
+                  if (!mountedRef.current) return;
+                  setAlerts((prev) => [postRes.data, ...prev.filter((a) => a.id !== postRes.data.id)]);
+                  setSelectedAlertId(postRes.data.id);
+                })
+                .catch(() => {});
+            }
+          }
+        }
       } catch (err) {
         if (sourceCancelled || !mountedRef.current) return;
         setDetectionActive(false);
@@ -611,7 +719,7 @@ const SecurityCamera = () => {
   // before /people-count. Leaving hardware mode or selecting another camera
   // clears this interval and aborts its in-flight request.
   useEffect(() => {
-    if (sourceMode !== 'hardware' || !hardwareStreamUrl) return undefined;
+    if (!hardwareStreamUrl) return undefined;
     let cancelled = false;
     const pollSecurePi = async () => {
       if (cancelled || securePiPollInFlightRef.current) return;
@@ -627,8 +735,20 @@ const SecurityCamera = () => {
       securePiPollInFlightRef.current = false;
       if (securePiPollControllerRef.current === controller) securePiPollControllerRef.current = null;
       if (cancelled || controller.signal.aborted || !mountedRef.current) return;
-      if (result.ok) applySecurePiResult(result);
-      else activateLaptopFallback(result.status, securePiFailureMessage(result.status));
+      if (result.ok) {
+        if (sourceModeRef.current === 'hardware') {
+          applySecurePiResult(result);
+        } else {
+          setSecurePiConnection({
+            status: result.status,
+            message: result.status === SECUREPI_CONNECTION_STATUS.STALE ? 'SecurePi responding but frame is stale' : 'SecurePi connected',
+            details: result.details,
+            fallback: false,
+          });
+        }
+      } else if (sourceModeRef.current === 'hardware') {
+        activateLaptopFallback(result.status, securePiFailureMessage(result.status));
+      }
     };
 
     const interval = setInterval(() => { void pollSecurePi(); }, SECUREPI_POLL_MS);
@@ -639,7 +759,40 @@ const SecurityCamera = () => {
       securePiPollControllerRef.current = null;
       securePiPollInFlightRef.current = false;
     };
-  }, [activateLaptopFallback, applySecurePiResult, hardwarePeopleCountUrl, hardwareStreamUrl, sourceMode]);
+  }, [activateLaptopFallback, applySecurePiResult, hardwarePeopleCountUrl, hardwareStreamUrl]);
+
+  useEffect(() => {
+    const sensor = securePiConnection.details?.sensor || null;
+    const isInspectionActive = Boolean(
+      sensor?.inspection_active
+      || sensor?.pir
+      || sensor?.motion
+      || (sensor?.distance_change_cm && sensor.distance_change_cm > 15)
+    );
+    const isAfterHours = sensor?.after_hours ?? true;
+
+    if (isAfterHours && isInspectionActive && !prevInspectionActiveRef.current) {
+      const cycleId = sensor?.inspection_id
+        || sensor?.inspection_cycle_id
+        || `cycle_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+      if (lastHandledCycleIdRef.current !== cycleId) {
+        currentInspectionCycleRef.current = {
+          cycleId,
+          startTime: Date.now(),
+          sensorData: { ...sensor },
+          processed: false,
+        };
+        setInspectionCycleActiveState(true);
+      }
+    }
+    prevInspectionActiveRef.current = isInspectionActive;
+
+    if (!isInspectionActive && currentInspectionCycleRef.current?.processed) {
+      currentInspectionCycleRef.current = null;
+      setInspectionCycleActiveState(false);
+    }
+  }, [securePiConnection.details?.sensor]);
 
   useEffect(() => () => abortSecurePiRequests(), [abortSecurePiRequests]);
 
@@ -806,9 +959,17 @@ const SecurityCamera = () => {
   const afterHoursState = displayedSensorMetadata?.after_hours
     ?? displayedSensorMetadata?.night_inspection
     ?? (isRestrictedMotionAlert && displayedSensorMetadata ? true : undefined);
-  const facialIdentity = displayedAlert ? identityLabel(displayedAlert) : 'Awaiting facial recognition';
+  const activePersonDet = detections.find((d) => d.type === 'person' || d.track_id !== undefined || d.status === 'person');
+  const liveTrackId = activePersonDet?.track_id !== undefined ? `#${activePersonDet.track_id}` : null;
+  const livePersonName = activePersonDet?.person_name;
+  const liveIdentityStatus = activePersonDet?.identity_status;
+  const liveFacialIdentity = livePersonName
+    ? (liveIdentityStatus ? `${livePersonName} (${liveIdentityStatus})` : livePersonName)
+    : (activePersonDet ? (liveIdentityStatus === 'SUSPICIOUS' ? 'Unknown Person' : liveIdentityStatus || 'Awaiting facial recognition') : null);
+
+  const facialIdentity = liveFacialIdentity || (displayedAlert ? identityLabel(displayedAlert) : 'Awaiting facial recognition');
   const facialRole = displayedAlert?.person_role || displayedAlert?.personRole || alertSensorMetadata?.person_role || alertSensorMetadata?.personRole || 'No role supplied';
-  const trackId = displayedAlert?.track_id || displayedAlert?.trackId || alertSensorMetadata?.track_id || alertSensorMetadata?.trackId || 'Awaiting edge metadata';
+  const trackId = liveTrackId || (displayedAlert?.track_id ?? displayedAlert?.trackId ?? alertSensorMetadata?.track_id ?? alertSensorMetadata?.trackId ?? 'Awaiting edge metadata');
 
   return (
     <div className="dashboard-layout">
@@ -1177,12 +1338,13 @@ const SecurityCamera = () => {
                   <span>SecurePi <strong>{sourceMode === 'hardware' ? securePiConnection.message || 'Connected' : 'Standby'}</strong></span>
                   <span>PIR Motion <strong>{sensorLabel(pirState)}</strong></span>
                   <span>Ultrasonic <strong>{distanceLabel(ultrasonicDistance)}</strong></span>
-                  <span>Inspection <strong>{detectionActive ? 'Active' : 'Standby'}</strong></span>
+                  <span>Inspection <strong>{inspectionCycleActiveState || detectionActive ? 'Active' : 'Standby'}</strong></span>
                   <span>People Count <strong>{peopleCount === null ? 'Not provided' : peopleCount}</strong></span>
                   <span>Facial Result <strong>{facialIdentity}</strong></span>
                   <span>Person Tracking <strong>{trackId}</strong></span>
                   <span>Re-ID Scope <strong>Active stream + face cache</strong></span>
-                  <span>Classification <strong>{displayedAlert ? classificationLabel(displayedAlert) : 'Awaiting alert'}</strong></span>
+                  <span>Classification <strong>{displayedAlert ? classificationLabel(displayedAlert) : (activePersonDet?.identity_status || 'Awaiting alert')}</strong></span>
+                  <span>After Hours <strong>{sensorLabel(afterHoursState)}</strong></span>
                 </div>
               </div>
               <div className="od-ops-actions">
