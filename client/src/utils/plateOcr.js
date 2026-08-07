@@ -11,11 +11,11 @@ import { extractPlateCandidate } from './plate';
 // Aligns with server/services/gateVerification.js `ocrMinConfidence()` default of 10%.
 export const MIN_ACCEPTED_CONFIDENCE = 10;
 
-// Broad lower-centre region where a vehicle plate usually sits in a full car capture.
-export const PLATE_FALLBACK_CROP = Object.freeze({ x: 0.15, y: 0.5, w: 0.7, h: 0.45, relativeTo: 'full_source' });
+// Plate-centred crop region for full car captures.
+export const PLATE_FALLBACK_CROP = Object.freeze({ x: 0.24, y: 0.56, w: 0.52, h: 0.16, relativeTo: 'full_source' });
 
-// Tighter nested plate-region crop within the vehicle region for full car scenes.
-export const PLATE_TIGHT_CROP = Object.freeze({ x: 0.20, y: 0.55, w: 0.60, h: 0.35, relativeTo: 'full_source' });
+// Reduced-bumper plate crop region for full car captures to isolate license plate from surrounding bumper noise.
+export const PLATE_TIGHT_CROP = Object.freeze({ x: 0.28, y: 0.58, w: 0.44, h: 0.12, relativeTo: 'full_source' });
 
 // Unconstrained parameters for full camera scene captures (PSM.AUTO + DPI 300).
 export const DEFAULT_OCR_PARAMS = Object.freeze({
@@ -772,7 +772,6 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
     // 3rd Priority: If no syntax-plausible candidate, select pass with best non-empty raw text.
     if (!bestPass) {
       let bestScore = -1;
-      bestPass = passes[0];
       for (const p of passes) {
         const text = String(p.raw || '').trim();
         if (!text || text === '(none)') continue;
@@ -784,7 +783,7 @@ export async function recognizePlate(source, { crop, isUpload, debug } = {}) {
       }
     }
 
-    if (bestPass) {
+    if (bestPass && (selectedCandidate || (bestPass.raw && String(bestPass.raw).trim() !== '' && String(bestPass.raw).trim() !== '(none)'))) {
       bestPass.isSelected = true;
     }
 

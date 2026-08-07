@@ -219,20 +219,23 @@ describe("Focused Tesseract OCR Fix Tests", () => {
     expect(res.diagnostics.classification).toBe("ACCEPTED_OCR_CANDIDATE");
   });
 
-  test("4. Full-car upload receives bounded crops and uses PSM.AUTO for Pass 2 and Pass 3", async () => {
+  test("4. Full-car upload receives bounded plate-focused crops and uses PSM.AUTO for Pass 2 and Pass 3", async () => {
     recognize
       .mockResolvedValueOnce(ocr("", 0))                  // Pass 1 full scene empty
-      .mockResolvedValueOnce(ocr("", 0))                  // Pass 2 broad crop empty
-      .mockResolvedValueOnce(ocr("7 SKL9081A E", 85));    // Pass 3 tighter crop succeeds
+      .mockResolvedValueOnce(ocr("PUA", 47))             // Pass 2 plate-centred crop
+      .mockResolvedValueOnce(ocr("GBG1234M", 47));       // Pass 3 reduced bumper crop succeeds
 
     const res = await recognizePlate(fullCarSource, { isUpload: true, debug: true });
 
-    expect(res.diagnostics.passes.length).toBe(3);
+    expect(res.diagnostics.passes.length).toBe(3); // Maximum 3 passes
+    expect(res.diagnostics.passes[0].params.tessedit_pageseg_mode).toBe("3"); // Pass 1 is PSM.AUTO
     expect(res.diagnostics.passes[1].crop).toEqual(PLATE_FALLBACK_CROP);
     expect(res.diagnostics.passes[2].crop).toEqual(PLATE_TIGHT_CROP);
     expect(res.diagnostics.passes[1].params.tessedit_pageseg_mode).toBe("3");
     expect(res.diagnostics.passes[2].params.tessedit_pageseg_mode).toBe("3");
-    expect(res.normalized).toBe("SKL9081A");
+    expect(res.normalized).toBe("GBG1234M");
+    expect(res.readable).toBe(true);
+    expect(res.diagnostics.classification).toBe("ACCEPTED_OCR_CANDIDATE");
   });
 
   test("5. Camera full-frame first pass uses scene-appropriate PSM.AUTO (3)", async () => {
@@ -272,7 +275,18 @@ describe("Focused Tesseract OCR Fix Tests", () => {
     });
   });
 
-  test("9. Diagnostic mode does not alter access decisions", async () => {
+  test("9. All-empty result does not misleadingly display [SELECTED] and keeps barrier closed", async () => {
+    recognize.mockResolvedValue(ocr("", 0)); // All passes return empty text
+    const res = await recognizePlate(fullCarSource, { isUpload: true, debug: true });
+
+    expect(res.readable).toBe(false);
+    expect(res.normalized).toBe("");
+    expect(res.confidence).toBe(0);
+    expect(res.diagnostics.classification).toBe("TESSERACT_EMPTY_RESULT");
+    expect(res.diagnostics.passes.every((p) => p.isSelected === false)).toBe(true);
+  });
+
+  test("10. Diagnostic mode does not alter access decisions", async () => {
     recognize.mockResolvedValue(ocr("GBG 1234 M", 90));
     const resWithoutDebug = await recognizePlate(webcamSource, { isUpload: false, debug: false });
     const resWithDebug = await recognizePlate(webcamSource, { isUpload: false, debug: true });
