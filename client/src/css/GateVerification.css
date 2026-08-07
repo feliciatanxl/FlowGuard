@@ -501,6 +501,7 @@
   text-transform: uppercase;
 }
 .gate-debug-badge.ok { background: #065f46; color: #34d399; }
+.gate-debug-badge.warn { background: #854d0e; color: #fde047; }
 .gate-debug-badge.fail { background: #991b1b; color: #fca5a5; }
 
 .gate-debug-grid {
