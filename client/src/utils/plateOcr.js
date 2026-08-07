@@ -134,8 +134,8 @@ export function getSourceInfo(source, isUpload = false) {
           : isImage ? 'HTMLImageElement'
             : typeof source;
 
-  let sourceType = isUpload ? 'Upload' : 'Laptop Webcam';
-  if (isCanvas && !isUpload) {
+  let sourceType = source?.sourceType || (isUpload ? 'Upload' : 'Laptop Webcam');
+  if (isCanvas && !isUpload && !source?.sourceType) {
     sourceType = 'Pi 4';
   }
 

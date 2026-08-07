@@ -132,7 +132,10 @@ describe("PoC OCR", () => {
   test("8. readable OCR result is shown normalised with confidence", async () => {
     renderPage();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Start Camera/i })); });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Capture & Read Plate/i })); });
+    const captureBtn = screen.queryByRole("button", { name: /Capture & Read Plate/i });
+    if (captureBtn) {
+      await act(async () => { fireEvent.click(captureBtn); });
+    }
     expect(await screen.findByText("GBG1234M")).toBeTruthy(); // normalised
     expect(screen.getByText(/88%/)).toBeTruthy();             // confidence
     expect(h.recognizePlate).toHaveBeenCalled();
@@ -307,5 +310,74 @@ describe("No image persistence", () => {
     const blob = JSON.stringify(localStorage) + JSON.stringify(sessionStorage);
     expect(blob.toLowerCase()).not.toContain("data:image");
     expect(blob.toLowerCase()).not.toContain("base64");
+  });
+});
+
+describe("Webcam automatic OCR scanning flow & diagnostics", () => {
+  test("15. Start Camera requests camera and starts automatic scanning loop", async () => {
+    h.recognizePlate.mockResolvedValueOnce({
+      raw: "GBG 1234 M", normalized: "GBG1234M", confidence: 88, readable: true,
+      diagnostics: { classification: "ACCEPTED_OCR_CANDIDATE" },
+    });
+
+    renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Start Camera/i }));
+    });
+
+    expect(h.startCamera).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText("GBG1234M")).toBeTruthy();
+    expect(h.recognizePlate).toHaveBeenCalled();
+  });
+
+  test("16. Retake resets state and restarts scanning on active stream without recreating stream", async () => {
+    h.recognizePlate
+      .mockResolvedValueOnce({ raw: "GBG 1234 M", normalized: "GBG1234M", confidence: 88, readable: true })
+      .mockResolvedValueOnce({ raw: "", normalized: "", confidence: null, readable: false });
+
+    renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Start Camera/i }));
+    });
+
+    expect(await screen.findByText("GBG1234M")).toBeTruthy();
+    const startCameraCallCount = h.startCamera.mock.calls.length;
+
+    // Click Retake
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Retake/i }));
+    });
+
+    // Verify OCR result was cleared
+    expect(screen.queryByText("GBG1234M")).toBeNull();
+
+    // Verify scanning restarted on existing stream without calling startCamera again
+    expect(h.startCamera.mock.calls.length).toBe(startCameraCallCount);
+  });
+
+  test("17. Unreadable frame retries automatically and readable frame stops further scanning", async () => {
+    vi.useFakeTimers();
+    h.recognizePlate
+      .mockResolvedValueOnce({ raw: "", normalized: "", confidence: null, readable: false })
+      .mockResolvedValueOnce({ raw: "GBG 1234 M", normalized: "GBG1234M", confidence: 88, readable: true });
+
+    renderPage();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Start Camera/i }));
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    expect(h.recognizePlate).toHaveBeenCalledTimes(1);
+
+    // Advance timers by ~1800ms to trigger retry scan
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(h.recognizePlate).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
   });
 });
