@@ -38,6 +38,19 @@ def fake_encode(frame, quality=80):
     return f"jpeg::{frame}".encode()
 
 
+class FakeSensorBridge:
+    def snapshot(self):
+        return {
+            "connected": True,
+            "pir": True,
+            "motion": True,
+            "distance_cm": 146.2,
+            "distance_change_cm": 82.4,
+            "trigger": "pir_and_ultrasonic",
+            "inspection_active": True,
+        }
+
+
 @pytest.fixture
 def cache():
     return pi.FrameCache()
@@ -189,6 +202,30 @@ def test_health_reports_safe_operational_telemetry_only(cache, client):
     assert isinstance(body["frameAgeMs"], int) and body["frameAgeMs"] >= 200
     # Telemetry never exposes image data.
     assert "jpeg" not in str(body) and "image" not in body
+
+
+def test_health_surfaces_arduino_sensor_inspection_state(cache):
+    cache.publish(b"jpeg::frame", now=time.time() - 0.2)
+    app = pi.create_app(cache, sensor_bridge=FakeSensorBridge())
+    app.testing = True
+    client = app.test_client()
+
+    body = client.get("/health").get_json()
+
+    assert body["detection_active"] is True
+    assert body["streaming"] is True
+    assert body["sensor"]["pir"] is True
+    assert body["sensor"]["distance_cm"] == 146.2
+    assert body["sensor"]["trigger"] == "pir_and_ultrasonic"
+
+
+def test_sensor_status_returns_503_when_bridge_disabled(client):
+    res = client.get("/sensor_status")
+    body = res.get_json()
+
+    assert res.status_code == 503
+    assert body["connected"] is False
+    assert body["inspection_active"] is False
 
 
 def test_get_routes_allow_only_the_exact_flowguard_origin_and_disable_caching(cache, client):

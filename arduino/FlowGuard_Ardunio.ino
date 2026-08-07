@@ -1,7 +1,7 @@
 // FlowGuard PIR + ultrasonic sensor node.
 //
 // Emits ONE machine-readable JSON object per line, ~every 500 ms, for the
-// SecurePi sensor bridge (edge/sensor_bridge.py) to parse. No third-party JSON
+// SecurePi sensor bridge (raspberry-pi/sensor_bridge.py) to parse. No third-party JSON
 // library is used — the line is assembled with plain Serial.print() calls and
 // F() string literals (kept in flash, so no heap/String fragmentation).
 //

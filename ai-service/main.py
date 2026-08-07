@@ -16,6 +16,8 @@ from insightface.app import FaceAnalysis
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 
+load_dotenv()
+
 try:
     import requests as http_requests
     _REQUESTS_OK = True
@@ -25,14 +27,35 @@ except ImportError:
 
 try:
     from ultralytics import YOLO as _YOLO
-    _yolo_model = _YOLO('yolov8n.pt')
-    YOLO_AVAILABLE = True
-    print("✅ YOLOv8n Engine Loaded.")
-except Exception as _yolo_err:
-    YOLO_AVAILABLE = False
-    print(f"⚠️  YOLO not available: {_yolo_err}")
+    _ULTRALYTICS_AVAILABLE = True
+except Exception as _yolo_import_err:
+    _YOLO = None
+    _ULTRALYTICS_AVAILABLE = False
+    print(f"⚠️  Ultralytics YOLO not available: {_yolo_import_err}")
 
-load_dotenv()
+
+def _load_yolo_model(path, label):
+    if not _ULTRALYTICS_AVAILABLE:
+        return None
+    try:
+        model = _YOLO(path)
+        print(f"{label} YOLO Engine Loaded: {path}")
+        return model
+    except Exception as err:
+        print(f"{label} YOLO model not available ({path}): {err}")
+        return None
+
+
+_YOLO_MODEL_PATH = os.getenv("YOLO_MODEL_PATH", "yolov8n.pt")
+_YOLO_WEBCAM_MODEL_PATH = os.getenv("YOLO_WEBCAM_MODEL_PATH", "").strip()
+_yolo_model = _load_yolo_model(_YOLO_MODEL_PATH, "Default")
+_yolo_webcam_model = (
+    _load_yolo_model(_YOLO_WEBCAM_MODEL_PATH, "Webcam")
+    if _YOLO_WEBCAM_MODEL_PATH
+    else None
+)
+YOLO_AVAILABLE = _yolo_model is not None or _yolo_webcam_model is not None
+
 app = FastAPI()
 
 # --- Service-to-service authentication -------------------------------------
@@ -67,6 +90,8 @@ async def health():
         "status": "ok",
         "face_model_ready": face_app is not None,
         "yolo_model_ready": bool(YOLO_AVAILABLE),
+        "yolo_default_model_ready": bool(_yolo_model is not None),
+        "yolo_webcam_model_ready": bool(_yolo_webcam_model is not None),
         "server_camera_enabled": os.getenv("USE_SERVER_CAMERA", "false").lower() == "true",
     }
 
@@ -571,6 +596,8 @@ _UNATTENDED_CLASSES = {
 }
 _FOOD_CLASSES = {'banana', 'apple', 'orange'}
 _VEHICLE_CLASSES = {'truck'}
+_PEST_CLASSES = {'rat', 'mouse'}
+_DEFAULT_RESTRICTED_MOTION_CLASSES = {'person', 'cat', 'dog', 'rat', 'mouse'}
 # COCO ids: 0 person, 7 truck, 24 backpack, 26 handbag, 28 suitcase, 39 bottle,
 # 41 cup, 46 banana, 47 apple, 49 orange, 63 laptop, 67 cell phone, 73 book
 _YOLO_CLASS_IDS_RAW = os.getenv("YOLO_CLASS_IDS", "").strip().lower()
@@ -580,6 +607,13 @@ else:
     _YOLO_CLASS_IDS = [
         int(x.strip()) for x in _YOLO_CLASS_IDS_RAW.split(",") if x.strip()
     ] or None
+_YOLO_WEBCAM_CLASS_IDS_RAW = os.getenv("YOLO_WEBCAM_CLASS_IDS", "").strip().lower()
+if _YOLO_WEBCAM_CLASS_IDS_RAW in {"", "all", "*"}:
+    _YOLO_WEBCAM_CLASS_IDS = None
+else:
+    _YOLO_WEBCAM_CLASS_IDS = [
+        int(x.strip()) for x in _YOLO_WEBCAM_CLASS_IDS_RAW.split(",") if x.strip()
+    ] or None
 
 _CAMERA_WIDTH = int(os.getenv("CAMERA_WIDTH", "640"))
 _CAMERA_HEIGHT = int(os.getenv("CAMERA_HEIGHT", "360"))
@@ -588,18 +622,34 @@ _CAMERA_HEIGHT = int(os.getenv("CAMERA_HEIGHT", "360"))
 # browser/video frames while staying practical for CPU-only Cloud Run.
 _YOLO_IMG_SIZE = int(os.getenv("YOLO_IMG_SIZE", "768"))
 _YOLO_CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.18"))
+_YOLO_WEBCAM_CONFIDENCE = float(os.getenv("YOLO_WEBCAM_CONFIDENCE", str(_YOLO_CONFIDENCE)))
 _YOLO_FPS = float(os.getenv("YOLO_FPS", "8"))
 _STREAM_FPS = float(os.getenv("STREAM_FPS", "12"))
 _FACE_RECOG_EVERY_N_FRAMES = int(os.getenv("FACE_RECOG_EVERY_N_FRAMES", "5"))
 _FACE_RECOG_MAX_PEOPLE = int(os.getenv("FACE_RECOG_MAX_PEOPLE", "2"))
 _PERSON_CRITICAL_COUNT = int(os.getenv("PERSON_CRITICAL_COUNT", "2"))
 _PERSON_ALERT_COOLDOWN = int(os.getenv("PERSON_ALERT_COOLDOWN", "30"))
+_PEST_ALERT_COOLDOWN = int(os.getenv("PEST_ALERT_COOLDOWN", "30"))
+_RESTRICTED_MOTION_ALERT_COOLDOWN = int(os.getenv("RESTRICTED_MOTION_ALERT_COOLDOWN", "60"))
+_RESTRICTED_AFTER_HOURS_MOTION_ENABLED = os.getenv("RESTRICTED_AFTER_HOURS_MOTION_ENABLED", "true").lower() == "true"
+_AFTER_HOURS_START = os.getenv("EDGE_AFTER_HOURS_START", os.getenv("RESTRICTED_AFTER_HOURS_START", "19:00"))
+_AFTER_HOURS_END = os.getenv("EDGE_AFTER_HOURS_END", os.getenv("RESTRICTED_AFTER_HOURS_END", "07:00"))
+_RESTRICTED_MOTION_CLASSES_RAW = os.getenv("RESTRICTED_MOTION_CLASSES", "").strip()
+_RESTRICTED_MOTION_CLASSES = (
+    {item.strip().lower() for item in _RESTRICTED_MOTION_CLASSES_RAW.split(",") if item.strip()}
+    if _RESTRICTED_MOTION_CLASSES_RAW
+    else set(_DEFAULT_RESTRICTED_MOTION_CLASSES)
+)
 _PROXIMITY_PX = 160      # centroid distance threshold (pixels at 640-wide frame)
+_TRACK_MATCH_DISTANCE_PX = int(os.getenv("PERSON_TRACK_MATCH_DISTANCE_PX", "90"))
+_TRACK_TTL_SECONDS = float(os.getenv("PERSON_TRACK_TTL_SECONDS", "8"))
 _NODE_URL = os.getenv("NODE_SERVER_URL", "http://localhost:5001")
 print(
     "YOLO config: "
     f"imgsz={_YOLO_IMG_SIZE}, conf={_YOLO_CONFIDENCE}, "
-    f"classes={_YOLO_CLASS_IDS if _YOLO_CLASS_IDS is not None else 'ALL'}"
+    f"webcam_conf={_YOLO_WEBCAM_CONFIDENCE}, "
+    f"classes={_YOLO_CLASS_IDS if _YOLO_CLASS_IDS is not None else 'ALL'}, "
+    f"webcam_classes={_YOLO_WEBCAM_CLASS_IDS if _YOLO_WEBCAM_CLASS_IDS is not None else 'ALL'}"
 )
 
 # A browser-submitted analyse-frame request may only claim to be one of these two
@@ -614,6 +664,17 @@ def _normalize_browser_source(source):
     unrecognized, or an impersonation attempt) resolves to None so the Node alert
     route falls back to its own default instead of trusting arbitrary client text."""
     return source if source in _ALLOWED_BROWSER_SOURCES else None
+
+
+def _select_yolo_for_source(source):
+    """Use the optional custom checkpoint only for browser webcam frames.
+
+    Uploaded video keeps the default COCO YOLO model so demos retain the richer
+    bottle/cup/book/laptop/etc. coverage.
+    """
+    if source == "Browser Webcam" and _yolo_webcam_model is not None:
+        return _yolo_webcam_model, _YOLO_WEBCAM_CLASS_IDS, _YOLO_WEBCAM_CONFIDENCE
+    return _yolo_model, _YOLO_CLASS_IDS, _YOLO_CONFIDENCE
 
 # Shared state written by detection thread, read by endpoints
 _frame_lock = threading.Lock()
@@ -630,6 +691,12 @@ _person_name_cache = defaultdict(lambda: ("UNKNOWN", 0.0))
 _person_alert_state = {
     "level": None,
     "last_sent_at": 0.0,
+}
+_pest_alert_state = defaultdict(float)
+_restricted_motion_alert_state = defaultdict(float)
+_person_track_state = {
+    "next_id": 1,
+    "tracks": {},
 }
 
 # Zone threshold cache — refreshed from DB every 60 s
@@ -793,7 +860,94 @@ def _get_nearby_person(person_entries, ox, oy):
     return False, None
 
 
-def _fire_alert(class_name, zone_name, duration_sec, person_name=None, severity=None, source=None):
+def _parse_hhmm(value, fallback):
+    raw = str(value or fallback).strip()
+    try:
+        hour, minute = raw.split(":", 1)
+        hour = int(hour)
+        minute = int(minute)
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return hour * 60 + minute
+    except Exception:
+        pass
+    fallback_hour, fallback_minute = fallback.split(":", 1)
+    return int(fallback_hour) * 60 + int(fallback_minute)
+
+
+def _is_after_hours_now():
+    start = _parse_hhmm(_AFTER_HOURS_START, "19:00")
+    end = _parse_hhmm(_AFTER_HOURS_END, "07:00")
+    now = time.localtime()
+    minutes = now.tm_hour * 60 + now.tm_min
+    if start == end:
+        return True
+    if start < end:
+        return start <= minutes < end
+    return minutes >= start or minutes < end
+
+
+def _motion_key(class_name, zone_name, track_id=None, cx=None, cy=None):
+    if track_id is not None:
+        subject = f"track:{track_id}"
+    elif cx is not None and cy is not None:
+        subject = f"cell:{cx // 100 * 100}:{cy // 100 * 100}"
+    else:
+        subject = "zone"
+    return (str(zone_name or "").lower(), str(class_name or "").lower(), subject)
+
+
+def _maybe_fire_restricted_motion_alert(class_name, zone_name, source, conf, person_name=None, track_id=None, cx=None, cy=None):
+    if not _RESTRICTED_AFTER_HOURS_MOTION_ENABLED:
+        return
+    normalized_class = str(class_name or "").lower()
+    if normalized_class not in _RESTRICTED_MOTION_CLASSES:
+        return
+    if not _is_after_hours_now():
+        return
+
+    key = _motion_key(normalized_class, zone_name, track_id, cx, cy)
+    now = time.time()
+    if now - _restricted_motion_alert_state[key] < _RESTRICTED_MOTION_ALERT_COOLDOWN:
+        return
+
+    _restricted_motion_alert_state[key] = now
+    threading.Thread(
+        target=_fire_alert,
+        args=(normalized_class, zone_name, None, person_name, "Critical", source, "Restricted-Zone Motion", conf),
+        daemon=True
+    ).start()
+
+
+def _assign_person_track(box, now):
+    x1, y1, x2, y2 = box
+    cx = (x1 + x2) / 2
+    cy = (y1 + y2) / 2
+    tracks = _person_track_state["tracks"]
+    expired = [
+        track_id for track_id, track in tracks.items()
+        if now - track["last_seen"] > _TRACK_TTL_SECONDS
+    ]
+    for track_id in expired:
+        tracks.pop(track_id, None)
+        _person_name_cache.pop(track_id, None)
+
+    best_id = None
+    best_distance = None
+    for track_id, track in tracks.items():
+        distance = ((track["cx"] - cx) ** 2 + (track["cy"] - cy) ** 2) ** 0.5
+        if distance <= _TRACK_MATCH_DISTANCE_PX and (best_distance is None or distance < best_distance):
+            best_id = track_id
+            best_distance = distance
+
+    if best_id is None:
+        best_id = _person_track_state["next_id"]
+        _person_track_state["next_id"] += 1
+
+    tracks[best_id] = {"cx": cx, "cy": cy, "box": box, "last_seen": now}
+    return best_id
+
+
+def _fire_alert(class_name, zone_name, duration_sec, person_name=None, severity=None, source=None, alert_type=None, confidence=None):
     if not _REQUESTS_OK:
         return
     try:
@@ -808,6 +962,10 @@ def _fire_alert(class_name, zone_name, duration_sec, person_name=None, severity=
         }
         if source:
             payload["source"] = source
+        if alert_type:
+            payload["alert_type"] = alert_type
+        if confidence is not None:
+            payload["confidence"] = round(float(confidence), 3)
         http_requests.post(
             f"{_NODE_URL}/api/detection-alerts",
             json=payload,
@@ -852,6 +1010,20 @@ def _maybe_fire_person_alert(person_count, zone_name, source=None, density_thres
     ).start()
 
 
+def _maybe_fire_pest_alert(class_name, zone_name, source, conf, cx, cy):
+    now = time.time()
+    key = (class_name, cx // 100 * 100, cy // 100 * 100)
+    if now - _pest_alert_state[key] < _PEST_ALERT_COOLDOWN:
+        return
+
+    _pest_alert_state[key] = now
+    threading.Thread(
+        target=_fire_alert,
+        args=(class_name, zone_name, None, None, "High", source, "Pest Detection", conf),
+        daemon=True
+    ).start()
+
+
 def _recognize_person_crop(frame, x1, y1, x2, y2):
     fh, fw = frame.shape[:2]
     crop = frame[max(y1, 0):min(y2, fh), max(x1, 0):min(x2, fw)]
@@ -883,12 +1055,16 @@ def _annotate_detection_frame(frame, recognize_faces=True, zone_config=None, sou
     if not YOLO_AVAILABLE:
         return frame, 0, []
 
-    results = _yolo_model(
+    yolo_model, yolo_class_ids, yolo_confidence = _select_yolo_for_source(source)
+    if yolo_model is None:
+        return frame, 0, []
+
+    results = yolo_model(
         frame,
         imgsz=_YOLO_IMG_SIZE,
-        conf=_YOLO_CONFIDENCE,
+        conf=yolo_confidence,
         iou=0.45,
-        classes=_YOLO_CLASS_IDS,
+        classes=yolo_class_ids,
         verbose=False
     )[0]
     if zone_config is None:
@@ -916,29 +1092,66 @@ def _annotate_detection_frame(frame, recognize_faces=True, zone_config=None, sou
 
         if class_name == 'person':
             people_count += 1
+            track_id = _assign_person_track([x1, y1, x2, y2], now)
             recog_name = "UNKNOWN"
-            display_label = f"Person {conf:.2f}"
+            cached_name, cached_sim = _person_name_cache[track_id]
+            display_label = f"Person #{track_id} {conf:.2f}"
             box_color = (0, 200, 200)
             label_color = (0, 200, 200)
 
             if recognize_faces and people_count <= _FACE_RECOG_MAX_PEOPLE:
-                recog_name, best_sim = _recognize_person_crop(frame, x1, y1, x2, y2)
-                if recog_name != "UNKNOWN":
-                    box_color = (0, 200, 80)
-                    label_color = (0, 200, 80)
+                recognized_name, best_sim = _recognize_person_crop(frame, x1, y1, x2, y2)
+                if recognized_name != "UNKNOWN":
+                    _person_name_cache[track_id] = (recognized_name, best_sim)
+                    cached_name, cached_sim = recognized_name, best_sim
+
+            if cached_name != "UNKNOWN":
+                recog_name = cached_name
+                display_label = f"#{track_id} {cached_name} {cached_sim:.2f}"
+                box_color = (0, 200, 80)
+                label_color = (0, 200, 80)
+            elif cached_sim:
+                recog_name = cached_name
 
             detections.append({
                 "type": "person",
                 "label": display_label,
                 "confidence": round(conf, 3),
                 "box": [x1, y1, x2, y2],
-                "status": "person"
+                "status": "person",
+                "track_id": track_id,
+                "identity_status": "VERIFIED" if recog_name != "UNKNOWN" else "UNKNOWN",
+                "person_name": None if recog_name == "UNKNOWN" else recog_name,
             })
             person_boxes.append(([x1, y1, x2, y2], recog_name))
+            if detection_enabled:
+                _maybe_fire_restricted_motion_alert(
+                    class_name, zone_name, source, conf, recog_name, track_id=track_id
+                )
             cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
             cv2.putText(frame, display_label,
                         (x1, max(y1 - 8, 12)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, label_color, 2)
+
+        elif class_name in _RESTRICTED_MOTION_CLASSES and class_name != "person":
+            cx = (x1 + x2) // 2
+            cy = (y1 + y2) // 2
+            is_pest = class_name in _PEST_CLASSES
+            detections.append({
+                "type": "animal" if not is_pest else "pest",
+                "label": f"{class_name} {conf:.2f}",
+                "confidence": round(conf, 3),
+                "box": [x1, y1, x2, y2],
+                "status": "alert"
+            })
+            if detection_enabled:
+                if source == "Browser Webcam" and _yolo_webcam_model is not None and is_pest:
+                    _maybe_fire_pest_alert(class_name, zone_name, source, conf, cx, cy)
+                _maybe_fire_restricted_motion_alert(class_name, zone_name, source, conf, cx=cx, cy=cy)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 220), 3)
+            cv2.putText(frame, f"MOTION: {class_name} {conf:.2f}",
+                        (x1, max(y1 - 8, 12)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 220), 2)
 
         elif class_name in _UNATTENDED_CLASSES:
             cx = (x1 + x2) // 2
@@ -1122,13 +1335,13 @@ def _yolo_detection_loop():
                 people_count += 1
 
                 # --- Face recognition on this person's bounding-box crop ---
+                track_id = _assign_person_track([x1, y1, x2, y2], now)
                 recog_name = "UNKNOWN"
                 box_color = (0, 200, 200)
                 label_color = (0, 200, 200)
-                display_label = f"Person {conf:.2f}"
+                display_label = f"Person #{track_id} {conf:.2f}"
 
-                track_key = (x1 // 80, y1 // 80)
-                cached_name, cached_sim = _person_name_cache[track_key]
+                cached_name, cached_sim = _person_name_cache[track_id]
                 should_recognize_face = (
                     people_count <= _FACE_RECOG_MAX_PEOPLE
                     and frame_index % max(_FACE_RECOG_EVERY_N_FRAMES, 1) == 0
@@ -1150,21 +1363,34 @@ def _yolo_detection_loop():
                                         best_sim = sim
                                         if sim > 0.45:
                                             best_name = known["name"]
-                                _person_name_cache[track_key] = (best_name, best_sim)
+                                _person_name_cache[track_id] = (best_name, best_sim)
                                 cached_name, cached_sim = best_name, best_sim
                         except Exception:
                             pass
 
                 if cached_name != "UNKNOWN":
                     recog_name = cached_name
+                    display_label = f"#{track_id} {cached_name} {cached_sim:.2f}"
                     box_color = (0, 200, 80)   # green = identified
                     label_color = (0, 200, 80)
 
                 person_boxes.append(([x1, y1, x2, y2], recog_name))
+                _maybe_fire_restricted_motion_alert(
+                    class_name, zone_name, None, conf, recog_name, track_id=track_id
+                )
                 cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
                 cv2.putText(frame, display_label,
                             (x1, max(y1 - 8, 12)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, label_color, 2)
+
+            elif class_name in _RESTRICTED_MOTION_CLASSES and class_name != "person":
+                cx = (x1 + x2) // 2
+                cy = (y1 + y2) // 2
+                _maybe_fire_restricted_motion_alert(class_name, zone_name, None, conf, cx=cx, cy=cy)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 220), 3)
+                cv2.putText(frame, f"MOTION: {class_name} {conf:.2f}",
+                            (x1, max(y1 - 8, 12)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 220), 2)
 
             elif class_name in _UNATTENDED_CLASSES:
                 cx = (x1 + x2) // 2
@@ -1311,7 +1537,8 @@ async def yolo_analyze_frame(request: AnalyzeFrameRequest):
     annotated, people_count, detections = _annotate_detection_frame(
         img, recognize_faces=True, zone_config=zone_config, source=resolved_source
     )
-    _detection_active = YOLO_AVAILABLE
+    selected_yolo_model, _, _ = _select_yolo_for_source(resolved_source)
+    _detection_active = selected_yolo_model is not None
     _camera_status = "browser_camera"
 
     with _frame_lock:

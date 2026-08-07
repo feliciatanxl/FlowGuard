@@ -231,6 +231,10 @@ function normalizeHealth(body) {
   if (!SAFE_STATUS_VALUES.has(status)) return null;
   if (body.detection_active !== undefined && typeof body.detection_active !== 'boolean') return null;
   if (body.streaming !== undefined && typeof body.streaming !== 'boolean') return null;
+  const frameAgeSeconds = finiteNonNegative(
+    body.latest_frame_age_seconds ?? body.frame_age_seconds ?? body.age_seconds
+  );
+  const frameAgeMs = finiteNonNegative(body.frameAgeMs ?? body.frame_age_ms);
   return {
     status,
     stale: status === 'stale' || status === 'degraded' || body.stale === true || body.streaming === false,
@@ -239,9 +243,8 @@ function normalizeHealth(body) {
     deviceId: safeText(body.device_id),
     zone: safeText(body.zone || body.zone_name),
     cameraDescription: safeText(body.camera_description || body.camera || body.description),
-    frameAgeSeconds: finiteNonNegative(
-      body.latest_frame_age_seconds ?? body.frame_age_seconds ?? body.age_seconds
-    ),
+    frameAgeSeconds: frameAgeSeconds ?? (frameAgeMs === null ? null : frameAgeMs / 1000),
+    sensor: body.sensor && typeof body.sensor === 'object' && !Array.isArray(body.sensor) ? body.sensor : null,
   };
 }
 
@@ -325,6 +328,7 @@ export async function testSecurePiConnection({
           visiblePeople: people?.count ?? null,
           frameAgeSeconds,
           streaming: health.streaming,
+          sensor: health.sensor,
           resolvedPort: endpoints.port,
         },
       }

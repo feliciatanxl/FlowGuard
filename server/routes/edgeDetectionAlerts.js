@@ -439,6 +439,7 @@ router.post('/detection-alerts', verifyEdgeIngestToken, handleSnapshotUpload, as
                     confidence: parsedConfidence,
                     snapshot_url: null,
                     device_id: cleanedDevice,
+                    sensor_metadata: safeSensorMeta,
                     occurred_at: parsedOccurredAt,
                     edge_event_id: eventId,
                     whatsapp_status: initialWhatsappStatus,

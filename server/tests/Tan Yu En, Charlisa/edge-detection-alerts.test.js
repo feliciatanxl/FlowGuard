@@ -65,6 +65,12 @@ const securePiPayload = {
   confidence: 0.87,
   snapshot_url: "alerts/loading-bay/event.jpg",
   device_id: "securepi-loading-bay-01",
+  sensor_metadata: {
+    motion: true,
+    pir_ready: true,
+    distance_cm: 42.5,
+    object_close: false,
+  },
   timestamp: "2026-07-09T08:15:00.000Z",
   ignored_extra: "does not break the API",
 };
@@ -187,6 +193,12 @@ describe("POST /api/edge/detection-alerts", () => {
       confidence: 0.87,
       snapshot_url: null,
       device_id: "securepi-loading-bay-01",
+      sensor_metadata: {
+        motion: true,
+        pir_ready: true,
+        distance_cm: 42.5,
+        object_close: false,
+      },
       duration_seconds: 65,
     }));
     expect(mockDetectionAlert.create.mock.calls[0][0]).not.toHaveProperty("ignored_extra");
