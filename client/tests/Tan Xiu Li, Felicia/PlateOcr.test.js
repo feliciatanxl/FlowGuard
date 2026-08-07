@@ -363,5 +363,26 @@ describe("Focused Tesseract OCR Fix Tests", () => {
 
     expect(classification).toBe("AMBIGUOUS_OCR_CANDIDATE");
   });
-});
 
+  test("17. Physical 1448x1086 SKL9081A staging frame selects PLATE_TIGHT_CROP for Pass 3 and resolves SKL9081A as ACCEPTED_OCR_CANDIDATE", async () => {
+    const physicalStagingSource = { width: 1448, height: 1086 };
+    const regions = locatePlateCandidateRegions(physicalStagingSource);
+
+    expect(regions[0].crop).toEqual(PLATE_FALLBACK_CROP);
+    expect(regions[1].crop).toEqual(PLATE_TIGHT_CROP);
+
+    recognize
+      .mockResolvedValueOnce(ocr("", 0))                  // Pass 1: full frame empty
+      .mockResolvedValueOnce(ocr("BSKLS081A", 63))        // Pass 2: broad crop raw BSKLS081A (ambiguous)
+      .mockResolvedValueOnce(ocr("SKL9081A", 85));        // Pass 3: tight crop (0.28, 0.58, 0.44, 0.12) returns SKL9081A
+
+    const res = await recognizePlate(physicalStagingSource, { isUpload: true, debug: true });
+
+    expect(res.diagnostics.passes.length).toBe(3);
+    expect(res.diagnostics.passes[2].crop).toEqual(PLATE_TIGHT_CROP);
+    expect(res.normalized).toBe("SKL9081A");
+    expect(res.readable).toBe(true);
+    expect(res.confidence).toBe(85);
+    expect(res.diagnostics.classification).toBe("ACCEPTED_OCR_CANDIDATE");
+  });
+});

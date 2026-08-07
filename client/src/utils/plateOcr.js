@@ -565,7 +565,6 @@ export function locatePlateCandidateRegions(source) {
   const candidates = [
     { crop: PLATE_FALLBACK_CROP, name: 'Broad lower-centre crop', score: 100 },
     { crop: PLATE_TIGHT_CROP, name: 'Tighter plate crop', score: 90 },
-    { crop: Object.freeze({ x: 0.22, y: 0.52, w: 0.56, h: 0.20, relativeTo: 'full_source' }), name: 'Expanded center crop', score: 85 },
   ];
 
   try {
@@ -593,7 +592,9 @@ export function locatePlateCandidateRegions(source) {
           const stdDev = Math.sqrt(varSum / total);
           const aspect = sw / sh;
           const aspectScore = (aspect >= 2.5 && aspect <= 5.5) ? 50 : 10;
-          cand.score = stdDev * 2 + aspectScore;
+          const areaRatio = (sw * sh) / (srcW * srcH);
+          const areaPenalty = areaRatio > 0.08 ? 30 : 0;
+          cand.score = stdDev * 2 + aspectScore - areaPenalty;
         } catch { /* fallback to static score */ }
       });
     }
