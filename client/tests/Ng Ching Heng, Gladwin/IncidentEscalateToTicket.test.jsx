@@ -1,8 +1,8 @@
-// Frontend test — "Escalate to Ticket" row action on the Incident Dashboard. This is
-// a UI-only stub for the Support Tickets integration a teammate is wiring up
-// separately: clicking the button opens a confirmation modal pre-filled with the
-// incident's ID/location/source/severity/description, and confirming it does
-// nothing beyond a local toast — no API call, no ticket is actually created.
+// Frontend test — "Escalate to Ticket" row action on the Incident Dashboard.
+// Clicking the button opens a confirmation modal pre-filled with the incident's
+// ID/location/source/severity/description; confirming calls the real Support
+// Ticket API (POST /api/support/tickets — Module 3), mapping incident severity
+// to ticket priority and tagging the ticket category "Security".
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { vi, describe, test, expect, beforeEach } from 'vitest';
@@ -46,7 +46,7 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-describe('Incident Dashboard — Escalate to Ticket (mocked, pending teammate integration)', () => {
+describe('Incident Dashboard — Escalate to Ticket', () => {
   test('opens a confirmation modal pre-filled with ID, location, source, severity, and description', async () => {
     mount([incident()]);
     await screen.findByText('Cold Store B');
@@ -85,7 +85,28 @@ describe('Incident Dashboard — Escalate to Ticket (mocked, pending teammate in
     expect(mockPatch).not.toHaveBeenCalled();
   });
 
-  test('Confirm Escalation closes the modal, shows a toast, and makes no network call (mocked)', async () => {
+  test('Confirm Escalation calls POST /api/support/tickets with the mapped priority/category and shows the created ticket id', async () => {
+    mockPost.mockResolvedValue({ data: { message: 'Ticket created.', ticket: { id: 'ticket-abcdef123456' } } });
+    mount([incident()]); // severity: 'High'
+    await screen.findByText('Cold Store B');
+    fireEvent.click(screen.getByRole('button', { name: 'Escalate to Ticket' }));
+    await screen.findByText('Escalate to Support Ticket?');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Escalation' }));
+
+    expect(await screen.findByText(/ticket #ticket-a created/i)).toBeTruthy();
+    expect(screen.queryByText('Escalate to Support Ticket?')).toBeNull();
+    expect(mockPost).toHaveBeenCalledWith(
+      '/api/support/tickets',
+      expect.objectContaining({ category: 'Security', priority: 'High' }),
+      expect.anything()
+    );
+    expect(mockPatch).not.toHaveBeenCalled();
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  test('a failed escalation shows an error toast and leaves the modal open for retry', async () => {
+    mockPost.mockRejectedValue(new Error('network error'));
     mount([incident()]);
     await screen.findByText('Cold Store B');
     fireEvent.click(screen.getByRole('button', { name: 'Escalate to Ticket' }));
@@ -93,10 +114,7 @@ describe('Incident Dashboard — Escalate to Ticket (mocked, pending teammate in
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Escalation' }));
 
-    expect(screen.queryByText('Escalate to Support Ticket?')).toBeNull();
-    expect(await screen.findByText(/prepared for escalation/i)).toBeTruthy();
-    expect(mockPost).not.toHaveBeenCalled();
-    expect(mockPatch).not.toHaveBeenCalled();
-    expect(mockDelete).not.toHaveBeenCalled();
+    expect(await screen.findByText(/could not create the support ticket/i)).toBeTruthy();
+    expect(screen.getByText('Escalate to Support Ticket?')).toBeTruthy(); // still open — nothing to lose on retry
   });
 });
