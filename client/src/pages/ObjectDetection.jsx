@@ -184,7 +184,10 @@ const ObjectDetection = () => {
       });
   }, [headers]);
 
+  const alertsInFlightRef = useRef(false);
   const fetchAlerts = useCallback(() => {
+    if (alertsInFlightRef.current) return;
+    alertsInFlightRef.current = true;
     axios.get(ALERTS_URL, { headers })
       .then(res => {
         if (!mountedRef.current) return;
@@ -193,6 +196,9 @@ const ObjectDetection = () => {
       })
       .catch(() => {
         if (mountedRef.current) setNodeOffline(true);
+      })
+      .finally(() => {
+        alertsInFlightRef.current = false;
       });
   }, [headers]);
 
@@ -391,7 +397,7 @@ const ObjectDetection = () => {
     fetchPeopleCount();
 
     const peopleInterval = setInterval(fetchPeopleCount, 5000);
-    const alertsInterval = setInterval(fetchAlerts, 15000);
+    const alertsInterval = setInterval(fetchAlerts, 3000);
 
     return () => {
       clearInterval(peopleInterval);
@@ -671,17 +677,28 @@ const ObjectDetection = () => {
     setDetections([]);
   };
 
-  const activeAlertCount = alerts.filter(a => OPEN_ALERT_STATUSES.includes(a.status)).length;
-  const clearedAlertCount = alerts.filter(a => a.status === 'Cleared').length;
+  const getEvidenceTime = (alert) => {
+    const raw = alert?.occurred_at || alert?.createdAt || alert?.timestamp;
+    if (!raw) return 0;
+    const t = new Date(raw).getTime();
+    return Number.isNaN(t) ? 0 : t;
+  };
+
+  const sortedAlerts = useMemo(() => {
+    return [...alerts].sort((a, b) => getEvidenceTime(b) - getEvidenceTime(a));
+  }, [alerts]);
+
+  const activeAlertCount = sortedAlerts.filter(a => OPEN_ALERT_STATUSES.includes(a.status)).length;
+  const clearedAlertCount = sortedAlerts.filter(a => a.status === 'Cleared').length;
   const latestOpenAlert = useMemo(() => (
-    alerts.find(alert => OPEN_ALERT_STATUSES.includes(alert.status)) || null
-  ), [alerts]);
+    sortedAlerts.find(alert => OPEN_ALERT_STATUSES.includes(alert.status)) || null
+  ), [sortedAlerts]);
   const displayedAlert = useMemo(() => {
     const selected = selectedAlertId
-      ? alerts.find(alert => alert.id === selectedAlertId && OPEN_ALERT_STATUSES.includes(alert.status))
+      ? sortedAlerts.find(alert => alert.id === selectedAlertId && OPEN_ALERT_STATUSES.includes(alert.status))
       : null;
     return selected || latestOpenAlert;
-  }, [alerts, selectedAlertId, latestOpenAlert]);
+  }, [sortedAlerts, selectedAlertId, latestOpenAlert]);
   const latestIncidentTitle = useMemo(() => {
     if (!displayedAlert) return '';
     return alertTitle(displayedAlert);
@@ -1131,7 +1148,7 @@ const ObjectDetection = () => {
                 </div>
               </div>
               <div className="od-live-alert-list">
-                {alerts
+                {sortedAlerts
                   .filter((alert) => OPEN_ALERT_STATUSES.includes(alert.status))
                   .filter((alert) => alertTypeFilter === 'all' || alertTypeKey(alert) === alertTypeFilter)
                   .filter((alert) => alertSeverityFilter === 'all' || alert.severity === alertSeverityFilter)

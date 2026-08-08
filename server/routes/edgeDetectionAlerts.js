@@ -16,6 +16,7 @@ const {
     generateSnapshotFilename,
     saveSnapshotBuffer,
     deleteSnapshotFile,
+    deleteSnapshotByUrl,
 } = require('../utils/detectionSnapshotStorage');
 
 const PUBLIC_NOTIFICATION_ERROR = 'Notification delivery failed.';
@@ -198,6 +199,48 @@ const persistUploadedSnapshot = async (alert, file) => {
         throw err;
     }
     return snapshotUrl;
+};
+
+const refreshDuplicateSnapshotAndTimestamp = async (existing, file, messageAlert) => {
+    if (!file?.buffer || !existing?.id) return false;
+
+    const newFilename = generateSnapshotFilename();
+    const newSnapshotUrl = snapshotUrlFor(existing.id, newFilename);
+    const oldSnapshotUrl = existing.snapshot_url;
+    let savedNewObject = false;
+
+    try {
+        await saveSnapshotBuffer(newFilename, file.buffer);
+        savedNewObject = true;
+
+        // Prefer explicit valid timestamp supplied by SecurePi; fallback to server receipt time ONLY for new JPEG evidence.
+        const newOccurredAt = messageAlert.occurred_at || new Date();
+        const updatePayload = {
+            snapshot_url: newSnapshotUrl,
+            occurred_at: newOccurredAt,
+        };
+
+        if (typeof existing.update === 'function') {
+            await existing.update(updatePayload);
+        } else {
+            Object.assign(existing, updatePayload);
+        }
+
+        console.log(`[Edge] Snapshot evidence refreshed for alert ${existing.id}`);
+
+        if (oldSnapshotUrl && oldSnapshotUrl !== newSnapshotUrl) {
+            await deleteSnapshotByUrl(oldSnapshotUrl, existing.id).catch((delErr) => {
+                console.warn(`[Edge] Old snapshot cleanup failed for alert ${existing.id}:`, delErr.message || delErr);
+            });
+        }
+        return true;
+    } catch (err) {
+        if (savedNewObject) {
+            await deleteSnapshotFile(newFilename).catch(() => {});
+        }
+        console.error(`[Edge] Snapshot persistence failed for alert ${existing?.id}:`, err);
+        return false;
+    }
 };
 
 const verifyEdgeIngestToken = (req, res, next) => {
@@ -408,7 +451,7 @@ router.post('/detection-alerts', verifyEdgeIngestToken, handleSnapshotUpload, as
         if (eventId) {
             const existing = await findByEdgeEventId(eventId);
             if (existing) {
-                return handleDuplicate(res, existing, messageAlert, gate);
+                return handleDuplicate(res, existing, messageAlert, gate, req.file);
             }
         }
 
@@ -453,7 +496,7 @@ router.post('/detection-alerts', verifyEdgeIngestToken, handleSnapshotUpload, as
                     snapshot_url: null,
                     device_id: cleanedDevice,
                     sensor_metadata: safeSensorMeta,
-                    occurred_at: parsedOccurredAt,
+                    occurred_at: parsedOccurredAt || new Date(),
                     edge_event_id: eventId,
                     whatsapp_status: initialWhatsappStatus,
                     ...links
@@ -479,7 +522,7 @@ router.post('/detection-alerts', verifyEdgeIngestToken, handleSnapshotUpload, as
             // never a second WhatsApp send.
             if (isUniqueViolation(err) && eventId) {
                 const existing = await findByEdgeEventId(eventId);
-                if (existing) return handleDuplicate(res, existing, messageAlert, gate);
+                if (existing) return handleDuplicate(res, existing, messageAlert, gate, req.file);
             }
             throw err;
         }
@@ -508,10 +551,14 @@ router.post('/detection-alerts', verifyEdgeIngestToken, handleSnapshotUpload, as
     }
 });
 
-// Resolve a duplicate edge event. Never creates a second alert/incident. Only a
-// previously-Failed notification is retried (one controlled attempt), and only when
-// WhatsApp is currently eligible; Sent/Simulated/Pending are returned untouched.
-async function handleDuplicate(res, existing, messageAlert, gate) {
+// Resolve a duplicate edge event. Never creates a second alert/incident. If a new
+// JPEG snapshot is attached, refreshes the existing alert's snapshot_url and occurred_at
+// evidence timestamp without modifying createdAt or triggering a duplicate WhatsApp.
+async function handleDuplicate(res, existing, messageAlert, gate, reqFile) {
+    if (reqFile?.buffer) {
+        await refreshDuplicateSnapshotAndTimestamp(existing, reqFile, messageAlert);
+    }
+
     const currentStatus = existing.whatsapp_status || 'Not Requested';
     const base = { duplicate: true, resent: false, status: currentStatus };
 
