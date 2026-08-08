@@ -110,9 +110,16 @@ router.get('/', verifyToken, requireRole('FM', 'Staff'), async (req, res) => {
     try {
         const where = {};
         if (req.query.status) where.status = req.query.status;
+        const orderClause = (sequelize && typeof sequelize.fn === 'function')
+            ? [
+                [sequelize.fn('COALESCE', sequelize.col('occurred_at'), sequelize.col('createdAt')), 'DESC'],
+                ['createdAt', 'DESC']
+              ]
+            : [['createdAt', 'DESC']];
+
         const alerts = await DetectionAlert.findAll({
             where,
-            order: [['createdAt', 'DESC']],
+            order: orderClause,
             limit: 50
         });
         res.json(alerts);

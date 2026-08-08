@@ -486,4 +486,70 @@ describe("POST /api/edge/detection-alerts", () => {
     expect(res.status).toBe(400);
     expect(mockDetectionAlert.create).not.toHaveBeenCalled();
   });
+
+  describe("Idempotent duplicate edge_event_id refresh", () => {
+    test("duplicate edge_event_id with new JPEG refreshes snapshot_url and occurred_at timestamp", async () => {
+      const existingAlert = {
+        id: 99,
+        edge_event_id: "evt-dup-100",
+        snapshot_url: "/api/detection-alerts/99/snapshot/old-uuid.jpg",
+        occurred_at: new Date("2026-08-01T10:00:00Z"),
+        createdAt: new Date("2026-08-01T10:00:00Z"),
+        whatsapp_status: "Sent",
+        update: jest.fn().mockImplementation(async (fields) => {
+          Object.assign(existingAlert, fields);
+        }),
+        toJSON: function() { return { ...this, update: undefined, toJSON: undefined }; },
+      };
+      mockDetectionAlert.findOne = jest.fn().mockResolvedValue(existingAlert);
+
+      const newTimestamp = "2026-08-08T15:30:00.000Z";
+      const res = await request(app)
+        .post("/api/edge/detection-alerts")
+        .set("Authorization", "Bearer test-edge-token")
+        .field("event_id", "evt-dup-100")
+        .field("zone_name", "Loading Bay")
+        .field("camera_location", "Loading Bay Camera 01")
+        .field("timestamp", newTimestamp)
+        .attach("snapshot", jpegBytes, { filename: "new-evidence.jpg", contentType: "image/jpeg" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.whatsapp.duplicate).toBe(true);
+      expect(mockDetectionAlert.create).not.toHaveBeenCalled();
+      expect(existingAlert.update).toHaveBeenCalledWith(expect.objectContaining({
+        snapshot_url: expect.stringMatching(/^\/api\/detection-alerts\/99\/snapshot\/[0-9a-f-]{36}\.jpg$/),
+        occurred_at: new Date(newTimestamp),
+      }));
+      expect(existingAlert.createdAt).toEqual(new Date("2026-08-01T10:00:00Z"));
+    });
+
+    test("duplicate edge_event_id without JPEG leaves snapshot_url and occurred_at unchanged", async () => {
+      const existingAlert = {
+        id: 99,
+        edge_event_id: "evt-dup-200",
+        snapshot_url: "/api/detection-alerts/99/snapshot/original.jpg",
+        occurred_at: new Date("2026-08-01T10:00:00Z"),
+        createdAt: new Date("2026-08-01T10:00:00Z"),
+        whatsapp_status: "Sent",
+        update: jest.fn(),
+        toJSON: function() { return { ...this, update: undefined, toJSON: undefined }; },
+      };
+      mockDetectionAlert.findOne = jest.fn().mockResolvedValue(existingAlert);
+
+      const res = await request(app)
+        .post("/api/edge/detection-alerts")
+        .set("Authorization", "Bearer test-edge-token")
+        .send({
+          event_id: "evt-dup-200",
+          zone_name: "Loading Bay",
+          camera_location: "Loading Bay Camera 01",
+          timestamp: "2026-08-08T16:00:00.000Z",
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.whatsapp.duplicate).toBe(true);
+      expect(existingAlert.update).not.toHaveBeenCalled();
+      expect(existingAlert.snapshot_url).toBe("/api/detection-alerts/99/snapshot/original.jpg");
+    });
+  });
 });
