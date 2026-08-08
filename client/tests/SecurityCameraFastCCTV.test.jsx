@@ -5,6 +5,29 @@ import '@testing-library/jest-dom';
 import axios from 'axios';
 import SecurityCamera from '../src/pages/SecurityCamera';
 
+const computeHumanDisplayBox = (personBox, faceCropBox) => {
+  if (!Array.isArray(personBox) || personBox.length < 4) return personBox;
+  const [pX1, pY1, pX2, pY2] = personBox;
+  const pW = Math.max(1, pX2 - pX1);
+  const pH = Math.max(1, pY2 - pY1);
+
+  if (Array.isArray(faceCropBox) && faceCropBox.length === 4) {
+    const [fX, fY, fW, fH] = faceCropBox;
+    const fullX1 = Math.max(pX1, Math.min(pX2, pX1 + fX));
+    const fullY1 = Math.max(pY1, Math.min(pY2, pY1 + fY));
+    const fullX2 = Math.max(fullX1, Math.min(pX2, fullX1 + fW));
+    const fullY2 = Math.max(fullY1, Math.min(pY2, fullY1 + fH));
+    return [fullX1, fullY1, fullX2, fullY2];
+  }
+
+  const padX = pW * 0.2;
+  const fX1 = pX1 + padX;
+  const fX2 = Math.max(fX1 + 10, pX2 - padX);
+  const fY1 = pY1;
+  const fY2 = Math.max(fY1 + 10, pY1 + pH * 0.35);
+  return [fX1, fY1, fX2, fY2];
+};
+
 vi.mock('axios');
 vi.mock('../src/components/Sidebar', () => ({ default: () => null }));
 
@@ -24,7 +47,7 @@ describe('SecurityCamera Fast CCTV Facial Recognition & Diagnostics', () => {
     Object.defineProperty(navigator, 'mediaDevices', {
       configurable: true,
       value: {
-        getUserMedia: vi.fn().mockImplementation((constraints) => {
+        getUserMedia: vi.fn().mockImplementation(() => {
           return Promise.resolve(stream);
         }),
       },
@@ -308,4 +331,96 @@ describe('SecurityCamera Fast CCTV Facial Recognition & Diagnostics', () => {
 
     expect(screen.getByText('Security Camera')).toBeInTheDocument();
   });
+
+  test('14. face crop coordinates map back to full-frame canvas coordinates', () => {
+    const fullFaceBox = computeHumanDisplayBox([100, 100, 500, 700], [50, 40, 120, 150]);
+    expect(fullFaceBox).toEqual([150, 140, 270, 290]);
+  });
+
+  test('15. fallback head box calculation works when face crop box is null', () => {
+    const fallbackBox = computeHumanDisplayBox([100, 100, 500, 700], null);
+    expect(fallbackBox).toEqual([180, 100, 420, 310]);
+  });
+
+  test('16. VERIFIED user with face bbox renders face-sized overlay style and green class', async () => {
+    axios.post.mockImplementation((url) => {
+      if (url === '/api/yolo/analyze-frame') {
+        return Promise.resolve({
+          data: {
+            detections: [
+              { type: 'person', status: 'person', track_id: 77, box: [100, 100, 500, 700], confidence: 0.98 },
+            ],
+            count: 1,
+            frame_width: 640,
+            frame_height: 480,
+          },
+        });
+      }
+      if (url === '/api/facial-recognition/recognize') {
+        return Promise.resolve({
+          data: {
+            user: { id: 77, name: 'Felicia Tan', role: 'Staff', status: 'AUTHORIZED', confidence: 0.99 },
+            box: [50, 40, 120, 150],
+          },
+        });
+      }
+      return Promise.resolve({ data: {} });
+    });
+
+    render(
+      <MemoryRouter>
+        <SecurityCamera />
+      </MemoryRouter>
+    );
+
+    triggerLoadedMetadata();
+
+    await waitFor(() => {
+      expect(screen.getByText('#77 FELICIA TAN — VERIFIED')).toBeInTheDocument();
+    });
+
+    const box = screen.getByText('#77 FELICIA TAN — VERIFIED').closest('.od-detection-box');
+    expect(box).toHaveClass('authorized');
+    expect(box.style.left).toBe(`${(150 / 640) * 100}%`);
+    expect(box.style.top).toBe(`${(140 / 480) * 100}%`);
+    expect(box.style.width).toBe(`${((270 - 150) / 640) * 100}%`);
+    expect(box.style.height).toBe(`${((290 - 140) / 480) * 100}%`);
+  });
+
+  test('17. non-human object and animal detections retain original YOLO bbox', async () => {
+    axios.post.mockImplementation((url) => {
+      if (url === '/api/yolo/analyze-frame') {
+        return Promise.resolve({
+          data: {
+            detections: [
+              { type: 'dog', status: 'animal', label: 'dog (92%)', box: [200, 200, 350, 350] },
+            ],
+            count: 0,
+            frame_width: 640,
+            frame_height: 480,
+          },
+        });
+      }
+      return Promise.resolve({ data: {} });
+    });
+
+    render(
+      <MemoryRouter>
+        <SecurityCamera />
+      </MemoryRouter>
+    );
+
+    triggerLoadedMetadata();
+
+    await waitFor(() => {
+      expect(screen.getByText('dog (92%)')).toBeInTheDocument();
+    });
+
+    const box = screen.getByText('dog (92%)').closest('.od-detection-box');
+    expect(box.style.left).toBe(`${(200 / 640) * 100}%`);
+    expect(box.style.top).toBe(`${(200 / 480) * 100}%`);
+    expect(box.style.width).toBe(`${((350 - 200) / 640) * 100}%`);
+    expect(box.style.height).toBe(`${((350 - 200) / 480) * 100}%`);
+  });
 });
+
