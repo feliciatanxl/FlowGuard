@@ -13,6 +13,9 @@ const { sendUnexpectedError } = require('../utils/safeHttpError');
 const {
     ensureSnapshotDirectory,
     generateSnapshotDestination,
+    generateSnapshotFilename,
+    saveSnapshotBuffer,
+    deleteSnapshotFile,
 } = require('../utils/detectionSnapshotStorage');
 
 const PUBLIC_NOTIFICATION_ERROR = 'Notification delivery failed.';
@@ -177,27 +180,21 @@ const snapshotUrlFor = (alertId, filename) => `/api/detection-alerts/${alertId}/
 
 const persistUploadedSnapshot = async (alert, file) => {
     if (!file?.buffer || !alert?.id) return null;
-    const { filename, destination } = generateSnapshotDestination();
+    const filename = generateSnapshotFilename();
     const snapshotUrl = snapshotUrlFor(alert.id, filename);
-    let fileHandle = null;
-    let createdFile = false;
+    let saved = false;
     try {
-        await ensureSnapshotDirectory();
-        fileHandle = await fs.promises.open(destination, 'wx', 0o600);
-        createdFile = true;
-        await fileHandle.writeFile(file.buffer);
-        await fileHandle.close();
-        fileHandle = null;
+        await saveSnapshotBuffer(filename, file.buffer);
+        saved = true;
         if (typeof alert.update === 'function') {
             await alert.update({ snapshot_url: snapshotUrl });
         } else {
             alert.snapshot_url = snapshotUrl;
         }
     } catch (err) {
-        if (fileHandle) await fileHandle.close().catch(() => {});
-        // Only delete when this request successfully created the UUID path. An
-        // astronomically unlikely EEXIST must never remove another alert's file.
-        if (createdFile) await fs.promises.unlink(destination).catch(() => {});
+        if (saved) {
+            await deleteSnapshotFile(filename).catch(() => {});
+        }
         throw err;
     }
     return snapshotUrl;

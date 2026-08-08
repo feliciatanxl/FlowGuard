@@ -43,6 +43,7 @@ const { verifyToken, requireRole, verifyServiceOrRole } = require('../middleware
 const {
     GENERATED_SNAPSHOT_RE,
     resolveStoredSnapshotPath,
+    readSnapshotBuffer,
 } = require('../utils/detectionSnapshotStorage');
 const SEVERITIES = ['Low', 'Medium', 'High', 'Critical'];
 const VALID_STATUSES = ['Active', 'Acknowledged', 'Investigating', 'Dispatched', 'Escalated', 'Cleared'];
@@ -144,23 +145,15 @@ router.get('/:id/snapshot/:filename', verifyToken, requireRole('FM', 'Staff'), a
             return res.sendStatus(404);
         }
 
-        // The filesystem component is recovered from the server-generated URL stored
-        // in the database, then independently UUID-validated and containment-checked.
+        // The snapshot filename is recovered from the server-generated URL stored
+        // in the database, then independently UUID-validated.
         // req.params.filename is used only to authorize that exact stored resource.
         const storedFilename = alert.snapshot_url.slice(expectedPrefix.length);
         if (storedFilename !== requestedFilename) return res.sendStatus(404);
-        const filePath = resolveStoredSnapshotPath(storedFilename);
-        if (!filePath) return res.sendStatus(404);
 
-        // Cloud Run temporary storage is instance-local and may disappear after a
-        // restart or when another instance handles this request. Treat every local
-        // read failure as an expired snapshot without exposing its path or error.
-        let snapshotBytes;
-        try {
-            snapshotBytes = await fs.promises.readFile(filePath);
-        } catch {
-            return res.sendStatus(404);
-        }
+        const snapshotBytes = await readSnapshotBuffer(storedFilename);
+        if (!snapshotBytes) return res.sendStatus(404);
+
         return res.type('jpg').send(snapshotBytes);
     } catch (err) {
         return sendUnexpectedError(res, 'Detection alert snapshot lookup failed:', err);
