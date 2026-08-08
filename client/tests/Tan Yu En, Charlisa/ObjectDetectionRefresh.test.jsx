@@ -15,7 +15,7 @@ let ObjectDetection;
 const loadObjectDetection = async () => {
   vi.resetModules();
   axios = (await import('axios')).default;
-  ({ default: ObjectDetection } = await import('../src/pages/ObjectDetection'));
+  ({ default: ObjectDetection } = await import('../../src/pages/ObjectDetection'));
 };
 
 const mockBackend = (alerts) => {

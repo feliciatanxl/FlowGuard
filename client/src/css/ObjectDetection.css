@@ -1064,16 +1064,34 @@
     text-align: center;
 }
 
+/* The right column is only ~360px wide, so the title and the four alert controls
+   cannot sit on one line. Let the heading wrap: the actions drop to their own
+   full-width row instead of overflowing past the edge of the card. */
 .od-alert-summary-card .od-card-heading {
     justify-content: space-between;
     gap: 12px;
+    flex-wrap: wrap;
+}
+
+.od-alert-summary-card .od-card-heading > div:first-child {
+    flex: 1 1 200px;
+    min-width: 0;
 }
 
 .od-alert-heading-actions {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex-shrink: 0;
+    flex: 1 1 300px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    min-width: 0;
+}
+
+.od-alert-heading-actions .od-alert-filter {
+    flex: 1 1 140px;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .od-clear-all-btn,

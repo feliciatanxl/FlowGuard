@@ -11,6 +11,32 @@ Three services, deployed in this order (each later service needs the earlier one
 | `flowguard-ai`     | `ai-service/` | `flowguard-ai`      | **PRIVATE** | FastAPI + InsightFace + YOLOv8 (uvicorn) |
 | `flowguard-client` | `client/`     | `flowguard-client`  | public | React static build behind Nginx reverse proxy |
 
+## Test accounts (for assessment)
+
+Staging client: <https://flowguard-client-staging-590663319889.asia-southeast1.run.app>
+Login page: <https://flowguard-client-staging-590663319889.asia-southeast1.run.app/login>
+
+| Role     | Email                   | Password    | What it demonstrates |
+|----------|-------------------------|-------------|----------------------|
+| `FM`     | `admin@harrison.com`    | `Admin123!` | Full facility-manager access: dashboard, users/tenants, gate verification, camera/zone/detection setup, incidents, security review, support tickets, analytics, Knowledge Base admin |
+| `Tenant` | `tenant@harrison.com`   | `Admin123!` | Own dashboard, own Staff management, own attendance and logistics bookings, Settings, own Face ID enrolment |
+| `Staff`  | `teststaff@harrison.com`| `Admin123!` | Own attendance, permitted logistics, Settings, own Face ID enrolment |
+
+Notes for testers:
+
+- `FM`, `Tenant`, and `Staff` are the exact stored role names. Drivers use Driver
+  Pass links and do not have accounts.
+- Sign in to each role in a separate browser profile or Incognito window; the JWT
+  is per-session, so testing two roles in one window logs the first one out.
+- Access boundaries are enforced server-side. Signing in as `Tenant` or `Staff`
+  and opening an FM-only route (users, gate verification, monitoring, incident,
+  support management, Knowledge Base admin) is expected to be rejected — that
+  rejection is the RBAC check working, not a broken page.
+- The AI features (facial recognition, YOLO object detection) require the `FM` or
+  `Staff` role and a completed Face ID enrolment.
+- These are demo accounts holding fake assessment data only. **Rotate or disable
+  them once marking is complete**, and never reuse this password elsewhere.
+
 ## Architecture
 
 The AI service is **private** — it holds the biometric matching engine, so it

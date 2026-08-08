@@ -87,7 +87,7 @@ One correction to the agent's report worth recording: it claimed `edge/securepi/
 
 **Response summary:** Followed the established repo convention `flowguard-ai/<Full Name>/ai-logs/`, resolving `<name>` from the session's git user `251787T` → `Tan Yu En, Charlisa` (the same mapping already used by this identity's prior logs). Listed the existing folder contents to pick a distinct filename, and read `2026-08-03-object-detection-hardcoded-values-audit.md` to avoid restating an audit already logged three days earlier — noting the repeat in Task 5 instead.
 
-**Outcome:** In progress (this file).
+**Outcome:** Completed — log written to `flowguard-ai/Tan Yu En, Charlisa/ai-logs/2026-08-06-securepi-stream-and-snapshot-retrieval.md`. Nothing committed, per the convention in this folder's prior logs.
 
 ---
 
@@ -98,3 +98,21 @@ One correction to the agent's report worth recording: it claimed `edge/securepi/
 3. **`securePi.py` missing from `feature/object-detection-v2`** — only on `feature/object-detection-space-v2` (`dc0a77c`). Anyone deploying from the current branch has no edge source to run; worth cherry-picking before merge.
 4. **`--stream` must be made durable** — either added to the preset `.args` file or via the `deploy/securepi.service` systemd unit; the Pi process currently runs in the foreground and dies with the SSH session.
 5. **Hardcoding fixes still unactioned** since 2026-08-03, notably the `FACE_MATCH_THRESHOLD` bypass, which is a silent correctness bug rather than a tidiness issue.
+
+---
+
+## Addendum — 2026-08-08 status re-check
+
+Re-checked the open items above against the repo. Several commits landed in the interim, all authored by **`fel` (feliciatanxl@gmail.com)** rather than in this session, so they are not logged as tasks here — no prompts are available for them:
+
+- `dda9cc9` feat: persist detection snapshots in private GCS (`server/utils/detectionSnapshotStorage.js` +193, `server/tests/gcs-detection-snapshots.test.js` +389, both alert routes)
+- `cade242` fix: refresh edge snapshots and evidence timestamps (`edgeDetectionAlerts.js` +61, `ObjectDetection.jsx`, `ObjectDetectionRefresh.test.jsx` +121)
+- `0cf8c96`, `5997e3b` merges of `fix/snapshot-refresh-timestamp` and `ai-chatbot` into this branch
+
+**Effect on open item 1 — still open.** This work is entirely server- and client-side: it changes where snapshots are *stored* (private GCS instead of local disk) and refreshes evidence timestamps. It does **not** touch the Pi, and the gap identified in Task 3 is on the Pi — `securePi.py` still posts `application/json` and never attaches the JPEG. So the images still cannot reach the website until the Pi-side multipart change is made.
+
+**The Task 4 prompt remains valid.** Verified the ingest contract it encodes is unchanged after `cade242`: `snapshotUpload.single('snapshot')` (same field name), the JPEG mimetype filter (now via a `JPEG_MIME_TYPES` set), the env-driven `SNAPSHOT_MAX_BYTES` limit, and `snapshotUrlFor` are all intact.
+
+**One addition to fold into that prompt:** `cade242` added `refreshDuplicateSnapshotAndTimestamp`, so a duplicate `event_id` arriving **with a JPEG attached** now refreshes the existing alert's `snapshot_url` and `occurred_at` and deletes the superseded snapshot, rather than being a no-op. Retries are therefore still safe, but they now *replace* the stored evidence instead of being ignored — worth stating explicitly so the Pi-side implementation doesn't re-POST more often than intended.
+
+Open items 2–5 (the `/people-count` 404, `securePi.py` missing from this branch, making `--stream` durable, and the unactioned hardcoding fixes including the `FACE_MATCH_THRESHOLD` bypass) are all unchanged.
