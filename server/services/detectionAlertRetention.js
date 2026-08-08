@@ -1,3 +1,5 @@
+const { deleteSnapshotByUrl } = require('../utils/detectionSnapshotStorage');
+
 const DETECTION_ALERT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const DETECTION_ALERT_PURGE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const DETECTION_ALERT_INITIAL_DELAY_MS = 20000;
@@ -18,6 +20,24 @@ function createDetectionAlertRetentionTask({
     if (typeof DetectionAlert?.destroy !== 'function') return;
     const cutoff = new Date(now() - DETECTION_ALERT_RETENTION_MS);
     try {
+      if (typeof DetectionAlert?.findAll === 'function') {
+        const staleAlerts = await DetectionAlert.findAll({
+          where: { createdAt: { [Op.lt]: cutoff } },
+          attributes: ['id', 'snapshot_url'],
+          paranoid: false,
+        });
+        if (Array.isArray(staleAlerts)) {
+          for (const alert of staleAlerts) {
+            if (alert && alert.snapshot_url) {
+              await deleteSnapshotByUrl(alert.snapshot_url, alert.id).catch((err) => {
+                if (typeof logger?.error === 'function') {
+                  logger.error('[Purge] Snapshot cleanup error:', err?.message || err);
+                }
+              });
+            }
+          }
+        }
+      }
       const removed = await DetectionAlert.destroy({
         where: { createdAt: { [Op.lt]: cutoff } },
         force: true,
