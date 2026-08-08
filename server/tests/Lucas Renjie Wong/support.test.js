@@ -18,7 +18,7 @@ const mockSequelize = { transaction: jest.fn((cb) => cb({})), query: jest.fn() }
 // middlewares/auth.js). That's the right level of isolation here: Module 3's
 // tests exercise support.js/supportService.js, not the shared auth system.
 // User IS included for support.js's own optional-identity-verification path.
-jest.mock('../models', () => ({
+jest.mock('../../models', () => ({
   ChatTranscript: mockChatTranscript,
   SupportTicket: mockSupportTicket,
   KnowledgeBase: mockKnowledgeBase,
@@ -31,14 +31,14 @@ jest.mock('../models', () => ({
 // Gemini "succeeds" or is "unavailable" independently of the DB mocks.
 const mockGenerateChatReply = jest.fn();
 const mockGenerateStatusMessage = jest.fn();
-jest.mock('../services/geminiService', () => ({
+jest.mock('../../services/geminiService', () => ({
   generateChatReply: (...args) => mockGenerateChatReply(...args),
   generateStatusMessage: (...args) => mockGenerateStatusMessage(...args)
 }));
 
 process.env.APP_SECRET = 'test-secret';
 
-const supportRouter = require('../routes/support');
+const supportRouter = require('../../routes/support');
 const app = express();
 app.use(express.json());
 app.use('/api/support', supportRouter);
