@@ -6,11 +6,36 @@ const { readLimiter } = require('../middlewares/rateLimit');
 router.use(readLimiter); // route-wide rate limiting (trusted AI service POSTs are skipped)
 const { DetectionAlert, IncidentLog, MonitoringZone, Camera, sequelize } = require('../models');
 const { resolveIncidentType } = require('../utils/detectionAlertBridge');
+const whatsapp = require('../services/whatsappService');
 function severityFromDuration(seconds) {
   if (!seconds || seconds < 120) return 'Low';
   if (seconds < 300) return 'Medium';
   if (seconds < 600) return 'High';
   return 'Critical';
+}
+function defaultSeverityForType(alertType, durationSeconds, identityStatus, personName) {
+  const key = String(alertType || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  const upperStatus = String(identityStatus || '').trim().toUpperCase();
+  const upperPerson = String(personName || '').trim().toUpperCase();
+  switch (key) {
+    case 'PEST_DETECTION':
+      return 'High';
+    case 'RESTRICTED_MOTION':
+    case 'RESTRICTED_ZONE_MOTION':
+      if (upperStatus === 'SUSPICIOUS' || upperStatus === 'SUSPENDED' || upperPerson === 'UNKNOWN PERSON' || upperPerson === 'UNKNOWN') {
+        return 'Critical';
+      }
+      return 'High';
+    case 'FORGOTTEN_BELONGING':
+      return (durationSeconds && durationSeconds >= 300) ? 'High' : 'Medium';
+    case 'ITEM_PICKED_UP':
+    case 'ITEM_SET_DOWN':
+    case 'ITEM_MOVEMENT':
+      return 'Medium';
+    case 'UNATTENDED_OBJECT':
+    default:
+      return severityFromDuration(durationSeconds);
+  }
 }
 const { Op } = require('sequelize');
 const { createDetectionAlertRetentionTask } = require('../services/detectionAlertRetention');
@@ -177,12 +202,16 @@ async function resolveLinks(zone_name, camera_location) {
 router.post('/', verifyServiceOrRole('FM', 'Staff'), async (req, res) => {
     try {
         const {
+            event_id,
+            cycle_id,
             zone_name,
             camera_location,
             status,
             object_class,
             duration_seconds,
             person_name,
+            identity_status,
+            person_role,
             alert_type,
             severity,
             source,
@@ -190,6 +219,8 @@ router.post('/', verifyServiceOrRole('FM', 'Staff'), async (req, res) => {
             snapshot_url,
             snapshot_path,
             device_id,
+            track_id,
+            sensor_metadata,
             timestamp,
             occurred_at
         } = req.body;
@@ -202,10 +233,35 @@ router.post('/', verifyServiceOrRole('FM', 'Staff'), async (req, res) => {
         if (severity && !SEVERITIES.includes(severity)) {
             return res.status(400).json({ error: `severity must be one of: ${SEVERITIES.join(', ')}.` });
         }
+
+        const eventId = cleanText(event_id || cycle_id || sensor_metadata?.cycle_id || sensor_metadata?.inspection_cycle_id, 255);
+        if (eventId && typeof DetectionAlert.findOne === 'function') {
+            try {
+                const existing = await DetectionAlert.findOne({ where: { edge_event_id: eventId } });
+                if (existing) {
+                    return res.status(200).json(existing);
+                }
+            } catch {
+                // Best effort idempotency lookup
+            }
+        }
+
+        const cleanedIdentityStatus = cleanText(identity_status, 50);
+        const cleanedPersonRole = cleanText(person_role, 100);
+        const cleanedPerson = cleanText(person_name, 255);
+        const parsedTrackId = parsePositiveInt(track_id);
+        const baseSensorMeta = (sensor_metadata && typeof sensor_metadata === 'object') ? { ...sensor_metadata } : {};
+        if (cleanedIdentityStatus && !baseSensorMeta.identity_status) baseSensorMeta.identity_status = cleanedIdentityStatus;
+        if (cleanedPersonRole && !baseSensorMeta.person_role) baseSensorMeta.person_role = cleanedPersonRole;
+        if (parsedTrackId !== null && baseSensorMeta.track_id === undefined) baseSensorMeta.track_id = parsedTrackId;
+        if (cleanedPerson && !baseSensorMeta.person_name) baseSensorMeta.person_name = cleanedPerson;
+        if (eventId && !baseSensorMeta.cycle_id) baseSensorMeta.cycle_id = eventId;
+        const safeSensorMeta = Object.keys(baseSensorMeta).length > 0 ? baseSensorMeta : null;
+
         const { links, detectionType } = await resolveLinks(zone_name, camera_location);
-        const resolvedSeverity = severity || severityFromDuration(duration_seconds);
-        const cleanedAlertType = cleanText(alert_type, 100);
-        const cleanedObjectClass = cleanText(object_class, 100);
+        const cleanedAlertType = cleanText(alert_type, 100) || 'Unattended Object';
+        const cleanedObjectClass = cleanText(object_class, 100) || 'package-like object';
+        const resolvedSeverity = severity || defaultSeverityForType(cleanedAlertType, parsePositiveInt(duration_seconds), cleanedIdentityStatus, cleanedPerson);
         const resolvedSource = resolveAlertSource(source, 100);
         const incidentType = resolveIncidentType({
             alert_type: cleanedAlertType,
@@ -221,13 +277,15 @@ router.post('/', verifyServiceOrRole('FM', 'Staff'), async (req, res) => {
                 status: status || 'Active',
                 object_class: cleanedObjectClass,
                 duration_seconds: parsePositiveInt(duration_seconds),
-                person_name: cleanText(person_name, 255),
+                person_name: cleanedPerson,
                 alert_type: cleanedAlertType,
                 severity: resolvedSeverity,
                 source: resolvedSource,
                 confidence: parseConfidence(confidence),
                 snapshot_url: cleanText(snapshot_url || snapshot_path, 500),
                 device_id: cleanText(device_id, 100),
+                sensor_metadata: safeSensorMeta,
+                edge_event_id: eventId,
                 occurred_at: parseOccurredAt(timestamp || occurred_at),
                 ...links
             }, { transaction: t });
@@ -237,7 +295,7 @@ router.post('/', verifyServiceOrRole('FM', 'Staff'), async (req, res) => {
                 status: incidentType,
                 source: resolvedSource,
                 severity: resolvedSeverity,
-                person_name: (person_name && person_name !== 'UNKNOWN') ? cleanText(person_name, 255) : null,
+                person_name: (cleanedPerson && cleanedPerson !== 'UNKNOWN') ? cleanedPerson : null,
                 confidence_score: null,
                 resolutionStatus: 'Active',
                 notes: zone_name ? `[Object Detection] Zone: ${zone_name}` : ''
@@ -246,6 +304,71 @@ router.post('/', verifyServiceOrRole('FM', 'Staff'), async (req, res) => {
             await created.update({ incident_log_id: incident.id }, { transaction: t });
             return created;
         });
+
+        if (process.env.WHATSAPP_DETECTION_ALERTS_ENABLED === 'true') {
+            try {
+                const recipients = whatsapp.resolveDetectionRecipients();
+                if (recipients.length === 0) {
+                    console.log('[WhatsApp][Detection] no security recipients configured');
+                    if (typeof alert.update === 'function') {
+                        await alert.update({ whatsapp_status: 'Skipped', whatsapp_error: 'No security recipients configured' }).catch(() => {});
+                    }
+                } else if (!whatsapp.meetsMinSeverity(resolvedSeverity, process.env.WHATSAPP_DETECTION_MIN_SEVERITY || 'Low')) {
+                    console.log('[WhatsApp][Detection] below minimum severity');
+                    if (typeof alert.update === 'function') {
+                        await alert.update({ whatsapp_status: 'Skipped', whatsapp_error: 'Below minimum severity threshold' }).catch(() => {});
+                    }
+                } else {
+                    const messageAlert = {
+                        alert_type: cleanedAlertType,
+                        object_class: cleanedObjectClass,
+                        severity: resolvedSeverity,
+                        zone_name: cleanText(zone_name, 255),
+                        camera_location: cleanText(camera_location, 255),
+                        duration_seconds: parsePositiveInt(duration_seconds),
+                        occurred_at: parseOccurredAt(timestamp || occurred_at),
+                        timestamp: parseOccurredAt(timestamp || occurred_at),
+                        confidence: parseConfidence(confidence),
+                        device_id: cleanText(device_id, 100),
+                        person_name: cleanedPerson,
+                        identity_status: cleanedIdentityStatus,
+                        person_role: cleanedPersonRole,
+                        track_id: parsedTrackId,
+                        sensor_metadata: safeSensorMeta,
+                        snapshot_url: cleanText(snapshot_url || snapshot_path, 500),
+                    };
+                    const waResult = await whatsapp.sendDetectionAlert(messageAlert);
+                    const safeStatus = waResult?.status || 'Failed';
+                    const safeError = waResult?.error ? String(waResult.error).slice(0, 500) : null;
+                    if (typeof alert.update === 'function') {
+                        await alert.update({
+                            whatsapp_status: safeStatus,
+                            whatsapp_sent_at: (safeStatus === 'Sent' || safeStatus === 'Simulated') ? new Date() : null,
+                            whatsapp_error: safeError
+                        }).catch(() => {});
+                    }
+                    if (safeStatus === 'Simulated') {
+                        console.log('[WhatsApp][Detection] simulated');
+                    } else if (safeStatus === 'Sent') {
+                        console.log('[WhatsApp][Detection] sent');
+                    } else if (safeStatus === 'Skipped') {
+                        console.log(`[WhatsApp][Detection] skipped${safeError ? `: ${safeError}` : ''}`);
+                    } else {
+                        console.log(`[WhatsApp][Detection] failed: ${safeError || 'Delivery failed'}`);
+                    }
+                }
+            } catch (waErr) {
+                console.error(`[WhatsApp][Detection] failed: ${waErr.message}`);
+                if (typeof alert.update === 'function') {
+                    await alert.update({ whatsapp_status: 'Failed', whatsapp_error: waErr.message }).catch(() => {});
+                }
+            }
+        } else {
+            console.log('[WhatsApp][Detection] disabled by detection-alert switch');
+            if (typeof alert.update === 'function') {
+                await alert.update({ whatsapp_status: 'Not Requested' }).catch(() => {});
+            }
+        }
 
         res.status(201).json(alert);
     } catch (err) {

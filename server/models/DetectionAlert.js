@@ -51,6 +51,10 @@ module.exports = (sequelize, DataTypes) => {
             type: DataTypes.STRING(100),
             allowNull: true
         },
+        sensor_metadata: {
+            type: DataTypes.JSON,
+            allowNull: true
+        },
         occurred_at: {
             type: DataTypes.DATE,
             allowNull: true

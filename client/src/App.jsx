@@ -29,6 +29,7 @@ import FaceEnrollment from './pages/FaceEnrollment';
 import Attendance from './pages/Attendance';
 import GateScanner from './pages/GateScanner';
 import ObjectDetection from './pages/ObjectDetection';
+import SecurityCamera from './pages/SecurityCamera';
 import DetectionSettings from './pages/DetectionSettings';
 import SecurityReview from './pages/SecurityReview';
 import FacialEvaluation from './pages/FacialEvaluation';
@@ -77,6 +78,11 @@ function App() {
         <Route path="/cameras" element={
           <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
             <Cameras />
+          </ProtectedRoute>
+        } />
+        <Route path="/security-camera" element={
+          <ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>
+            <SecurityCamera />
           </ProtectedRoute>
         } />
         <Route path="/camera-inventory" element={

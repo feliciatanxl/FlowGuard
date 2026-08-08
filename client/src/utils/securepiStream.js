@@ -91,6 +91,7 @@ export function deriveSecurePiEndpoints(streamUrl) {
     origin,
     healthUrl: new URL('/health', origin).href,
     peopleCountUrl: new URL('/people-count', origin).href,
+    sensorStatusUrl: new URL('/sensor_status', origin).href,
     snapshotUrl: new URL('/snapshot', origin).href,
     port: parsed.port || (parsed.protocol === 'https:' ? '443' : '80'),
   };
@@ -225,12 +226,39 @@ async function readJson(response) {
   }
 }
 
+export function normalizeSensorStatus(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const pir = typeof body.pir === 'boolean' ? body.pir : typeof body.motion === 'boolean' ? body.motion : null;
+  const motion = typeof body.motion === 'boolean' ? body.motion : pir;
+  return {
+    connected: body.connected ?? true,
+    pir_ready: typeof body.pir_ready === 'boolean' ? body.pir_ready : null,
+    pir,
+    motion,
+    distance_cm: finiteNonNegative(body.distance_cm),
+    baseline_distance_cm: finiteNonNegative(body.baseline_distance_cm),
+    distance_change_cm: finiteNonNegative(body.distance_change_cm),
+    object_close: typeof body.object_close === 'boolean' ? body.object_close : null,
+    trigger: safeText(body.trigger),
+    inspection_active: typeof body.inspection_active === 'boolean' ? body.inspection_active : null,
+    inspection_remaining_seconds: finiteNonNegative(body.inspection_remaining_seconds),
+    after_hours: typeof body.after_hours === 'boolean' ? body.after_hours : null,
+    inspection_id: safeText(body.inspection_id || body.inspection_cycle_id || body.cycle_id),
+    inspection_cycle_id: safeText(body.inspection_cycle_id || body.inspection_id || body.cycle_id),
+  };
+}
+
 function normalizeHealth(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
   const status = safeText(body.status, 24).toLowerCase();
   if (!SAFE_STATUS_VALUES.has(status)) return null;
   if (body.detection_active !== undefined && typeof body.detection_active !== 'boolean') return null;
   if (body.streaming !== undefined && typeof body.streaming !== 'boolean') return null;
+  const frameAgeSeconds = finiteNonNegative(
+    body.latest_frame_age_seconds ?? body.frame_age_seconds ?? body.age_seconds
+  );
+  const frameAgeMs = finiteNonNegative(body.frameAgeMs ?? body.frame_age_ms);
+  const sensor = normalizeSensorStatus(body.sensor) || normalizeSensorStatus(body);
   return {
     status,
     stale: status === 'stale' || status === 'degraded' || body.stale === true || body.streaming === false,
@@ -239,9 +267,8 @@ function normalizeHealth(body) {
     deviceId: safeText(body.device_id),
     zone: safeText(body.zone || body.zone_name),
     cameraDescription: safeText(body.camera_description || body.camera || body.description),
-    frameAgeSeconds: finiteNonNegative(
-      body.latest_frame_age_seconds ?? body.frame_age_seconds ?? body.age_seconds
-    ),
+    frameAgeSeconds: frameAgeSeconds ?? (frameAgeMs === null ? null : frameAgeMs / 1000),
+    sensor,
   };
 }
 
@@ -266,6 +293,7 @@ export async function testSecurePiConnection({
   timeoutMs = 3500,
   signal,
   probePeopleCount = true,
+  probeSensorStatus = true,
 } = {}) {
   const endpoints = deriveSecurePiEndpoints(streamUrl);
   if (!endpoints.valid) {
@@ -286,13 +314,21 @@ export async function testSecurePiConnection({
       return makeResult(SECUREPI_CONNECTION_STATUS.INVALID_RESPONSE, { endpoints });
     }
 
+    let sensor = health.sensor;
+    if (!sensor && probeSensorStatus && endpoints.sensorStatusUrl) {
+      try {
+        const sensorResponse = await fetch(endpoints.sensorStatusUrl, fetchOptions);
+        if (sensorResponse.ok) {
+          sensor = normalizeSensorStatus(await readJson(sensorResponse));
+        }
+      } catch (error) {
+        if (error?.name !== 'TypeError') throw error;
+      }
+    }
+
     let people = null;
     let peopleCountSupported = false;
     if (probePeopleCount) {
-      // Deliberately sequential: never ask for people-count until health succeeds.
-      // Browsers expose a CORS-blocked generic 404 as a fetch TypeError rather
-      // than a Response. Health is already authoritative at this point, so that
-      // fetch-level failure means only that this optional capability is absent.
       try {
         const countResponse = await fetch(endpoints.peopleCountUrl, fetchOptions);
         if (!OPTIONAL_ENDPOINT_UNSUPPORTED_STATUSES.has(countResponse.status)) {
@@ -325,6 +361,7 @@ export async function testSecurePiConnection({
           visiblePeople: people?.count ?? null,
           frameAgeSeconds,
           streaming: health.streaming,
+          sensor,
           resolvedPort: endpoints.port,
         },
       }

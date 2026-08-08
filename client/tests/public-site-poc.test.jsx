@@ -268,10 +268,13 @@ describe('public FlowGuard website PoC positioning', () => {
 
   test('authenticated route definitions and private page imports remain present', () => {
     const appSource = fs.readFileSync(path.resolve(process.cwd(), 'src/App.jsx'), 'utf8');
+    const securityCameraRoute = appSource.slice(appSource.indexOf('path="/security-camera"'), appSource.indexOf('path="/camera-inventory"'));
 
-    ['/dashboard', '/enrollment', '/cameras', '/object-detection', '/vpatrol', '/gate-scanner', '/attendance', '/users', '/security-review', '/incidents', '/incidents/analytics', '/support-dashboard', '/knowledge-base'].forEach((route) => {
+    ['/dashboard', '/enrollment', '/cameras', '/security-camera', '/object-detection', '/vpatrol', '/gate-scanner', '/attendance', '/users', '/security-review', '/incidents', '/incidents/analytics', '/support-dashboard', '/knowledge-base'].forEach((route) => {
       expect(appSource).toContain(`path="${route}"`);
     });
+    expect(securityCameraRoute).toContain('<ProtectedRoute allowedRoles={ACCESS.FM_ONLY}>');
+    expect(securityCameraRoute).toContain('<SecurityCamera />');
     expect(appSource).toContain('ProtectedRoute');
     expect(appSource).toContain('ACCESS.FM_ONLY');
   });

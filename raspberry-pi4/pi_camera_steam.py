@@ -17,6 +17,11 @@ import os
 import cv2
 from flask import Flask, Response, make_response, request
 
+try:
+    from sensor_bridge import SensorBridge
+except Exception:
+    SensorBridge = None
+
 TARGET_FPS = 15
 JPEG_QUALITY = 80
 # How long /video_feed blocks waiting for a fresher frame before re-checking —
@@ -28,6 +33,7 @@ DEFAULT_FLOWGUARD_FRONTEND_ORIGIN = (
     "https://flowguard-client-staging-590663319889.asia-southeast1.run.app"
 )
 FLOWGUARD_FRONTEND_ORIGIN_ENV = "FLOWGUARD_FRONTEND_ORIGIN"
+SENSOR_BRIDGE_ENABLED_ENV = "EDGE_SENSOR_ENABLED"
 
 
 class FrameCache:
@@ -116,7 +122,7 @@ def add_response_headers(response, allowed_origin):
     return response
 
 
-def create_app(cache, target_fps=TARGET_FPS, frontend_origin=None):
+def create_app(cache, target_fps=TARGET_FPS, frontend_origin=None, sensor_bridge=None):
     app = Flask(__name__)
     allowed_origin = (
         frontend_origin
@@ -124,6 +130,7 @@ def create_app(cache, target_fps=TARGET_FPS, frontend_origin=None):
         else os.environ.get(FLOWGUARD_FRONTEND_ORIGIN_ENV, DEFAULT_FLOWGUARD_FRONTEND_ORIGIN)
     ).strip()
     app.config[FLOWGUARD_FRONTEND_ORIGIN_ENV] = allowed_origin
+    app.config["SENSOR_BRIDGE"] = sensor_bridge
 
     @app.after_request
     def apply_global_response_headers(response):
@@ -143,15 +150,34 @@ def create_app(cache, target_fps=TARGET_FPS, frontend_origin=None):
         frame_age_ms = (
             int((time.time() - captured_at) * 1000) if captured_at is not None else None
         )
+        sensor = sensor_bridge.snapshot() if sensor_bridge is not None else None
+        inspection_active = bool(sensor and sensor.get("inspection_active"))
         # Operational telemetry only — never image data.
         response = make_response({
             "status": "ok",
             "camera": "Pi Camera Module 3",
+            "camera_description": "Pi Camera Module 3 + Arduino PIR/ultrasonic",
+            "device_id": os.environ.get("EDGE_DEVICE_ID", "flowguard-pi-camera"),
+            "zone": os.environ.get("EDGE_ZONE_NAME", os.environ.get("AI_ZONE_NAME", "")),
+            "streaming": captured_at is not None,
+            "detection_active": inspection_active,
             "targetFps": target_fps,
             "frameAgeMs": frame_age_ms,
+            "latest_frame_age_seconds": None if frame_age_ms is None else round(frame_age_ms / 1000, 3),
             "sequence": sequence,
+            "sensor": sensor,
         })
         return response
+
+    @app.route("/sensor_status")
+    def sensor_status():
+        if sensor_bridge is None:
+            return make_response({
+                "connected": False,
+                "inspection_active": False,
+                "last_error": "Sensor bridge disabled",
+            }, 503)
+        return make_response(sensor_bridge.snapshot())
 
     def generate_frames():
         last_sequence = 0
@@ -201,9 +227,19 @@ def main():
     cache = FrameCache()
     capture_loop = CaptureLoop(picam2, cache)
     capture_loop.start()
+    sensor_bridge = None
+    if os.environ.get(SENSOR_BRIDGE_ENABLED_ENV, "true").lower() != "false":
+        if SensorBridge is None:
+            print("[Pi Camera] Sensor bridge unavailable: install pyserial on the Pi")
+        else:
+            sensor_bridge = SensorBridge()
+            sensor_bridge.start()
+            print("[Pi Camera] Arduino sensor bridge started")
 
     def shutdown_handler(sig, frame):
         print("\n[Pi Camera] Stopping camera server...")
+        if sensor_bridge is not None:
+            sensor_bridge.stop()
         capture_loop.stop()
         try:
             picam2.stop()
@@ -214,7 +250,7 @@ def main():
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
 
-    app = create_app(cache)
+    app = create_app(cache, sensor_bridge=sensor_bridge)
     print(f"[Pi Camera] Starting server on http://{SERVER_HOST}:{SERVER_PORT}")
     print(f"[Pi Camera] Single capture thread @ ~{TARGET_FPS} FPS feeding the shared frame cache")
     print("[Pi Camera] Live preview: /video_feed")

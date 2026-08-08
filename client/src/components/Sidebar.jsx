@@ -118,6 +118,7 @@ const Sidebar = () => {
           {isFM && (
             <>
               <NavLink to="/cameras" onClick={handleNavClick}>Cameras</NavLink>
+              <NavLink to="/security-camera" onClick={handleNavClick}>Security Camera</NavLink>
               <NavLink to="/camera-inventory" onClick={handleNavClick}>Camera Inventory</NavLink>
               <NavLink to="/vpatrol" onClick={handleNavClick}>V-Patrol</NavLink>
               <NavLink to="/object-detection" onClick={handleNavClick}>Object Detection</NavLink>

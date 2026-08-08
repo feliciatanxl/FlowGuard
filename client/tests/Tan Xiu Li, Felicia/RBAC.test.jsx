@@ -91,6 +91,7 @@ describe("Sidebar visibility by role", () => {
     expect(screen.queryByText("Tenant Onboarding")).toBeNull();
     expect(screen.queryByText("V-Patrol")).toBeNull();
     expect(screen.queryByText("Cameras")).toBeNull();
+    expect(screen.queryByText("Security Camera")).toBeNull();
     // ...but DOES see its own areas + Settings (visible to all authenticated roles)
     expect(screen.getByText("Daily Attendance")).toBeTruthy();
     expect(screen.getByText("My Staff")).toBeTruthy();
@@ -107,6 +108,7 @@ describe("Sidebar visibility by role", () => {
     expect(screen.getByText("Settings")).toBeTruthy();
     // Hidden: AI/security monitoring, admin, and My Staff
     expect(screen.queryByText("Cameras")).toBeNull();
+    expect(screen.queryByText("Security Camera")).toBeNull();
     expect(screen.queryByText("V-Patrol")).toBeNull();
     expect(screen.queryByText("Object Detection")).toBeNull();
     expect(screen.queryByText("Gate Scanner")).toBeNull();
@@ -123,6 +125,7 @@ describe("Sidebar visibility by role", () => {
     expect(screen.getByText("Security Review")).toBeTruthy();
     expect(screen.getByText("Tenant Onboarding")).toBeTruthy();
     expect(screen.getByText("Settings")).toBeTruthy();
+    expect(screen.getByText("Security Camera")).toBeTruthy();
     expect(screen.getByText("V-Patrol")).toBeTruthy();
   });
 });
