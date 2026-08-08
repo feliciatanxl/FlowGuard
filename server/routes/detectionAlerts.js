@@ -308,7 +308,17 @@ router.post('/', verifyServiceOrRole('FM', 'Staff'), async (req, res) => {
         if (process.env.WHATSAPP_DETECTION_ALERTS_ENABLED === 'true') {
             try {
                 const recipients = whatsapp.resolveDetectionRecipients();
-                if (recipients.length > 0 && whatsapp.meetsMinSeverity(resolvedSeverity, process.env.WHATSAPP_DETECTION_MIN_SEVERITY || 'Low')) {
+                if (recipients.length === 0) {
+                    console.log('[WhatsApp][Detection] no security recipients configured');
+                    if (typeof alert.update === 'function') {
+                        await alert.update({ whatsapp_status: 'Skipped', whatsapp_error: 'No security recipients configured' }).catch(() => {});
+                    }
+                } else if (!whatsapp.meetsMinSeverity(resolvedSeverity, process.env.WHATSAPP_DETECTION_MIN_SEVERITY || 'Low')) {
+                    console.log('[WhatsApp][Detection] below minimum severity');
+                    if (typeof alert.update === 'function') {
+                        await alert.update({ whatsapp_status: 'Skipped', whatsapp_error: 'Below minimum severity threshold' }).catch(() => {});
+                    }
+                } else {
                     const messageAlert = {
                         alert_type: cleanedAlertType,
                         object_class: cleanedObjectClass,
@@ -328,16 +338,35 @@ router.post('/', verifyServiceOrRole('FM', 'Staff'), async (req, res) => {
                         snapshot_url: cleanText(snapshot_url || snapshot_path, 500),
                     };
                     const waResult = await whatsapp.sendDetectionAlert(messageAlert);
-                    if (waResult?.status && typeof alert.update === 'function') {
+                    const safeStatus = waResult?.status || 'Failed';
+                    const safeError = waResult?.error ? String(waResult.error).slice(0, 500) : null;
+                    if (typeof alert.update === 'function') {
                         await alert.update({
-                            whatsapp_status: waResult.status,
-                            whatsapp_sent_at: (waResult.status === 'Sent' || waResult.status === 'Simulated') ? new Date() : null,
-                            whatsapp_error: waResult.error ? String(waResult.error).slice(0, 500) : null
+                            whatsapp_status: safeStatus,
+                            whatsapp_sent_at: (safeStatus === 'Sent' || safeStatus === 'Simulated') ? new Date() : null,
+                            whatsapp_error: safeError
                         }).catch(() => {});
+                    }
+                    if (safeStatus === 'Simulated') {
+                        console.log('[WhatsApp][Detection] simulated');
+                    } else if (safeStatus === 'Sent') {
+                        console.log('[WhatsApp][Detection] sent');
+                    } else if (safeStatus === 'Skipped') {
+                        console.log(`[WhatsApp][Detection] skipped${safeError ? `: ${safeError}` : ''}`);
+                    } else {
+                        console.log(`[WhatsApp][Detection] failed: ${safeError || 'Delivery failed'}`);
                     }
                 }
             } catch (waErr) {
-                console.error('Detection alert WhatsApp delivery error:', waErr.message);
+                console.error(`[WhatsApp][Detection] failed: ${waErr.message}`);
+                if (typeof alert.update === 'function') {
+                    await alert.update({ whatsapp_status: 'Failed', whatsapp_error: waErr.message }).catch(() => {});
+                }
+            }
+        } else {
+            console.log('[WhatsApp][Detection] disabled by detection-alert switch');
+            if (typeof alert.update === 'function') {
+                await alert.update({ whatsapp_status: 'Not Requested' }).catch(() => {});
             }
         }
 

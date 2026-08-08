@@ -206,6 +206,7 @@ const SecurityCamera = () => {
   const currentInspectionCycleRef = useRef(null);
   const prevInspectionActiveRef = useRef(false);
   const lastHandledCycleIdRef = useRef(null);
+  const trackRecognitionRef = useRef(new Map());
 
   useEffect(() => {
     mountedRef.current = true;
@@ -474,151 +475,317 @@ const SecurityCamera = () => {
     };
 
     const analyzeCurrentFrame = async () => {
-      if (processingFrameRef.current) return;
+    if (processingFrameRef.current) return;
 
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      if (!video || !canvas || video.videoWidth === 0) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.videoWidth === 0) return;
 
-      processingFrameRef.current = true;
-      const context = canvas.getContext('2d');
-      // Preserve smaller objects in uploaded/CCTV footage. The previous
-      // 0.35 JPEG quality removed detail from monitors, bottles, chairs and
-      // other small COCO objects before YOLO received the frame.
-      const maxWidth = sourceMode === 'file' ? 1280 : 960;
-      const jpegQuality = sourceMode === 'file' ? 0.72 : 0.62;
-      const scale = Math.min(1, maxWidth / video.videoWidth);
-      canvas.width = Math.round(video.videoWidth * scale);
-      canvas.height = Math.round(video.videoHeight * scale);
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const image = canvas.toDataURL('image/jpeg', jpegQuality);
-      const payload = buildAnalyzeFramePayload(image, monitoredCameraRef.current, resolveAlertSource(sourceMode));
+    processingFrameRef.current = true;
+    const context = canvas.getContext('2d');
+    const maxWidth = sourceMode === 'file' ? 1280 : 960;
+    const jpegQuality = sourceMode === 'file' ? 0.72 : 0.62;
+    const scale = Math.min(1, maxWidth / video.videoWidth);
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const image = canvas.toDataURL('image/jpeg', jpegQuality);
+    const payload = buildAnalyzeFramePayload(image, monitoredCameraRef.current, resolveAlertSource(sourceMode));
 
-      try {
-        const res = await axios.post(ANALYZE_FRAME_URL, payload, { timeout: 20000, headers });
-        if (sourceCancelled || !mountedRef.current) return;
-        const frameDetections = res.data.detections ?? [];
-        setDetections(frameDetections);
-        setPeopleCount(res.data.count ?? 0);
-        setDetectionActive(res.data.detection_active ?? false);
-        setCameraStatus(res.data.camera_status ?? 'browser_camera');
-        setFrameSize({
-          width: res.data.frame_width || canvas.width,
-          height: res.data.frame_height || canvas.height,
-        });
-        setAiOffline(false);
-        setStreamError(false);
+    try {
+      const res = await axios.post(ANALYZE_FRAME_URL, payload, { timeout: 20000, headers });
+      if (sourceCancelled || !mountedRef.current) return;
+      const rawDetections = res.data.detections ?? [];
 
-        if (
-          sourceModeRef.current === 'camera'
-          && currentInspectionCycleRef.current
-          && !currentInspectionCycleRef.current.processed
-        ) {
-          const cycle = currentInspectionCycleRef.current;
-          if (Date.now() - cycle.startTime > 10000) {
-            cycle.processed = true;
-            setInspectionCycleActiveState(false);
-          } else {
-            const personDet = frameDetections.find((d) => d.type === 'person' || d.track_id !== undefined || d.status === 'person');
-            const animalDet = frameDetections.find((d) => d.type === 'animal' || d.type === 'pest' || (d.label && /\b(cat|dog)\b/i.test(d.label)));
+      const frameDetections = rawDetections.map((det) => {
+        if ((det.type === 'person' || det.status === 'person') && det.track_id != null) {
+          const trackId = det.track_id;
+          const trackRec = trackRecognitionRef.current.get(trackId);
+          const identityStatus = trackRec?.identity_status || det.identity_status || 'SUSPICIOUS';
+          const personName = trackRec?.person_name !== undefined
+            ? trackRec.person_name
+            : (det.person_name || (identityStatus === 'VERIFIED' ? null : 'Unknown Person'));
+          const personRole = trackRec?.person_role || det.person_role || null;
 
-            if (personDet) {
-              cycle.processed = true;
-              setInspectionCycleActiveState(false);
-              lastHandledCycleIdRef.current = cycle.cycleId;
+          let statusClass = 'suspicious';
+          let labelText = `#${trackId} ${personName ? String(personName).toUpperCase() : 'UNKNOWN PERSON'} — SUSPICIOUS`;
 
-              const rawStatus = personDet.identity_status || (personDet.person_name ? 'VERIFIED' : 'SUSPICIOUS');
-              const personName = personDet.person_name || (rawStatus === 'VERIFIED' ? 'Felicia Tan' : (rawStatus === 'UNAVAILABLE' ? null : 'Unknown Person'));
-              const personRole = personDet.person_role || (rawStatus === 'VERIFIED' ? 'Staff' : 'Unknown');
-              const trackId = personDet.track_id ?? null;
-              const confidence = personDet.confidence ?? 0.92;
-              const resolvedSeverity = (rawStatus === 'VERIFIED' || rawStatus === 'UNAVAILABLE') ? 'High' : 'Critical';
+          if (identityStatus === 'VERIFIED') {
+            statusClass = 'authorized';
+            labelText = `#${trackId} ${personName ? String(personName).toUpperCase() : ''} — VERIFIED`;
+          } else if (identityStatus === 'UNAVAILABLE') {
+            statusClass = 'unavailable';
+            labelText = `#${trackId} IDENTITY UNAVAILABLE`;
+          } else if (identityStatus === 'SUSPENDED') {
+            statusClass = 'suspicious';
+            labelText = `#${trackId} ${personName ? String(personName).toUpperCase() : 'SUSPENDED USER'} — SUSPENDED`;
+          }
 
-              const alertPayload = {
-                cycle_id: cycle.cycleId,
-                event_id: cycle.cycleId,
-                zone_name: monitoredCameraRef.current?.zone?.zone_name || monitoredCameraRef.current?.camera_name || 'Restricted Storage A',
-                camera_location: monitoredCameraRef.current?.location || monitoredCameraRef.current?.camera_name || 'Storage Cam 01',
-                status: 'Active',
-                object_class: 'person',
-                person_name: personName,
-                identity_status: rawStatus,
-                person_role: personRole,
-                alert_type: 'RESTRICTED_MOTION',
-                severity: resolvedSeverity,
-                source: 'Browser Webcam',
-                confidence,
-                track_id: trackId,
-                sensor_metadata: {
-                  ...cycle.sensorData,
-                  pir: cycle.sensorData?.pir ?? true,
-                  distance_cm: cycle.sensorData?.distance_cm ?? 43,
-                  trigger: cycle.sensorData?.trigger || 'PIR Motion',
-                  inspection_active: true,
-                  after_hours: true,
-                  cycle_id: cycle.cycleId,
-                  identity_status: rawStatus,
-                  person_role: personRole,
-                  track_id: trackId,
-                  person_name: personName,
-                },
-              };
+          return {
+            ...det,
+            status: statusClass,
+            label: labelText,
+            identity_status: identityStatus,
+            person_name: personName,
+            person_role: personRole,
+          };
+        }
+        return det;
+      });
 
-              axios.post(ALERTS_URL, alertPayload, { headers })
-                .then((postRes) => {
-                  if (!mountedRef.current) return;
-                  setAlerts((prev) => [postRes.data, ...prev.filter((a) => a.id !== postRes.data.id)]);
-                  setSelectedAlertId(postRes.data.id);
-                })
-                .catch(() => {});
-            } else if (animalDet) {
-              cycle.processed = true;
-              setInspectionCycleActiveState(false);
-              lastHandledCycleIdRef.current = cycle.cycleId;
+      setDetections(frameDetections);
+      setPeopleCount(res.data.count ?? 0);
+      setDetectionActive(res.data.detection_active ?? false);
+      setCameraStatus(res.data.camera_status ?? 'browser_camera');
+      setFrameSize({
+        width: res.data.frame_width || canvas.width,
+        height: res.data.frame_height || canvas.height,
+      });
+      setAiOffline(false);
+      setStreamError(false);
 
-              const animalClass = (animalDet.label || '').split(' ')[0].toLowerCase() || 'cat';
-              const confidence = animalDet.confidence ?? 0.85;
+      // Multi-person identity recognition: trigger per-track recognition asynchronously
+      const now = Date.now();
+      frameDetections.forEach((det) => {
+        if ((det.type === 'person' || det.status === 'person' || det.identity_status) && det.track_id != null && det.box) {
+          const trackId = det.track_id;
+          const rec = trackRecognitionRef.current.get(trackId) || {
+            identity_status: null,
+            person_name: null,
+            person_role: null,
+            lastRecognitionAt: 0,
+            recognitionInFlight: false,
+          };
 
-              const alertPayload = {
-                cycle_id: cycle.cycleId,
-                event_id: cycle.cycleId,
-                zone_name: monitoredCameraRef.current?.zone?.zone_name || monitoredCameraRef.current?.camera_name || 'Restricted Storage A',
-                camera_location: monitoredCameraRef.current?.location || monitoredCameraRef.current?.camera_name || 'Storage Cam 01',
-                status: 'Active',
-                object_class: animalClass,
-                alert_type: 'RESTRICTED_MOTION',
-                severity: 'High',
-                source: 'Browser Webcam',
-                confidence,
-                sensor_metadata: {
-                  ...cycle.sensorData,
-                  pir: cycle.sensorData?.pir ?? true,
-                  distance_cm: cycle.sensorData?.distance_cm ?? 43,
-                  trigger: cycle.sensorData?.trigger || 'PIR Motion',
-                  inspection_active: true,
-                  after_hours: true,
-                  cycle_id: cycle.cycleId,
-                },
-              };
+          if (!rec.recognitionInFlight && (now - rec.lastRecognitionAt >= 1000 || !rec.identity_status)) {
+            rec.recognitionInFlight = true;
+            trackRecognitionRef.current.set(trackId, { ...rec });
 
-              axios.post(ALERTS_URL, alertPayload, { headers })
-                .then((postRes) => {
-                  if (!mountedRef.current) return;
-                  setAlerts((prev) => [postRes.data, ...prev.filter((a) => a.id !== postRes.data.id)]);
-                  setSelectedAlertId(postRes.data.id);
-                })
-                .catch(() => {});
-            }
+            const [x1, y1, x2, y2] = det.box;
+            const cropCanvas = document.createElement('canvas');
+            const cropW = Math.max(1, Math.round(x2 - x1));
+            const cropH = Math.max(1, Math.round(y2 - y1));
+            cropCanvas.width = cropW;
+            cropCanvas.height = cropH;
+            const cropCtx = cropCanvas.getContext('2d');
+            cropCtx.drawImage(canvas, x1, y1, cropW, cropH, 0, 0, cropW, cropH);
+            const cropDataUrl = cropCanvas.toDataURL('image/jpeg', 0.74);
+
+            axios.post('/api/facial-recognition/recognize', {
+              image: cropDataUrl,
+              cameraLocation: monitoredCameraRef.current?.location || monitoredCameraRef.current?.camera_name || 'Security Camera',
+            }, { headers, timeout: 10000 })
+              .then((recRes) => {
+                if (!mountedRef.current) return;
+                const user = recRes.data?.user;
+                let resolvedStatus = 'SUSPICIOUS';
+                let resolvedName = 'Unknown Person';
+                let resolvedRole = 'Unknown';
+
+                if (user && user.status === 'AUTHORIZED') {
+                  resolvedStatus = 'VERIFIED';
+                  resolvedName = user.name || 'Verified User';
+                  resolvedRole = user.role || 'Staff';
+                } else if (user && user.status === 'SUSPENDED') {
+                  resolvedStatus = 'SUSPENDED';
+                  resolvedName = user.name || 'Suspended User';
+                  resolvedRole = user.role || 'Staff';
+                } else if (user && user.status === 'DENIED') {
+                  resolvedStatus = 'SUSPICIOUS';
+                  resolvedName = 'Unknown Person';
+                  resolvedRole = 'Unknown';
+                }
+
+                trackRecognitionRef.current.set(trackId, {
+                  identity_status: resolvedStatus,
+                  person_name: resolvedName,
+                  person_role: resolvedRole,
+                  lastRecognitionAt: Date.now(),
+                  recognitionInFlight: false,
+                });
+
+                setDetections((prevDets) => prevDets.map((d) => {
+                  if (d.track_id === trackId) {
+                    const statusClass = resolvedStatus === 'VERIFIED' ? 'authorized' : resolvedStatus === 'UNAVAILABLE' ? 'unavailable' : 'suspicious';
+                    const labelText = resolvedStatus === 'VERIFIED'
+                      ? `#${trackId} ${resolvedName.toUpperCase()} — VERIFIED`
+                      : resolvedStatus === 'UNAVAILABLE'
+                        ? `#${trackId} IDENTITY UNAVAILABLE`
+                        : `#${trackId} ${resolvedName.toUpperCase()} — ${resolvedStatus}`;
+                    return {
+                      ...d,
+                      status: statusClass,
+                      label: labelText,
+                      identity_status: resolvedStatus,
+                      person_name: resolvedName,
+                      person_role: resolvedRole,
+                    };
+                  }
+                  return d;
+                }));
+              })
+              .catch(() => {
+                if (!mountedRef.current) return;
+                trackRecognitionRef.current.set(trackId, {
+                  identity_status: 'UNAVAILABLE',
+                  person_name: null,
+                  person_role: null,
+                  lastRecognitionAt: Date.now(),
+                  recognitionInFlight: false,
+                });
+
+                setDetections((prevDets) => prevDets.map((d) => {
+                  if (d.track_id === trackId) {
+                    return {
+                      ...d,
+                      status: 'unavailable',
+                      label: `#${trackId} IDENTITY UNAVAILABLE`,
+                      identity_status: 'UNAVAILABLE',
+                      person_name: null,
+                      person_role: null,
+                    };
+                  }
+                  return d;
+                }));
+              });
           }
         }
-      } catch (err) {
-        if (sourceCancelled || !mountedRef.current) return;
-        setDetectionActive(false);
-        setCameraStatus(err.response ? 'analysis_error' : 'analysis_retrying');
-      } finally {
-        processingFrameRef.current = false;
+      });
+
+      if (
+        sourceModeRef.current === 'camera'
+        && currentInspectionCycleRef.current
+        && !currentInspectionCycleRef.current.processed
+      ) {
+        const cycle = currentInspectionCycleRef.current;
+        if (Date.now() - cycle.startTime > 10000) {
+          cycle.processed = true;
+          setInspectionCycleActiveState(false);
+        } else {
+          const personDet = frameDetections.find((d) => d.type === 'person' || d.track_id !== undefined || d.status === 'person');
+          const animalDet = frameDetections.find((d) => d.type === 'animal' || d.type === 'pest' || (d.label && /\b(cat|dog)\b/i.test(d.label)));
+
+          if (personDet) {
+            cycle.processed = true;
+            setInspectionCycleActiveState(false);
+            lastHandledCycleIdRef.current = cycle.cycleId;
+
+            const rawStatus = personDet.identity_status || 'SUSPICIOUS';
+            const personName = personDet.person_name || (rawStatus === 'SUSPICIOUS' ? 'Unknown Person' : null);
+            const personRole = personDet.person_role || null;
+            const trackId = personDet.track_id ?? null;
+            const confidence = personDet.confidence ?? 0.92;
+            const resolvedSeverity = (rawStatus === 'VERIFIED' || rawStatus === 'UNAVAILABLE') ? 'High' : 'Critical';
+
+            const alertPayload = {
+              cycle_id: cycle.cycleId,
+              event_id: cycle.cycleId,
+              zone_name: monitoredCameraRef.current?.zone?.zone_name || monitoredCameraRef.current?.camera_name || 'Restricted Storage A',
+              camera_location: monitoredCameraRef.current?.location || monitoredCameraRef.current?.camera_name || 'Storage Cam 01',
+              status: 'Active',
+              object_class: 'person',
+              person_name: personName,
+              identity_status: rawStatus,
+              person_role: personRole,
+              alert_type: 'RESTRICTED_MOTION',
+              severity: resolvedSeverity,
+              source: 'Browser Webcam',
+              confidence,
+              track_id: trackId,
+              sensor_metadata: {
+                ...cycle.sensorData,
+                pir: cycle.sensorData?.pir ?? null,
+                distance_cm: cycle.sensorData?.distance_cm ?? null,
+                trigger: cycle.sensorData?.trigger ?? null,
+                after_hours: cycle.sensorData?.after_hours ?? null,
+                inspection_active: true,
+                cycle_id: cycle.cycleId,
+                identity_status: rawStatus,
+                person_role: personRole,
+                track_id: trackId,
+                person_name: personName,
+              },
+            };
+
+            axios.post(ALERTS_URL, alertPayload, { headers })
+              .then((postRes) => {
+                if (!mountedRef.current) return;
+                setAlerts((prev) => [postRes.data, ...prev.filter((a) => a.id !== postRes.data.id)]);
+                setSelectedAlertId(postRes.data.id);
+              })
+              .catch((alertErr) => {
+                if (!mountedRef.current) return;
+                const status = alertErr.response?.status;
+                if (status === 401 || status === 403) {
+                  setWorkflowMessage('Detection alert rejected: Authentication error (401/403).');
+                } else if (status === 400) {
+                  setWorkflowMessage('Detection alert rejected: Invalid payload parameters (400).');
+                } else if (status >= 500) {
+                  setWorkflowMessage(`Detection alert rejected: Server error (${status}).`);
+                } else {
+                  setWorkflowMessage('Detection alert failed: Network or server unreachable.');
+                }
+              });
+          } else if (animalDet) {
+            cycle.processed = true;
+            setInspectionCycleActiveState(false);
+            lastHandledCycleIdRef.current = cycle.cycleId;
+
+            const animalClass = animalDet.label ? animalDet.label.split(' ')[0].toLowerCase() : 'animal';
+            const confidence = animalDet.confidence ?? 0.85;
+
+            const alertPayload = {
+              cycle_id: cycle.cycleId,
+              event_id: cycle.cycleId,
+              zone_name: monitoredCameraRef.current?.zone?.zone_name || monitoredCameraRef.current?.camera_name || 'Restricted Storage A',
+              camera_location: monitoredCameraRef.current?.location || monitoredCameraRef.current?.camera_name || 'Storage Cam 01',
+              status: 'Active',
+              object_class: animalClass,
+              alert_type: 'RESTRICTED_MOTION',
+              severity: 'High',
+              source: 'Browser Webcam',
+              confidence,
+              sensor_metadata: {
+                ...cycle.sensorData,
+                pir: cycle.sensorData?.pir ?? null,
+                distance_cm: cycle.sensorData?.distance_cm ?? null,
+                trigger: cycle.sensorData?.trigger ?? null,
+                after_hours: cycle.sensorData?.after_hours ?? null,
+                inspection_active: true,
+                cycle_id: cycle.cycleId,
+              },
+            };
+
+            axios.post(ALERTS_URL, alertPayload, { headers })
+              .then((postRes) => {
+                if (!mountedRef.current) return;
+                setAlerts((prev) => [postRes.data, ...prev.filter((a) => a.id !== postRes.data.id)]);
+                setSelectedAlertId(postRes.data.id);
+              })
+              .catch((alertErr) => {
+                if (!mountedRef.current) return;
+                const status = alertErr.response?.status;
+                if (status === 401 || status === 403) {
+                  setWorkflowMessage('Detection alert rejected: Authentication error (401/403).');
+                } else if (status === 400) {
+                  setWorkflowMessage('Detection alert rejected: Invalid payload parameters (400).');
+                } else if (status >= 500) {
+                  setWorkflowMessage(`Detection alert rejected: Server error (${status}).`);
+                } else {
+                  setWorkflowMessage('Detection alert failed: Network or server unreachable.');
+                }
+              });
+          }
+        }
       }
-    };
+    } catch (err) {
+      if (sourceCancelled || !mountedRef.current) return;
+      setDetectionActive(false);
+      setCameraStatus(err.response ? 'analysis_error' : 'analysis_retrying');
+    } finally {
+      processingFrameRef.current = false;
+    }
+  };
 
     const startBrowserCamera = async () => {
       try {
@@ -655,7 +822,7 @@ const SecurityCamera = () => {
             }
           };
           setBrowserCameraError(false);
-          frameInterval = setInterval(analyzeCurrentFrame, 2200);
+          frameInterval = setInterval(analyzeCurrentFrame, 350);
         }
       } catch {
         if (sourceCancelled || !mountedRef.current) return;
@@ -688,7 +855,7 @@ const SecurityCamera = () => {
           if (!sourceCancelled && mountedRef.current) setCameraStatus('uploaded_video_paused');
         }
       };
-      frameInterval = setInterval(analyzeCurrentFrame, 2200);
+      frameInterval = setInterval(analyzeCurrentFrame, 350);
     };
 
     const startHardwareStream = async () => {
@@ -769,7 +936,7 @@ const SecurityCamera = () => {
       || sensor?.motion
       || (sensor?.distance_change_cm && sensor.distance_change_cm > 15)
     );
-    const isAfterHours = sensor?.after_hours ?? true;
+    const isAfterHours = Boolean(sensor?.after_hours);
 
     if (isAfterHours && isInspectionActive && !prevInspectionActiveRef.current) {
       const cycleId = sensor?.inspection_id

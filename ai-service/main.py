@@ -897,6 +897,9 @@ def _motion_key(class_name, zone_name, track_id=None, cx=None, cy=None):
 
 
 def _maybe_fire_restricted_motion_alert(class_name, zone_name, source, conf, person_name=None, track_id=None, cx=None, cy=None):
+    if source == "Browser Webcam":
+        # Browser Webcam Restricted-Zone Motion MUST be sensor-gated on frontend using Pi telemetry
+        return
     if not _RESTRICTED_AFTER_HOURS_MOTION_ENABLED:
         return
     normalized_class = str(class_name or "").lower()
@@ -966,15 +969,20 @@ def _fire_alert(class_name, zone_name, duration_sec, person_name=None, severity=
             payload["alert_type"] = alert_type
         if confidence is not None:
             payload["confidence"] = round(float(confidence), 3)
-        http_requests.post(
+        res = http_requests.post(
             f"{_NODE_URL}/api/detection-alerts",
             json=payload,
             headers={"x-service-key": os.getenv("AI_SERVICE_KEY", "")},
             timeout=5
         )
-        print(f"🚨 Alert sent: {class_name} unattended {duration_sec}s in {zone_name} (last seen: {person_name})")
+        if 200 <= res.status_code < 300:
+            duration_str = f" unattended {duration_sec}s" if duration_sec is not None else ""
+            person_str = f" (last seen: {person_name})" if person_name else ""
+            print(f"🚨 Alert sent: {class_name}{duration_str} in {zone_name}{person_str}")
+        else:
+            print(f"[DetectionAlert] POST rejected HTTP {res.status_code}")
     except Exception as e:
-        print(f"Alert POST failed: {e}")
+        print(f"[DetectionAlert] POST failed: {e}")
 
 
 def _maybe_fire_person_alert(person_count, zone_name, source=None, density_threshold=None):
