@@ -162,6 +162,31 @@ const classificationLabel = (alert) => (
   || 'Awaiting edge classification'
 );
 
+const computeHumanDisplayBox = (personBox, faceCropBox) => {
+  if (!Array.isArray(personBox) || personBox.length < 4) return personBox;
+  const [pX1, pY1, pX2, pY2] = personBox;
+  const pW = Math.max(1, pX2 - pX1);
+  const pH = Math.max(1, pY2 - pY1);
+
+  if (Array.isArray(faceCropBox) && faceCropBox.length === 4) {
+    const [fX, fY, fW, fH] = faceCropBox;
+    const fullX1 = Math.max(pX1, Math.min(pX2, pX1 + fX));
+    const fullY1 = Math.max(pY1, Math.min(pY2, pY1 + fY));
+    const fullX2 = Math.max(fullX1, Math.min(pX2, fullX1 + fW));
+    const fullY2 = Math.max(fullY1, Math.min(pY2, fullY1 + fH));
+    return [fullX1, fullY1, fullX2, fullY2];
+  }
+
+  // Fallback head-region approximation (upper 35% of person height, 20% horizontal inset on each side)
+  const padX = pW * 0.2;
+  const fX1 = pX1 + padX;
+  const fX2 = Math.max(fX1 + 10, pX2 - padX);
+  const fY1 = pY1;
+  const fY2 = Math.max(fY1 + 10, pY1 + pH * 0.35);
+  return [fX1, fY1, fX2, fY2];
+};
+
+
 const SecurityCamera = () => {
   const [zones, setZones] = useState([]);
   const [cameras, setCameras] = useState([]);
@@ -506,6 +531,7 @@ const SecurityCamera = () => {
             ? trackRec.person_name
             : (det.person_name || (identityStatus === 'VERIFIED' ? null : 'Unknown Person'));
           const personRole = trackRec?.person_role || det.person_role || null;
+          const faceBbox = trackRec?.face_bbox ?? null;
 
           let statusClass = 'suspicious';
           let labelText = `#${trackId} ${personName ? String(personName).toUpperCase() : 'UNKNOWN PERSON'} — SUSPICIOUS`;
@@ -521,6 +547,8 @@ const SecurityCamera = () => {
             labelText = `#${trackId} ${personName ? String(personName).toUpperCase() : 'SUSPENDED USER'} — SUSPENDED`;
           }
 
+          const displayBox = computeHumanDisplayBox(det.box, faceBbox);
+
           return {
             ...det,
             status: statusClass,
@@ -528,6 +556,8 @@ const SecurityCamera = () => {
             identity_status: identityStatus,
             person_name: personName,
             person_role: personRole,
+            face_bbox: faceBbox,
+            display_box: displayBox,
           };
         }
         return det;
@@ -553,6 +583,7 @@ const SecurityCamera = () => {
             identity_status: null,
             person_name: null,
             person_role: null,
+            face_bbox: null,
             lastRecognitionAt: 0,
             recognitionInFlight: false,
           };
@@ -578,6 +609,7 @@ const SecurityCamera = () => {
               .then((recRes) => {
                 if (!mountedRef.current) return;
                 const user = recRes.data?.user;
+                const rawFaceBox = Array.isArray(recRes.data?.box) && recRes.data.box.length === 4 ? recRes.data.box : null;
                 let resolvedStatus = 'SUSPICIOUS';
                 let resolvedName = 'Unknown Person';
                 let resolvedRole = 'Unknown';
@@ -600,6 +632,7 @@ const SecurityCamera = () => {
                   identity_status: resolvedStatus,
                   person_name: resolvedName,
                   person_role: resolvedRole,
+                  face_bbox: rawFaceBox,
                   lastRecognitionAt: Date.now(),
                   recognitionInFlight: false,
                 });
@@ -612,6 +645,7 @@ const SecurityCamera = () => {
                       : resolvedStatus === 'UNAVAILABLE'
                         ? `#${trackId} IDENTITY UNAVAILABLE`
                         : `#${trackId} ${resolvedName.toUpperCase()} — ${resolvedStatus}`;
+                    const displayBox = computeHumanDisplayBox(d.box, rawFaceBox);
                     return {
                       ...d,
                       status: statusClass,
@@ -619,6 +653,8 @@ const SecurityCamera = () => {
                       identity_status: resolvedStatus,
                       person_name: resolvedName,
                       person_role: resolvedRole,
+                      face_bbox: rawFaceBox,
+                      display_box: displayBox,
                     };
                   }
                   return d;
@@ -630,12 +666,14 @@ const SecurityCamera = () => {
                   identity_status: 'UNAVAILABLE',
                   person_name: null,
                   person_role: null,
+                  face_bbox: null,
                   lastRecognitionAt: Date.now(),
                   recognitionInFlight: false,
                 });
 
                 setDetections((prevDets) => prevDets.map((d) => {
                   if (d.track_id === trackId) {
+                    const displayBox = computeHumanDisplayBox(d.box, null);
                     return {
                       ...d,
                       status: 'unavailable',
@@ -643,6 +681,8 @@ const SecurityCamera = () => {
                       identity_status: 'UNAVAILABLE',
                       person_name: null,
                       person_role: null,
+                      face_bbox: null,
+                      display_box: displayBox,
                     };
                   }
                   return d;
@@ -1357,7 +1397,10 @@ const SecurityCamera = () => {
                     <span>{detections.length} detections</span>
                   </div>
                   {detections.map((detection, index) => {
-                    const [x1, y1, x2, y2] = detection.box;
+                    const boxToDraw = (detection.type === 'person' || detection.status === 'person' || detection.identity_status)
+                      ? (detection.display_box || detection.box)
+                      : detection.box;
+                    const [x1, y1, x2, y2] = boxToDraw;
                     return (
                       <div
                         key={`${detection.label}-${index}`}
