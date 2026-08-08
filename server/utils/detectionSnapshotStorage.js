@@ -127,7 +127,6 @@ const readSnapshotBuffer = async (filename) => {
       const [bytes] = await storage.bucket(bucketName).file(objectName).download();
       return bytes;
     } catch {
-      // Safe 404 handling: do not expose GCS internal details or stack trace
       return null;
     }
   } else {
@@ -196,13 +195,13 @@ module.exports = {
   ensureSnapshotDirectory,
   generateSnapshotFilename,
   generateSnapshotDestination,
-  resolveStoredSnapshotPath: resolveSnapshotPath,
-  resolveGcsObjectName,
   saveSnapshotBuffer,
   readSnapshotBuffer,
   deleteSnapshotFile,
-  extractSnapshotFilename,
   deleteSnapshotByUrl,
+  extractSnapshotFilename,
+  resolveGcsObjectName,
+  resolveStoredSnapshotPath: resolveSnapshotPath,
   resetStorageClient,
 };
 
