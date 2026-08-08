@@ -141,7 +141,9 @@ const IncidentDashboard = () => {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteSaving, setDeleteSaving] = useState(false);
 
-  // --- Escalate to Ticket confirm modal (persists a real Support Ticket) ---
+  // --- Escalate to Ticket confirm modal — creates/persists a real Support Ticket via
+  // POST /api/support/tickets (Module 3), with no linked chat transcript since
+  // this escalation didn't originate from a tenant chat session. ---
   const [escalateTarget, setEscalateTarget] = useState(null);
   const [escalateSaving, setEscalateSaving] = useState(false);
 
@@ -383,6 +385,14 @@ const IncidentDashboard = () => {
   };
 
   const handleEscalate = (incident) => setEscalateTarget(incident);
+
+  // Incident severity has a Critical tier that Support Tickets don't; Critical
+  // and High both map to ticket priority High so nothing urgent is downgraded.
+  const severityToPriority = (severity) => {
+    if (severity === 'Critical' || severity === 'High') return 'High';
+    if (severity === 'Medium') return 'Medium';
+    return 'Low';
+  };
 
   // The server loads the incident itself and composes the ticket's title/
   // description (SupportTicket has no incidentId FK — it dedupes on a stable

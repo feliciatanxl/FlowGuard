@@ -1,4 +1,4 @@
-const { generateChatReply } = require('../services/geminiService');
+const { generateChatReply } = require('../../services/geminiService');
 
 const KB = [{ category: 'Access Control', question: 'Why does my face scan fail?', answer: 'Re-enrol in good lighting.', keywords: ['face'] }];
 

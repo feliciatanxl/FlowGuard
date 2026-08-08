@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
-import HashScrollHandler from '../src/components/HashScrollHandler';
-import NavBar from '../src/components/NavBar';
+import HashScrollHandler from '../../src/components/HashScrollHandler';
+import NavBar from '../../src/components/NavBar';
 
 const LocationProbe = () => {
   const location = useLocation();

@@ -699,8 +699,12 @@ _person_track_state = {
     "tracks": {},
 }
 
-# Zone threshold cache — refreshed from DB every 60 s
-_zone_threshold_sec = 300   # default 5 min
+# Zone threshold cache — refreshed from DB every 60 s. Seeded from the same
+# env-driven default the analyse endpoint uses (zone_rules.DEFAULT_ZONE_THRESHOLD_SEC,
+# 300 s / 5 min unless DEFAULT_ZONE_THRESHOLD_SEC is set) so both the resolved-zone
+# path and this global-fallback path agree; _refresh_zone_info() overwrites it on
+# the first successful DB read.
+_zone_threshold_sec = zone_rules.DEFAULT_ZONE_THRESHOLD_SEC
 _zone_name_cache = "Zone A"
 _zone_density_cache = None   # zone's configured max-occupancy rule, None = unset
 _threshold_fetched_at = 0.0
@@ -1050,7 +1054,7 @@ def _recognize_person_crop(frame, x1, y1, x2, y2):
             sim = float(np.dot(live_emb, known["embedding"]))
             if sim > best_sim:
                 best_sim = sim
-                if sim > 0.45:
+                if sim > _FACE_MATCH_THRESHOLD:
                     best_name = known["name"]
         return best_name, best_sim
     except Exception:
@@ -1369,7 +1373,7 @@ def _yolo_detection_loop():
                                     sim = float(np.dot(live_emb, known["embedding"]))
                                     if sim > best_sim:
                                         best_sim = sim
-                                        if sim > 0.45:
+                                        if sim > _FACE_MATCH_THRESHOLD:
                                             best_name = known["name"]
                                 _person_name_cache[track_id] = (best_name, best_sim)
                                 cached_name, cached_sim = best_name, best_sim

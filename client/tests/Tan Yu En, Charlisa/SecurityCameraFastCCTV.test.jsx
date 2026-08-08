@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import '@testing-library/jest-dom';
 import axios from 'axios';
-import SecurityCamera from '../src/pages/SecurityCamera';
+import SecurityCamera from '../../src/pages/SecurityCamera';
 
 const computeHumanDisplayBox = (personBox, faceCropBox) => {
   if (!Array.isArray(personBox) || personBox.length < 4) return personBox;

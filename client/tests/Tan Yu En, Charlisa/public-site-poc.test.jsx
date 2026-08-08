@@ -4,10 +4,10 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import fs from 'fs';
 import path from 'path';
-import Home from '../src/pages/Home';
-import AIInnovation from '../src/pages/AIInnovation';
-import SystemHealth from '../src/pages/SystemHealth';
-import Contact from '../src/pages/Contact';
+import Home from '../../src/pages/Home';
+import AIInnovation from '../../src/pages/AIInnovation';
+import SystemHealth from '../../src/pages/SystemHealth';
+import Contact from '../../src/pages/Contact';
 
 const renderPublic = (ui, initialEntry = '/') => render(<MemoryRouter initialEntries={[initialEntry]}>{ui}</MemoryRouter>);
 const forbiddenClaims = /128\+|PPE|Spill|HVAC|temperature|humidity|99\.8|40%|70%|NexusCloud|OptiTemp|AeroNode|Sentinel Security|Available TOL 2027|Opening Soon/i;

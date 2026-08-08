@@ -169,5 +169,6 @@ describe('Incident Dashboard — Escalate to Support Ticket real submission', ()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Escalation' }));
 
     expect(await screen.findByText(/Failed to escalate incident to Support Tickets/i)).toBeTruthy();
+    expect(screen.getByText('Escalate to Support Ticket?')).toBeTruthy(); // still open — nothing to lose on retry
   });
 });
