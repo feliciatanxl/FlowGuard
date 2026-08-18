@@ -158,6 +158,15 @@ describe("buildDetectionAlertMessage (pure)", () => {
     expect(msg).not.toContain("Photo:");
   });
 
+  test("AI-only detection (no sensor_metadata) produces no sensor lines", () => {
+    const msg = whatsapp.buildDetectionAlertMessage(pestAlert); // pestAlert has no sensor_metadata
+    expect(msg).toContain("Object: Rat");
+    expect(msg).not.toContain("Sensor trigger:");
+    expect(msg).not.toContain("PIR motion:");
+    expect(msg).not.toContain("Ultrasonic distance:");
+    expect(msg).not.toContain("Inspection active:");
+  });
+
   test("includes a real person name when present", () => {
     const msg = whatsapp.buildDetectionAlertMessage({ alert_type: "Restricted-Zone Motion", person_name: "J. Tan" });
     expect(msg).toContain("Person: J. Tan");
@@ -167,6 +176,45 @@ describe("buildDetectionAlertMessage (pure)", () => {
     expect(whatsapp.buildDetectionAlertMessage(pestAlert)).toContain("Review the event in the FlowGuard dashboard.");
     const withUrl = whatsapp.buildDetectionAlertMessage(pestAlert, { dashboardUrl: "https://app.example/object-detection" });
     expect(withUrl).toContain("https://app.example/object-detection");
+  });
+});
+
+describe("detectionDashboardUrl (environment-aware, no hard-coded URL)", () => {
+  const STAGING = "https://flowguard-client-staging-590663319889.asia-southeast1.run.app";
+
+  test("deployed frontend base produces the /object-detection link", () => {
+    process.env.FRONTEND_URL = STAGING;
+    process.env.NODE_ENV = "production";
+    expect(whatsapp.detectionDashboardUrl()).toBe(`${STAGING}/object-detection`);
+  });
+
+  test("FRONTEND_URL takes precedence over CLIENT_URL", () => {
+    process.env.FRONTEND_URL = STAGING;
+    process.env.CLIENT_URL = "https://other.example";
+    expect(whatsapp.detectionDashboardUrl()).toBe(`${STAGING}/object-detection`);
+  });
+
+  test("CLIENT_URL is used when FRONTEND_URL is absent", () => {
+    process.env.CLIENT_URL = STAGING;
+    expect(whatsapp.detectionDashboardUrl()).toBe(`${STAGING}/object-detection`);
+  });
+
+  test("a trailing slash on the base never yields a double slash", () => {
+    process.env.FRONTEND_URL = `${STAGING}/`;
+    expect(whatsapp.detectionDashboardUrl()).toBe(`${STAGING}/object-detection`);
+  });
+
+  test("production with NO frontend config fails closed (never leaks localhost)", () => {
+    process.env.NODE_ENV = "production";
+    // FRONTEND_URL / CLIENT_URL already deleted by beforeEach
+    const url = whatsapp.detectionDashboardUrl();
+    expect(url).toBe("");
+    expect(url).not.toContain("localhost");
+  });
+
+  test("local development still uses localhost when no base is configured", () => {
+    process.env.NODE_ENV = "development";
+    expect(whatsapp.detectionDashboardUrl()).toBe("http://localhost:5173/object-detection");
   });
 });
 
