@@ -79,6 +79,9 @@ describe("buildDetectionAlertMessage (pure)", () => {
     expect(heading("Restricted-Zone Motion")).toBe("🚨 FlowGuard Restricted-Zone Motion Alert");
     expect(heading("Item Picked Up")).toBe("⚠️ FlowGuard Item Movement Alert");
     expect(heading("Item Set Down")).toBe("⚠️ FlowGuard Item Movement Alert");
+    expect(heading("PIR Motion Sensor")).toBe("⚠️ FlowGuard PIR Motion Sensor Alert");
+    expect(heading("Ultrasonic Sensor")).toBe("⚠️ FlowGuard Ultrasonic Sensor Alert");
+    expect(heading("PIR + Ultrasonic Sensor")).toBe("⚠️ FlowGuard Sensor Alert");
     expect(heading("Something Unknown")).toBe("🚨 FlowGuard Detection Alert");
   });
 
@@ -94,12 +97,74 @@ describe("buildDetectionAlertMessage (pure)", () => {
     expect(msg).toContain("Photo: https://ok.example/img.jpg");
   });
 
+  test("sensor alerts include PIR and ultrasonic readings in the WhatsApp body", () => {
+    const msg = whatsapp.buildDetectionAlertMessage({
+      alert_type: "PIR + Ultrasonic Sensor",
+      object_class: "combined sensor trigger",
+      severity: "Medium",
+      zone_name: "Loading Bay",
+      camera_location: "Pi Camera Module 3",
+      device_id: "securepi-pi4-01",
+      sensor_metadata: {
+        trigger: "pir_and_ultrasonic",
+        motion: true,
+        pir_ready: true,
+        distance_cm: 18.46,
+        distance_change_cm: 41.22,
+        object_close: true,
+        inspection_active: true,
+      },
+    });
+    expect(msg).toContain("⚠️ FlowGuard Sensor Alert");
+    expect(msg).toContain("Sensor trigger: PIR motion + ultrasonic distance change");
+    expect(msg).toContain("PIR motion: Yes");
+    expect(msg).toContain("PIR ready: Yes");
+    expect(msg).toContain("Ultrasonic distance: 18.5 cm");
+    expect(msg).toContain("Distance change: 41.2 cm");
+    expect(msg).toContain("Object close: Yes");
+    expect(msg).toContain("Inspection active: Yes");
+  });
+
+  test("pest alerts include SecurePi sensor aliases shown in the dashboard", () => {
+    const msg = whatsapp.buildDetectionAlertMessage({
+      alert_type: "Pest Detection",
+      object_class: "rat",
+      severity: "High",
+      zone_name: "Demo",
+      camera_location: "Loading Bay Camera 01",
+      confidence: 0.62,
+      device_id: "securepi-loading-bay-01",
+      sensor_metadata: {
+        pir: true,
+        ultrasonic_cm: 5,
+        distance_change_cm: 0,
+        trigger: "PIR",
+        after_hours: true,
+      },
+    });
+    expect(msg).toContain("🚨 FlowGuard Pest Alert");
+    expect(msg).toContain("Sensor trigger: PIR motion");
+    expect(msg).toContain("PIR motion: Yes");
+    expect(msg).toContain("Ultrasonic distance: 5 cm");
+    expect(msg).toContain("Distance change: 0 cm");
+    expect(msg).toContain("After hours: Yes");
+  });
+
   test("handles missing optional fields safely and omits person 'UNKNOWN'", () => {
     const msg = whatsapp.buildDetectionAlertMessage({ alert_type: "Pest Detection", person_name: "UNKNOWN" });
     expect(typeof msg).toBe("string");
     expect(msg).not.toContain("Person:");
     expect(msg).not.toContain("Confidence:");
     expect(msg).not.toContain("Photo:");
+  });
+
+  test("AI-only detection (no sensor_metadata) produces no sensor lines", () => {
+    const msg = whatsapp.buildDetectionAlertMessage(pestAlert); // pestAlert has no sensor_metadata
+    expect(msg).toContain("Object: Rat");
+    expect(msg).not.toContain("Sensor trigger:");
+    expect(msg).not.toContain("PIR motion:");
+    expect(msg).not.toContain("Ultrasonic distance:");
+    expect(msg).not.toContain("Inspection active:");
   });
 
   test("includes a real person name when present", () => {
@@ -111,6 +176,45 @@ describe("buildDetectionAlertMessage (pure)", () => {
     expect(whatsapp.buildDetectionAlertMessage(pestAlert)).toContain("Review the event in the FlowGuard dashboard.");
     const withUrl = whatsapp.buildDetectionAlertMessage(pestAlert, { dashboardUrl: "https://app.example/object-detection" });
     expect(withUrl).toContain("https://app.example/object-detection");
+  });
+});
+
+describe("detectionDashboardUrl (environment-aware, no hard-coded URL)", () => {
+  const STAGING = "https://flowguard-client-staging-590663319889.asia-southeast1.run.app";
+
+  test("deployed frontend base produces the /object-detection link", () => {
+    process.env.FRONTEND_URL = STAGING;
+    process.env.NODE_ENV = "production";
+    expect(whatsapp.detectionDashboardUrl()).toBe(`${STAGING}/object-detection`);
+  });
+
+  test("FRONTEND_URL takes precedence over CLIENT_URL", () => {
+    process.env.FRONTEND_URL = STAGING;
+    process.env.CLIENT_URL = "https://other.example";
+    expect(whatsapp.detectionDashboardUrl()).toBe(`${STAGING}/object-detection`);
+  });
+
+  test("CLIENT_URL is used when FRONTEND_URL is absent", () => {
+    process.env.CLIENT_URL = STAGING;
+    expect(whatsapp.detectionDashboardUrl()).toBe(`${STAGING}/object-detection`);
+  });
+
+  test("a trailing slash on the base never yields a double slash", () => {
+    process.env.FRONTEND_URL = `${STAGING}/`;
+    expect(whatsapp.detectionDashboardUrl()).toBe(`${STAGING}/object-detection`);
+  });
+
+  test("production with NO frontend config fails closed (never leaks localhost)", () => {
+    process.env.NODE_ENV = "production";
+    // FRONTEND_URL / CLIENT_URL already deleted by beforeEach
+    const url = whatsapp.detectionDashboardUrl();
+    expect(url).toBe("");
+    expect(url).not.toContain("localhost");
+  });
+
+  test("local development still uses localhost when no base is configured", () => {
+    process.env.NODE_ENV = "development";
+    expect(whatsapp.detectionDashboardUrl()).toBe("http://localhost:5173/object-detection");
   });
 });
 

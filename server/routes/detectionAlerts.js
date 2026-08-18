@@ -106,6 +106,60 @@ const parseOccurredAt = (value) => {
     return Number.isNaN(date.getTime()) ? null : date;
 };
 
+const parseSensorMetadata = (value) => {
+    if (!value) return {};
+    if (typeof value === 'object' && !Array.isArray(value)) return { ...value };
+    if (typeof value !== 'string') return {};
+    try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+        return {};
+    }
+};
+
+const parseSensorBoolean = (value) => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value !== 'string') return value;
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+    return value;
+};
+
+const parseSensorNumber = (value) => {
+    if (value === undefined || value === null || value === '') return value;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : value;
+};
+
+const mergeTopLevelSensorMetadata = (base, body = {}) => {
+    const sensorFields = {
+        trigger: (value) => value,
+        trigger_source: (value) => value,
+        pir: parseSensorBoolean,
+        pir_motion: parseSensorBoolean,
+        pir_ready: parseSensorBoolean,
+        motion: parseSensorBoolean,
+        object_close: parseSensorBoolean,
+        inspection_active: parseSensorBoolean,
+        after_hours: parseSensorBoolean,
+        night_inspection: parseSensorBoolean,
+        distance_cm: parseSensorNumber,
+        ultrasonic_cm: parseSensorNumber,
+        distance_change_cm: parseSensorNumber,
+        baseline_distance_cm: parseSensorNumber,
+        inspection_remaining_seconds: parseSensorNumber,
+        uptime_ms: parseSensorNumber,
+    };
+    for (const [field, normalize] of Object.entries(sensorFields)) {
+        if (base[field] === undefined && body[field] !== undefined) {
+            base[field] = normalize(body[field]);
+        }
+    }
+    return base;
+};
+
 router.get('/', verifyToken, requireRole('FM', 'Staff'), async (req, res) => {
     try {
         const where = {};
@@ -234,7 +288,8 @@ router.post('/', verifyServiceOrRole('FM', 'Staff'), async (req, res) => {
             return res.status(400).json({ error: `severity must be one of: ${SEVERITIES.join(', ')}.` });
         }
 
-        const eventId = cleanText(event_id || cycle_id || sensor_metadata?.cycle_id || sensor_metadata?.inspection_cycle_id, 255);
+        const parsedSensorMetaForEvent = parseSensorMetadata(sensor_metadata);
+        const eventId = cleanText(event_id || cycle_id || parsedSensorMetaForEvent.cycle_id || parsedSensorMetaForEvent.inspection_cycle_id, 255);
         if (eventId && typeof DetectionAlert.findOne === 'function') {
             try {
                 const existing = await DetectionAlert.findOne({ where: { edge_event_id: eventId } });
@@ -250,7 +305,7 @@ router.post('/', verifyServiceOrRole('FM', 'Staff'), async (req, res) => {
         const cleanedPersonRole = cleanText(person_role, 100);
         const cleanedPerson = cleanText(person_name, 255);
         const parsedTrackId = parsePositiveInt(track_id);
-        const baseSensorMeta = (sensor_metadata && typeof sensor_metadata === 'object') ? { ...sensor_metadata } : {};
+        const baseSensorMeta = mergeTopLevelSensorMetadata(parsedSensorMetaForEvent, req.body);
         if (cleanedIdentityStatus && !baseSensorMeta.identity_status) baseSensorMeta.identity_status = cleanedIdentityStatus;
         if (cleanedPersonRole && !baseSensorMeta.person_role) baseSensorMeta.person_role = cleanedPersonRole;
         if (parsedTrackId !== null && baseSensorMeta.track_id === undefined) baseSensorMeta.track_id = parsedTrackId;

@@ -285,6 +285,9 @@ function detectionAlertHeading(alertType) {
     ITEM_PICKED_UP: '⚠️ FlowGuard Item Movement Alert',
     ITEM_SET_DOWN: '⚠️ FlowGuard Item Movement Alert',
     ITEM_MOVEMENT: '⚠️ FlowGuard Item Movement Alert',
+    PIR_MOTION_SENSOR: '⚠️ FlowGuard PIR Motion Sensor Alert',
+    ULTRASONIC_SENSOR: '⚠️ FlowGuard Ultrasonic Sensor Alert',
+    'PIR_+_ULTRASONIC_SENSOR': '⚠️ FlowGuard Sensor Alert',
   };
   return { key, heading: HEADINGS[key] || '🚨 FlowGuard Detection Alert' };
 }
@@ -329,6 +332,59 @@ function durationLabelForKey(key) {
   return 'Duration';
 }
 
+function formatSensorValue(value, suffix = '') {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return 'Yes';
+    if (normalized === 'false') return 'No';
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const rounded = Math.round(value * 10) / 10;
+    return `${rounded}${suffix}`;
+  }
+  return `${String(value)}${suffix}`;
+}
+
+function sensorTriggerLabel(trigger) {
+  const key = String(trigger || '').trim().toLowerCase();
+  const labels = {
+    pir: 'PIR motion',
+    'pir motion': 'PIR motion',
+    ultrasonic: 'Ultrasonic distance change',
+    'ultrasonic distance change': 'Ultrasonic distance change',
+    pir_and_ultrasonic: 'PIR motion + ultrasonic distance change',
+  };
+  return labels[key] || String(trigger || '').replace(/_/g, ' ');
+}
+
+function firstPresent(...values) {
+  return values.find((value) => value !== undefined && value !== null && value !== '');
+}
+
+function buildSensorLines(sensor = {}) {
+  if (!sensor || typeof sensor !== 'object') return [];
+  const lines = [];
+  const trigger = firstPresent(sensor.trigger, sensor.trigger_source);
+  if (trigger) lines.push(`Sensor trigger: ${sensorTriggerLabel(trigger)}`);
+  const motion = formatSensorValue(firstPresent(sensor.motion, sensor.pir, sensor.pir_motion));
+  if (motion) lines.push(`PIR motion: ${motion}`);
+  const pirReady = formatSensorValue(sensor.pir_ready);
+  if (pirReady) lines.push(`PIR ready: ${pirReady}`);
+  const distance = formatSensorValue(firstPresent(sensor.distance_cm, sensor.ultrasonic_cm), ' cm');
+  if (distance) lines.push(`Ultrasonic distance: ${distance}`);
+  const change = formatSensorValue(sensor.distance_change_cm, ' cm');
+  if (change) lines.push(`Distance change: ${change}`);
+  const close = formatSensorValue(sensor.object_close);
+  if (close) lines.push(`Object close: ${close}`);
+  const inspection = formatSensorValue(sensor.inspection_active);
+  if (inspection) lines.push(`Inspection active: ${inspection}`);
+  const afterHours = formatSensorValue(firstPresent(sensor.after_hours, sensor.night_inspection));
+  if (afterHours) lines.push(`After hours: ${afterHours}`);
+  return lines;
+}
+
 // PURE message builder — no network, no process.env. Given a normalized alert
 // object (and an optional dashboard URL), returns the exact WhatsApp text body.
 // Every optional field is omitted safely when missing. Never includes tokens,
@@ -350,6 +406,7 @@ function buildDetectionAlertMessage(alert = {}, options = {}) {
     person_role,
     snapshot_url,
     snapshot_path,
+    sensor_metadata,
   } = alert;
 
   const { heading, key } = detectionAlertHeading(alert_type);
@@ -389,6 +446,9 @@ function buildDetectionAlertMessage(alert = {}, options = {}) {
   if (pct !== null) lines.push(`Confidence: ${pct}%`);
 
   if (device_id) lines.push(`Device: ${device_id}`);
+
+  const sensorLines = buildSensorLines(sensor_metadata);
+  if (sensorLines.length) lines.push('', ...sensorLines);
 
   // Snapshot handling: only a valid remote URL becomes a tappable link. A local
   // edge path is acknowledged but never presented as if it were reachable.
