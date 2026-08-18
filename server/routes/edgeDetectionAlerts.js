@@ -54,6 +54,10 @@ function defaultSeverityForType(alertType, durationSeconds, identityStatus, pers
         case 'ITEM_SET_DOWN':
         case 'ITEM_MOVEMENT':
             return 'Medium';
+        case 'PIR_MOTION_SENSOR':
+        case 'ULTRASONIC_SENSOR':
+        case 'PIR_+_ULTRASONIC_SENSOR':
+            return 'Medium';
         case 'UNATTENDED_OBJECT':
         default:
             return severityFromDuration(durationSeconds);
@@ -175,6 +179,60 @@ const parseOccurredAt = (value) => {
     if (!value) return null;
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const parseSensorMetadata = (value) => {
+    if (!value) return {};
+    if (typeof value === 'object' && !Array.isArray(value)) return { ...value };
+    if (typeof value !== 'string') return {};
+    try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+        return {};
+    }
+};
+
+const parseSensorBoolean = (value) => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value !== 'string') return value;
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+    return value;
+};
+
+const parseSensorNumber = (value) => {
+    if (value === undefined || value === null || value === '') return value;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : value;
+};
+
+const mergeTopLevelSensorMetadata = (base, body = {}) => {
+    const sensorFields = {
+        trigger: (value) => value,
+        trigger_source: (value) => value,
+        pir: parseSensorBoolean,
+        pir_motion: parseSensorBoolean,
+        pir_ready: parseSensorBoolean,
+        motion: parseSensorBoolean,
+        object_close: parseSensorBoolean,
+        inspection_active: parseSensorBoolean,
+        after_hours: parseSensorBoolean,
+        night_inspection: parseSensorBoolean,
+        distance_cm: parseSensorNumber,
+        ultrasonic_cm: parseSensorNumber,
+        distance_change_cm: parseSensorNumber,
+        baseline_distance_cm: parseSensorNumber,
+        inspection_remaining_seconds: parseSensorNumber,
+        uptime_ms: parseSensorNumber,
+    };
+    for (const [field, normalize] of Object.entries(sensorFields)) {
+        if (base[field] === undefined && body[field] !== undefined) {
+            base[field] = normalize(body[field]);
+        }
+    }
+    return base;
 };
 
 const snapshotUrlFor = (alertId, filename) => `/api/detection-alerts/${alertId}/snapshot/${filename}`;
@@ -416,7 +474,7 @@ router.post('/detection-alerts', verifyEdgeIngestToken, handleSnapshotUpload, as
         const resolvedSeverity = severity || defaultSeverityForType(cleanedAlertType, parsedDuration, cleanedIdentityStatus, cleanedPerson);
 
         // Build safeSensorMeta, ensuring identity fields and track_id ride inside sensor_metadata JSONB column if provided.
-        const baseSensorMeta = (sensor_metadata && typeof sensor_metadata === 'object') ? { ...sensor_metadata } : {};
+        const baseSensorMeta = mergeTopLevelSensorMetadata(parseSensorMetadata(sensor_metadata), req.body);
         if (cleanedIdentityStatus && !baseSensorMeta.identity_status) baseSensorMeta.identity_status = cleanedIdentityStatus;
         if (cleanedPersonRole && !baseSensorMeta.person_role) baseSensorMeta.person_role = cleanedPersonRole;
         if (parsedTrackId !== null && baseSensorMeta.track_id === undefined) baseSensorMeta.track_id = parsedTrackId;

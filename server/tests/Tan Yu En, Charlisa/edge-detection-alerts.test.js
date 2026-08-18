@@ -447,6 +447,103 @@ describe("POST /api/edge/detection-alerts", () => {
     expect(createdAlert.sensor_metadata.identity_status).toBe("SUSPENDED");
   });
 
+  test("accepts standalone PIR sensor alert and defaults to Medium severity", async () => {
+    primeCreateMocks();
+    const res = await request(app)
+      .post("/api/edge/detection-alerts")
+      .set("Authorization", "Bearer test-edge-token")
+      .send({
+        event_id: "securepi-loading-bay-01:sensor:pir:123",
+        zone_name: "Loading Bay",
+        camera_location: "Loading Bay Camera 01",
+        alert_type: "PIR Motion Sensor",
+        object_class: "motion detected",
+        device_id: "securepi-loading-bay-01",
+        severity: undefined,
+        sensor_metadata: {
+          trigger: "pir",
+          motion: true,
+          distance_cm: 120,
+          inspection_active: true,
+        },
+      });
+    expect(res.status).toBe(201);
+    const createdAlert = mockDetectionAlert.create.mock.calls[0][0];
+    expect(createdAlert.alert_type).toBe("PIR Motion Sensor");
+    expect(createdAlert.object_class).toBe("motion detected");
+    expect(createdAlert.severity).toBe("Medium");
+    expect(createdAlert.sensor_metadata).toEqual(expect.objectContaining({
+      trigger: "pir",
+      motion: true,
+      inspection_active: true,
+    }));
+  });
+
+  test("parses stringified sensor metadata so WhatsApp can include sensor readings", async () => {
+    primeCreateMocks();
+    const res = await request(app)
+      .post("/api/edge/detection-alerts")
+      .set("Authorization", "Bearer test-edge-token")
+      .send({
+        event_id: "securepi-loading-bay-01:sensor:ultrasonic:123",
+        zone_name: "Loading Bay",
+        camera_location: "Loading Bay Camera 01",
+        alert_type: "Ultrasonic Sensor",
+        object_class: "object distance change",
+        device_id: "securepi-loading-bay-01",
+        sensor_metadata: JSON.stringify({
+          trigger: "ultrasonic",
+          motion: false,
+          pir_ready: true,
+          distance_cm: 18.5,
+          distance_change_cm: 41.2,
+          object_close: true,
+        }),
+      });
+    expect(res.status).toBe(201);
+    const createdAlert = mockDetectionAlert.create.mock.calls[0][0];
+    expect(createdAlert.sensor_metadata).toEqual(expect.objectContaining({
+      trigger: "ultrasonic",
+      pir_ready: true,
+      distance_cm: 18.5,
+      distance_change_cm: 41.2,
+      object_close: true,
+    }));
+  });
+
+  test("copies top-level sensor fields into metadata for WhatsApp sensor details", async () => {
+    primeCreateMocks();
+    const res = await request(app)
+      .post("/api/edge/detection-alerts")
+      .set("Authorization", "Bearer test-edge-token")
+      .send({
+        event_id: "securepi-loading-bay-01:sensor:pir:124",
+        zone_name: "Loading Bay",
+        camera_location: "Loading Bay Camera 01",
+        alert_type: "PIR Motion Sensor",
+        object_class: "motion detected",
+        device_id: "securepi-loading-bay-01",
+        trigger: "pir",
+        motion: "true",
+        pir_ready: "true",
+        distance_cm: "22.4",
+        distance_change_cm: "0",
+        object_close: "false",
+        inspection_active: "true",
+      });
+    expect(res.status).toBe(201);
+    const createdAlert = mockDetectionAlert.create.mock.calls[0][0];
+    expect(createdAlert.sensor_metadata).toEqual(expect.objectContaining({
+      trigger: "pir",
+      motion: true,
+      pir_ready: true,
+      distance_cm: 22.4,
+      distance_change_cm: 0,
+      object_close: false,
+      inspection_active: true,
+    }));
+  });
+
   test("accepts UNAVAILABLE identity alert and preserves null person_name (never converted to UNKNOWN)", async () => {
     primeCreateMocks();
     const res = await request(app)

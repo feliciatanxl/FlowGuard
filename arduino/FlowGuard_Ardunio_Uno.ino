@@ -111,7 +111,7 @@ void loop() {
   if (millis() - lastPrintTime >= 500) {
     lastPrintTime = millis();
 
-    Serial.print(F("{\"type\":\"sensor_status\",\"pir_re ady\":"));
+    Serial.print(F("{\"type\":\"sensor_status\",\"pir_ready\":"));
     Serial.print(pirReady ? F("true") : F("false"));
 
     Serial.print(F(",\"motion\":"));

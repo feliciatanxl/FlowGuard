@@ -79,6 +79,9 @@ describe("buildDetectionAlertMessage (pure)", () => {
     expect(heading("Restricted-Zone Motion")).toBe("🚨 FlowGuard Restricted-Zone Motion Alert");
     expect(heading("Item Picked Up")).toBe("⚠️ FlowGuard Item Movement Alert");
     expect(heading("Item Set Down")).toBe("⚠️ FlowGuard Item Movement Alert");
+    expect(heading("PIR Motion Sensor")).toBe("⚠️ FlowGuard PIR Motion Sensor Alert");
+    expect(heading("Ultrasonic Sensor")).toBe("⚠️ FlowGuard Ultrasonic Sensor Alert");
+    expect(heading("PIR + Ultrasonic Sensor")).toBe("⚠️ FlowGuard Sensor Alert");
     expect(heading("Something Unknown")).toBe("🚨 FlowGuard Detection Alert");
   });
 
@@ -92,6 +95,59 @@ describe("buildDetectionAlertMessage (pure)", () => {
   test("a valid https snapshot URL is included as a Photo link", () => {
     const msg = whatsapp.buildDetectionAlertMessage({ ...pestAlert, snapshot_url: "https://ok.example/img.jpg" });
     expect(msg).toContain("Photo: https://ok.example/img.jpg");
+  });
+
+  test("sensor alerts include PIR and ultrasonic readings in the WhatsApp body", () => {
+    const msg = whatsapp.buildDetectionAlertMessage({
+      alert_type: "PIR + Ultrasonic Sensor",
+      object_class: "combined sensor trigger",
+      severity: "Medium",
+      zone_name: "Loading Bay",
+      camera_location: "Pi Camera Module 3",
+      device_id: "securepi-pi4-01",
+      sensor_metadata: {
+        trigger: "pir_and_ultrasonic",
+        motion: true,
+        pir_ready: true,
+        distance_cm: 18.46,
+        distance_change_cm: 41.22,
+        object_close: true,
+        inspection_active: true,
+      },
+    });
+    expect(msg).toContain("⚠️ FlowGuard Sensor Alert");
+    expect(msg).toContain("Sensor trigger: PIR motion + ultrasonic distance change");
+    expect(msg).toContain("PIR motion: Yes");
+    expect(msg).toContain("PIR ready: Yes");
+    expect(msg).toContain("Ultrasonic distance: 18.5 cm");
+    expect(msg).toContain("Distance change: 41.2 cm");
+    expect(msg).toContain("Object close: Yes");
+    expect(msg).toContain("Inspection active: Yes");
+  });
+
+  test("pest alerts include SecurePi sensor aliases shown in the dashboard", () => {
+    const msg = whatsapp.buildDetectionAlertMessage({
+      alert_type: "Pest Detection",
+      object_class: "rat",
+      severity: "High",
+      zone_name: "Demo",
+      camera_location: "Loading Bay Camera 01",
+      confidence: 0.62,
+      device_id: "securepi-loading-bay-01",
+      sensor_metadata: {
+        pir: true,
+        ultrasonic_cm: 5,
+        distance_change_cm: 0,
+        trigger: "PIR",
+        after_hours: true,
+      },
+    });
+    expect(msg).toContain("🚨 FlowGuard Pest Alert");
+    expect(msg).toContain("Sensor trigger: PIR motion");
+    expect(msg).toContain("PIR motion: Yes");
+    expect(msg).toContain("Ultrasonic distance: 5 cm");
+    expect(msg).toContain("Distance change: 0 cm");
+    expect(msg).toContain("After hours: Yes");
   });
 
   test("handles missing optional fields safely and omits person 'UNKNOWN'", () => {
