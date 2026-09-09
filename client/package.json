@@ -46,7 +46,7 @@
     "jest": "^30.4.2",
     "jsdom": "^29.1.1",
     "vite": "^8.1.5",
-    "vitest": "^4.1.9"
+    "vitest": "^5.0.0"
   },
   "//overrides": "Dev/build-toolchain-only transitives (never in the shipped Vite bundle). Each is pinned to the smallest API-compatible PATCHED version so Dependabot clears without an uncontrolled parent upgrade: js-yaml stays on the v3 API @istanbuljs/load-nyc-config needs; brace-expansion has a stable single-function API; @babel/core is a 7.x patch. `npm audit fix` was rejected because it bumped the jest chain and INCREASED total advisories.",
   "overrides": {
