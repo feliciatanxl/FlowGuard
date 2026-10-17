@@ -15,7 +15,7 @@ fastapi==0.136.1
 filelock==3.29.4
 flatbuffers==25.12.19
 fonttools==4.63.0
-fsspec==2026.4.0
+fsspec==2026.6.0
 h11==0.16.0
 idna==3.18
 ImageIO==2.37.3
